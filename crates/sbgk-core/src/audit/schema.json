@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "R2R audit swarm record shapes v0.1",
+  "$comment": "Closed JSON shapes plus kernel extensions: x-maxUtf8Bytes bounds original UTF-8 bytes; x-calendar validates an actual Gregorian YYYYMMDD integer; x-integerRepresentation rejects floating-point representations even when mathematically integral. Standard JSON Schema validators alone do not enforce those extensions. Scope, references, byte evidence and completion proof are stateful kernel checks.",
+  "$defs": {
+    "string": {"type": "string", "minLength": 1, "maxLength": 1024, "x-maxUtf8Bytes": 1024},
+    "text": {"type": "string", "minLength": 1, "maxLength": 240, "x-maxUtf8Bytes": 1024},
+    "quote": {"type": "string", "minLength": 1, "maxLength": 16384, "x-maxUtf8Bytes": 16384},
+    "strings": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/string"}},
+    "basis": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/string"}},
+    "stance": {"enum": ["reported", "confirmed", "refuted", "qualified", "superseded", "open", "unknown"]},
+    "date": {"type": ["integer", "null"], "minimum": 10101, "maximum": 99991231, "x-calendar": "YYYYMMDD", "x-integerRepresentation": true}
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "doc_id", "exact_quote"],
+      "properties": {
+        "kind": {"const": "observe"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "doc_id": {"$ref": "#/$defs/string"},
+        "exact_quote": {"$ref": "#/$defs/quote"},
+        "terms": {"$ref": "#/$defs/strings"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "text", "subject", "stance", "based_on"],
+      "properties": {
+        "kind": {"const": "claim"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "text": {"$ref": "#/$defs/text"},
+        "subject": {"$ref": "#/$defs/string"},
+        "predicate": {"$ref": "#/$defs/string"},
+        "object": {"$ref": "#/$defs/string"},
+        "stance": {"$ref": "#/$defs/stance"},
+        "as_of": {"$ref": "#/$defs/date"},
+        "based_on": {"$ref": "#/$defs/basis"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "from", "rel", "to", "based_on"],
+      "properties": {
+        "kind": {"const": "relation"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "from": {"$ref": "#/$defs/string"},
+        "rel": {"enum": ["supports", "contradicts", "qualifies", "supersedes", "depends_on"]},
+        "to": {"$ref": "#/$defs/string"},
+        "based_on": {"$ref": "#/$defs/basis"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "text", "falsifier", "based_on"],
+      "properties": {
+        "kind": {"const": "hypothesis"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "text": {"$ref": "#/$defs/text"},
+        "falsifier": {"$ref": "#/$defs/string"},
+        "subject": {"$ref": "#/$defs/string"},
+        "stance": {"$ref": "#/$defs/stance"},
+        "based_on": {"$ref": "#/$defs/basis"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "text", "about", "needed"],
+      "properties": {
+        "kind": {"const": "question"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "text": {"$ref": "#/$defs/text"},
+        "about": {"$ref": "#/$defs/basis"},
+        "needed": {"$ref": "#/$defs/string"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "rq_id", "directive_id", "answer_ids"],
+      "properties": {
+        "kind": {"const": "done"},
+        "local_id": {"$ref": "#/$defs/string"},
+        "rq_id": {"$ref": "#/$defs/string"},
+        "directive_id": {"$ref": "#/$defs/string"},
+        "answer_ids": {"$ref": "#/$defs/strings"},
+        "outcome": {"enum": ["answered", "unknown", "unresolved_conflict"]},
+        "text": {"$ref": "#/$defs/text"}
+      }
+    }
+  ]
+}

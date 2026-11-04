@@ -1,0 +1,18 @@
+{
+  "entities": [
+    {"id": "svc_auth", "type": "Service", "aliases": ["auth service"]},
+    {"id": "svc_pay", "type": "Service", "aliases": ["payment service"]},
+    {"id": "api_v1", "type": "Api", "aliases": ["interface v1"]}
+  ],
+  "predicates": [
+    {"id": "uses_api", "subject": "Service", "object": "Api"},
+    {"id": "api_deprecated", "subject": "Api", "object": "@literal"},
+    {"id": "needs_review", "subject": "Service", "object": "@literal"}
+  ],
+  "rules": [
+    {"id": "R_depr_review@1", "mode": "AND",
+     "body": [{"p": "uses_api"}, {"p": "api_deprecated"}],
+     "join": [["0.o", "1.s"]],
+     "head": {"s": "0.s", "p": "needs_review", "o": {"const": "true"}}}
+  ]
+}

@@ -1,0 +1,910 @@
+{
+ "corpus": "mcp-spec-2026-07-28",
+ "unit": "one event per changelog item of 2025-03-26, 2025-06-18, 2025-11-25 and 2026-07-28 (quote: the item's first line)",
+ "kinds": {
+  "added": "a new mechanism, field or option",
+  "removed": "a mechanism is dropped from the specification",
+  "replaced": "a mechanism is dropped and a named successor takes its place",
+  "deprecated": "still in the specification but scheduled for removal (or reclassified as Deprecated)",
+  "changed": "an existing mechanism's behaviour, requirement level, value or shape changes",
+  "clarified": "wording or guidance only, no normative change of behaviour",
+  "governance": "process or governance, not the protocol"
+ },
+ "related_earlier": "the earlier events whose mechanism this event removes, replaces, deprecates or changes, in whole or in part. A catalog of relations between changelog items, NOT an oracle of stale answers: a link does not mean that every earlier statement about that mechanism became false (see mcp-spec-2026-07-28-stale-facts.json)",
+ "procedure": {
+  "draft": "claude-opus-5-5 (author of the corpus selection)",
+  "blind": "gemini-4-argon-high via Antigravity, labeled all items without seeing the draft",
+  "adjudication": "claude-fable-5-1 decided each item where draft and blind differed (sides shown as A and B), with an exact quote",
+  "date": "2026-10-29",
+  "notes": [
+   "the blind call ended with Antigravity status ERROR after an internal error_message step; its final agent_response held the complete JSON answer, which was used",
+   "Gemini 4 Argon's weekly limit ran out before the adjudication step, so Claude Fable 5.1 adjudicated",
+   "2026-07-28/major/2 corrected after Codex review MCP-02: the MCP-Protocol-Version header stays required, so the event does not end 2025-06-18/major/8"
+  ]
+ },
+ "events": [
+  {
+   "id": "2025-03-26/major/1",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added a comprehensive **[authorization framework](/specification/2025-03-26/basic/authorization)**",
+   "mechanism": "authorization framework (OAuth 2.1)",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/major/2",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Replaced the previous HTTP+SSE transport with a more flexible **[Streamable HTTP",
+   "mechanism": "HTTP+SSE transport -> Streamable HTTP transport",
+   "kind": "replaced",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/major/3",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added support for JSON-RPC **[batching](https://www.jsonrpc.org/specification#batch)**",
+   "mechanism": "JSON-RPC batching",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/major/4",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added comprehensive **tool annotations** for better describing tool behavior, like",
+   "mechanism": "tool annotations",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/schema/1",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added `message` field to `ProgressNotification` to provide descriptive status updates",
+   "mechanism": "ProgressNotification.message",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/schema/2",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added support for audio data, joining the existing text and image content types",
+   "mechanism": "audio content",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-03-26/schema/3",
+   "version": "2025-03-26",
+   "file": "docs/specification/2025-03-26/changelog.mdx",
+   "quote": "Added `completions` capability to explicitly indicate support for argument",
+   "mechanism": "completions capability",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/1",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Remove support for JSON-RPC **[batching](https://www.jsonrpc.org/specification#batch)**",
+   "mechanism": "JSON-RPC batching",
+   "kind": "removed",
+   "related_earlier": [
+    "2025-03-26/major/3"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/2",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add support for [structured tool output](/specification/2025-06-18/server/tools#structured-content)",
+   "mechanism": "structured tool output",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/3",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Classify MCP servers as [OAuth Resource Servers](/specification/2025-06-18/basic/authorization#authorization-server-discovery),",
+   "mechanism": "MCP servers classified as OAuth Resource Servers (protected resource metadata)",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/1"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/4",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Require MCP clients to implement Resource Indicators as described in [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html) to prevent",
+   "mechanism": "Resource Indicators (RFC 8707) required of clients",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/1"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Require MCP clients to implement Resource Indicators",
+    "why": "It imposes a new mandatory obligation on clients inside the existing authorization framework rather than offering a new optional mechanism."
+   }
+  },
+  {
+   "id": "2025-06-18/major/5",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Clarify [security considerations](/specification/2025-06-18/basic/authorization#security-considerations) and best practices",
+   "mechanism": "authorization security considerations",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/6",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add support for **[elicitation](/specification/2025-06-18/client/elicitation)**, enabling servers to request additional",
+   "mechanism": "elicitation",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/7",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add support for **[resource links](/specification/2025-06-18/server/tools#resource-links)** in",
+   "mechanism": "resource links in tool results",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/major/8",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Require [negotiated protocol version to be specified](/specification/2025-06-18/basic/transports#protocol-version-header)",
+   "mechanism": "MCP-Protocol-Version header on HTTP requests",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/2"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "via `MCP-Protocol-Version` header in subsequent requests when using HTTP",
+    "why": "It adds a new requirement to the existing Streamable HTTP transport, changing what HTTP requests must carry."
+   }
+  },
+  {
+   "id": "2025-06-18/major/9",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Change **SHOULD** to **MUST** in [Lifecycle Operation](/specification/2025-06-18/basic/lifecycle#operation)",
+   "mechanism": "lifecycle operation SHOULD -> MUST",
+   "kind": "changed",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/schema/1",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add `_meta` field to additional interface types (PR [#710](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/710)),",
+   "mechanism": "_meta on more interface types",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/schema/2",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add `context` field to `CompletionRequest`, providing for completion requests to include",
+   "mechanism": "CompletionRequest.context",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-06-18/schema/3",
+   "version": "2025-06-18",
+   "file": "docs/specification/2025-06-18/changelog.mdx",
+   "quote": "Add `title` field for human-friendly display names, so that `name` can be used as a programmatic",
+   "mechanism": "title field for display names",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/1",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Enhance authorization server discovery with support for [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html). (PR [#797](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/797))",
+   "mechanism": "OpenID Connect Discovery for authorization server discovery",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "Enhance authorization server discovery with support for [OpenID Connect Discovery 1.0]",
+    "why": "It adds a new optional discovery mechanism without altering existing discovery requirements."
+   }
+  },
+  {
+   "id": "2025-11-25/major/2",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Allow servers to expose icons as additional metadata for tools, resources, resource templates, and prompts ([SEP-973](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/973)).",
+   "mechanism": "icons metadata",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/3",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Enhance authorization flows with incremental scope consent via `WWW-Authenticate` ([SEP-835](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/835))",
+   "mechanism": "incremental scope consent via WWW-Authenticate",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "Enhance authorization flows with incremental scope consent via `WWW-Authenticate`",
+    "why": "It introduces a new mechanism (incremental scope consent) rather than changing an existing requirement."
+   }
+  },
+  {
+   "id": "2025-11-25/major/4",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Provide guidance on tool names ([SEP-986](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1603))",
+   "mechanism": "tool name guidance",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Provide guidance on tool names",
+    "why": "The text describes guidance only, not a new mechanism or a normative behaviour change."
+   }
+  },
+  {
+   "id": "2025-11-25/major/5",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Update `ElicitResult` and `EnumSchema` to use a more standards-based approach and support titled, untitled, single-select, and multi-select enums ([SEP-1330](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1330)).",
+   "mechanism": "ElicitResult and EnumSchema",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-06-18/major/6"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/6",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Added support for [URL mode elicitation](/specification/2025-11-25/client/elicitation#url-elicitation-requests) ([SEP-1036](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/887))",
+   "mechanism": "URL mode elicitation",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/7",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Add tool calling support to sampling via `tools` and `toolChoice` parameters ([SEP-1577](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1577))",
+   "mechanism": "tool calling in sampling (tools, toolChoice)",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/8",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Add support for OAuth Client ID Metadata Documents as a recommended client registration mechanism ([SEP-991](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/991), PR [#1296](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1296))",
+   "mechanism": "OAuth Client ID Metadata Documents as recommended client registration",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/major/9",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Add experimental support for [tasks](/specification/2025-11-25/basic/utilities/tasks) to enable tracking durable requests with polling and deferred result retrieval ([SEP-1686](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1686)).",
+   "mechanism": "experimental tasks",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/1",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Clarify that servers using stdio transport may use stderr for all types of logging, not just error messages (PR [#670](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/670)).",
+   "mechanism": "stdio servers may log to stderr",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/2",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Add optional `description` field to `Implementation` interface to align with MCP registry server.json format and provide human-readable context during initialization.",
+   "mechanism": "Implementation.description",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/3",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Clarify that servers must respond with HTTP 403 Forbidden for invalid Origin headers in Streamable HTTP transport. (PR [#1439](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1439))",
+   "mechanism": "HTTP 403 for invalid Origin in Streamable HTTP",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/4",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Updated the [Security Best Practices guidance](https://modelcontextprotocol.io/specification/draft/basic/security_best_practices).",
+   "mechanism": "security best practices",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/5",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Clarify that input validation errors should be returned as Tool Execution Errors rather than Protocol Errors to enable model self-correction ([SEP-1303](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1303)).",
+   "mechanism": "input validation errors as Tool Execution Errors",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/6",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Support polling SSE streams by allowing servers to disconnect at will ([SEP-1699](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699)).",
+   "mechanism": "polling SSE streams (server may disconnect)",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/2"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Support polling SSE streams by allowing servers to disconnect at will",
+    "why": "It changes the server-side behaviour of SSE streams in the existing Streamable HTTP transport."
+   }
+  },
+  {
+   "id": "2025-11-25/minor/7",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Clarify SEP-1699: GET streams support polling, resumption always via GET regardless of stream origin, event IDs should encode stream identity, disconnection includes server-initiated closure (Issue [#1847](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1847)).",
+   "mechanism": "GET stream polling and resumption, event ids",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Clarify SEP-1699: GET streams support polling",
+    "why": "It is explicitly a clarification of SEP-1699, so it does not remove, replace, deprecate or change any item and carries no link."
+   }
+  },
+  {
+   "id": "2025-11-25/minor/8",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Align OAuth 2.0 Protected Resource Metadata discovery with RFC 9728, making `WWW-Authenticate` header optional with fallback to `.well-known` endpoint ([SEP-985](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/985)).",
+   "mechanism": "WWW-Authenticate optional for protected resource metadata discovery",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-06-18/major/3"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/9",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Add support for default values in all primitive types (string, number, enum) for elicitation schemas ([SEP-1034](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1034)).",
+   "mechanism": "default values in elicitation schemas",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/minor/10",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Establish JSON Schema 2020-12 as the default dialect for MCP schema definitions ([SEP-1613](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1613)).",
+   "mechanism": "JSON Schema 2020-12 as default dialect",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "Establish JSON Schema 2020-12 as the default dialect for MCP schema definitions",
+    "why": "It establishes a default where no earlier item defined one, so it is a new option rather than a change to an existing value."
+   }
+  },
+  {
+   "id": "2025-11-25/schema/1",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Decouple request payloads from RPC method definitions into standalone parameter schemas. ([SEP-1319](https://github.com/modelcontextprotocol/specification/issues/1319), PR [#1284](https://github.com/modelcontextprotocol/specification/pull/1284))",
+   "mechanism": "request payloads decoupled into parameter schemas",
+   "kind": "changed",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/governance/1",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Formalize Model Context Protocol governance structure ([SEP-932](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/932)).",
+   "mechanism": "governance structure",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/governance/2",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Establish shared communication practices and guidelines for the MCP community ([SEP-994](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/994)).",
+   "mechanism": "communication practices",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/governance/3",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Formalize Working Groups and Interest Groups in MCP governance ([SEP-1302](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1302)).",
+   "mechanism": "working and interest groups",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2025-11-25/governance/4",
+   "version": "2025-11-25",
+   "file": "docs/specification/2025-11-25/changelog.mdx",
+   "quote": "Establish SDK tiering system with clear requirements for feature support and maintenance commitments ([SEP-1730](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1730)).",
+   "mechanism": "SDK tiering",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/major/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Remove protocol-level sessions and the `Mcp-Session-Id` header from the Streamable HTTP transport. List endpoints (`tools/list`, `resources/list`, `prompts/list`) no longer vary per-connection. Servers that need cross-call state use explicit, server-minted handles passed as ordinary tool arguments ([SEP-2567](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2567)).",
+   "mechanism": "protocol-level sessions and Mcp-Session-Id",
+   "kind": "removed",
+   "related_earlier": [
+    "2025-03-26/major/2"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/major/2",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Make MCP stateless: remove the `initialize`/`notifications/initialized` handshake. Every request now carries its protocol version and client capabilities in `_meta` (`io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientCapabilities`). Clients SHOULD identify themselves on each request (`io.modelcontextprotocol/clientInfo`), and servers SHOULD identify themselves in each result's `_meta` (`io.modelcontextprotocol/serverInfo`). Version mismatches return `UnsupportedProtocolVersionError` ([SEP-2575](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2575)).",
+   "mechanism": "initialize/initialized handshake (stateless protocol)",
+   "kind": "removed",
+   "related_earlier": [
+    "2025-06-18/major/9"
+   ],
+   "basis": "corrected",
+   "decision": {
+    "right": "blind",
+    "quote": "Every request now carries its protocol version and client capabilities in `_meta`",
+    "why": "Removing the handshake ends the lifecycle MUSTs and moves the negotiated protocol version from the HTTP header mechanism into `_meta`."
+   },
+   "correction": {
+    "by": "Codex review MCP-02, 2026-10-29",
+    "file": "docs/specification/2026-07-28/basic/transports/streamable-http.mdx",
+    "quote": "Every POST request to the MCP endpoint **MUST** include an",
+    "why": "the handshake is removed, but HTTP POST requests still carry the MCP-Protocol-Version header, now matched against the version in _meta"
+   }
+  },
+  {
+   "id": "2026-07-28/major/3",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Add `server/discover`: servers MUST implement this RPC to advertise their supported protocol versions, capabilities, and identity. Clients MAY call it before any other request for up-front version selection, or use it as a backward-compatibility probe on STDIO ([SEP-2575](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2575)).",
+   "mechanism": "server/discover",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/major/4",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Replace the HTTP GET endpoint and `resources/subscribe`/`resources/unsubscribe` with `subscriptions/listen`: a single long-lived POST-response stream for opted-in server-to-client change notifications. Clients opt in to specific types (`toolsListChanged`, `promptsListChanged`, `resourcesListChanged`, `resourceSubscriptions`); the server acknowledges and tags notifications with `io.modelcontextprotocol/subscriptionId`. Request-scoped notifications such as `notifications/progress` and `notifications/message` continue to flow on the response stream of the request they relate to, not the `subscriptions/listen` stream ([SEP-2575](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2575)).",
+   "mechanism": "HTTP GET endpoint and resources/subscribe -> subscriptions/listen",
+   "kind": "replaced",
+   "related_earlier": [
+    "2025-03-26/major/2",
+    "2025-11-25/minor/6"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Replace the HTTP GET endpoint and `resources/subscribe`/`resources/unsubscribe` with `subscriptions/listen`",
+    "why": "The GET endpoint belongs to the Streamable HTTP transport and the polling GET streams of SEP-1699 (minor/6); minor/7 is only a clarification of that mechanism."
+   }
+  },
+  {
+   "id": "2026-07-28/major/5",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Remove `ping`, `logging/setLevel`, and `notifications/roots/list_changed`. Log level is now set per-request via `io.modelcontextprotocol/logLevel` in `_meta`; servers MUST NOT emit `notifications/message` for requests that did not include this field ([SEP-2575](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2575)).",
+   "mechanism": "ping, logging/setLevel, notifications/roots/list_changed",
+   "kind": "removed",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/major/6",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Move experimental tasks out of the core protocol and into an official extension (`io.modelcontextprotocol/tasks`). The redesigned extension replaces the blocking `tasks/result` method with polling via `tasks/get` and a new `tasks/update` for client-to-server input, removes `tasks/list`, and allows servers to return task handles unsolicited without per-request opt-in ([SEP-2663](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2663)).",
+   "mechanism": "tasks moved from core into an extension; tasks/result -> tasks/get polling",
+   "kind": "replaced",
+   "related_earlier": [
+    "2025-11-25/major/9"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "Move experimental tasks out of the core protocol and into an official extension (`io.modelcontextprotocol/tasks`)",
+    "why": "Tasks are dropped from the core specification and a named successor (the redesigned extension) takes their place."
+   }
+  },
+  {
+   "id": "2026-07-28/major/7",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Multi Round-Trip Requests (MRTR) pattern introduced which replaces the previous approach of sending server-initiated requests, such as `roots/list`, `sampling/createMessage`, or `elicitation/create`. Servers return an `InputRequiredResult` (`resultType: \"input_required\"`) whose `inputRequests` field carries the requests for the additional information needed to process the request. Clients respond with `inputResponses` on a retry of the original request providing the requested information. ([SEP-2322](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2322)).",
+   "mechanism": "server-initiated requests -> Multi Round-Trip Requests",
+   "kind": "replaced",
+   "related_earlier": [
+    "2025-06-18/major/6"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "replaces the previous approach of sending server-initiated requests, such as `roots/list`, `sampling/createMessage`, or `elicitation/create`",
+    "why": "MRTR replaces the server-initiated request pattern (including elicitation); the sampling `tools`/`toolChoice` parameters of 2025-11-25/major/7 are not themselves replaced."
+   }
+  },
+  {
+   "id": "2026-07-28/major/8",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "All results now carry a required `resultType` field: `\"complete\"` for ordinary results and `\"input_required\"` for [multi round-trip request](/specification/2026-07-28/basic/patterns/mrtr) interim results. Clients **MUST** treat results from earlier-protocol servers that omit the field as `\"complete\"` ([SEP-2322](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2322)).",
+   "mechanism": "required resultType on results",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "All results now carry a required `resultType` field",
+    "why": "It introduces a new field, which the kind definitions classify as added."
+   }
+  },
+  {
+   "id": "2026-07-28/major/9",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Remove SSE stream resumability and message redelivery (the `Last-Event-ID` header and SSE event IDs) from the Streamable HTTP transport. A broken response stream loses the in-flight request; clients **MUST** re-issue it as a new request with a new request ID ([SEP-2575](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2575)).",
+   "mechanism": "SSE stream resumability and redelivery (Last-Event-ID, event ids)",
+   "kind": "removed",
+   "related_earlier": [
+    "2025-03-26/major/2",
+    "2025-11-25/minor/6"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Remove SSE stream resumability and message redelivery (the `Last-Event-ID` header and SSE event IDs) from the Streamable HTTP transport",
+    "why": "It removes a mechanism of the Streamable HTTP transport that the SEP-1699 polling behaviour relied on; minor/7 is only a clarification of minor/6."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Add `extensions` field to `ClientCapabilities` and `ServerCapabilities` to support optional [extensions](/docs/extensions/overview) beyond the core protocol.",
+   "mechanism": "extensions capability field",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/minor/2",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Document OpenTelemetry trace context propagation conventions for `_meta` keys (`traceparent`, `tracestate`, `baggage`) ([SEP-414](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/414)).",
+   "mechanism": "OpenTelemetry trace context in _meta",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "Document OpenTelemetry trace context propagation conventions for `_meta` keys (`traceparent`, `tracestate`, `baggage`)",
+    "why": "It introduces new `_meta` key conventions that did not previously exist, not a rewording of existing text."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/3",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Servers **SHOULD** return tools from `tools/list` in a deterministic order to enable client-side caching and improve LLM prompt cache hit rates.",
+   "mechanism": "deterministic tools/list order (SHOULD)",
+   "kind": "changed",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Servers **SHOULD** return tools from `tools/list` in a deterministic order",
+    "why": "It adds a normative behavioural requirement on the existing `tools/list` mechanism, which is not an item in the list."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/4",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Require standard MCP request headers (`Mcp-Method`, `Mcp-Name`) on Streamable HTTP POST requests, and add support for custom headers from tool parameters via `x-mcp-header` ([SEP-2243](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2243)).",
+   "mechanism": "Mcp-Method and Mcp-Name request headers",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/2"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Require standard MCP request headers (`Mcp-Method`, `Mcp-Name`) on Streamable HTTP POST requests",
+    "why": "It changes what the existing Streamable HTTP transport requires on POST requests."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/5",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Require `ttlMs` and `cacheScope` fields on results returned by `tools/list`, `prompts/list`, `resources/list`, `resources/read`, and `resources/templates/list` via a new `CacheableResult` interface. `ttlMs` is a freshness hint (in milliseconds) allowing clients to cache responses and reduce polling; `cacheScope` (`\"public\"` or `\"private\"`) controls whether shared intermediaries may cache the response. Both fields complement existing `listChanged` notifications ([SEP-2549](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2549)).",
+   "mechanism": "ttlMs and cacheScope on list/read results",
+   "kind": "added",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "draft",
+    "quote": "via a new `CacheableResult` interface",
+    "why": "It introduces new fields and a new interface, which the kind definitions classify as added, with no listed item changed."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/6",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Change resource not found error code from `-32002` to `-32602` (Invalid Params) to align with JSON-RPC specification.",
+   "mechanism": "resource not found error code -32002 -> -32602",
+   "kind": "changed",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/minor/7",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Authorization servers **SHOULD** include the `iss` parameter in authorization responses per",
+   "mechanism": "iss parameter in authorization responses",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/1"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Authorization servers **SHOULD** include the `iss` parameter in authorization responses per",
+    "why": "It imposes new SHOULD/MUST obligations within the existing authorization framework's authorization-code flow."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/8",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Require MCP clients to specify an appropriate `application_type` during Dynamic Client",
+   "mechanism": "application_type required in Dynamic Client Registration",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-03-26/major/1"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Require MCP clients to specify an appropriate `application_type` during Dynamic Client",
+    "why": "It changes the requirements of Dynamic Client Registration, part of the existing authorization framework."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/9",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Clarify that client credentials are bound to the authorization server that issued them:",
+   "mechanism": "client credentials bound to their authorization server",
+   "kind": "clarified",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/minor/10",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Loosen `inputSchema` and `outputSchema` to allow any JSON Schema 2020-12 keywords, and",
+   "mechanism": "inputSchema/outputSchema loosened to any JSON Schema 2020-12 keywords",
+   "kind": "changed",
+   "related_earlier": [
+    "2025-06-18/major/2"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "both partly",
+    "quote": "Loosen `inputSchema` and `outputSchema` to allow any JSON Schema 2020-12 keywords, and",
+    "why": "It changes the shape of structured tool output (`outputSchema`/`structuredContent`) but builds on, rather than changes, the JSON Schema 2020-12 default dialect."
+   }
+  },
+  {
+   "id": "2026-07-28/minor/11",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Remove the `notifications/elicitation/complete` notification and the",
+   "mechanism": "notifications/elicitation/complete and elicitationId",
+   "kind": "removed",
+   "related_earlier": [
+    "2025-11-25/major/6"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/minor/12",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Define an [error code allocation policy](/specification/2026-07-28/basic/index#error-codes)",
+   "mechanism": "error code allocation policy; new error codes renumbered",
+   "kind": "changed",
+   "related_earlier": [
+    "2026-07-28/major/2",
+    "2026-07-28/minor/4"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Renumber the error codes introduced in this draft",
+    "why": "It renumbers `UnsupportedProtocolVersion` from major/2 and `HeaderMismatch` from the headers of minor/4 in the same version."
+   }
+  },
+  {
+   "id": "2026-07-28/deprecated/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Deprecate the Roots, Sampling, and Logging features",
+   "mechanism": "Roots, Sampling and Logging",
+   "kind": "deprecated",
+   "related_earlier": [
+    "2025-11-25/major/7"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/deprecated/2",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Reclassify the HTTP+SSE transport (deprecated since protocol version",
+   "mechanism": "HTTP+SSE transport reclassified as Deprecated",
+   "kind": "deprecated",
+   "related_earlier": [
+    "2025-03-26/major/2"
+   ],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/deprecated/3",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Reclassify the `includeContext` values `\"thisServer\"` and `\"allServers\"`",
+   "mechanism": "includeContext thisServer/allServers reclassified as Deprecated",
+   "kind": "deprecated",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/deprecated/4",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Deprecate the OAuth 2.0 Dynamic Client Registration Protocol",
+   "mechanism": "Dynamic Client Registration in favor of Client ID Metadata Documents",
+   "kind": "deprecated",
+   "related_earlier": [
+    "2025-03-26/major/1"
+   ],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "Deprecate the OAuth 2.0 Dynamic Client Registration Protocol",
+    "why": "DCR is part of the original authorization framework; 2025-11-25/major/8 (Client ID Metadata Documents) is the successor, not the deprecated mechanism."
+   }
+  },
+  {
+   "id": "2026-07-28/schema/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "`schema.json` now correctly reflects that the Typescript definition of minimum/maximum/default are `number`'s and not just `integers`. This was caused by running the generator using `--defaultNumberType integer` ([PR#2710](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2710)).",
+   "mechanism": "schema.json number types",
+   "kind": "changed",
+   "related_earlier": [],
+   "basis": "decided",
+   "decision": {
+    "right": "blind",
+    "quote": "`schema.json` now correctly reflects that the Typescript definition of minimum/maximum/default are `number`'s and not just `integers`",
+    "why": "The published schema's types change from integer to number, a value/shape change rather than wording only."
+   }
+  },
+  {
+   "id": "2026-07-28/governance/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Adopt a specification",
+   "mechanism": "feature lifecycle and deprecation policy",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  },
+  {
+   "id": "2026-07-28/process/1",
+   "version": "2026-07-28",
+   "file": "docs/specification/2026-07-28/changelog.mdx",
+   "quote": "Formalize PR-based SEP workflow with markdown files in `seps/` directory, PR-derived numbering, sponsor responsibilities, and status management via PR labels ([SEP-1850](https://github.com/modelcontextprotocol/specification/pull/1850)).",
+   "mechanism": "PR-based SEP workflow",
+   "kind": "governance",
+   "related_earlier": [],
+   "basis": "agreed"
+  }
+ ]
+}

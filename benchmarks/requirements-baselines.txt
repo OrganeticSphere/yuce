@@ -1,0 +1,54 @@
+# The optional LangGraph and Temporal baselines of the runner (--arm-a-orchestration langgraph-native / temporal-native,
+# --lg-checkpointer sqlite), the exact set the published runs used, every wheel pinned by hash. Python 3.13.
+# Install (Windows x86_64, the platform the runs used; the hashes are of those wheels):
+#   python -m pip install --require-hashes --no-deps -r benchmarks/requirements-baselines.txt
+# Elsewhere the compiled wheels differ: install the same versions without the hashes, e.g.
+#   python -c "import re,sys; print(''.join(re.sub(r' --hash=\S+', '', l) for l in open(sys.argv[1])))" benchmarks/requirements-baselines.txt > req.txt
+#   python -m pip install -r req.txt
+# The Temporal baseline also needs the Temporal CLI (temporal server start-dev; the runs used v1.9.1) on PATH.
+# The kernel, the runner's own logic and the no-LLM demo need none of it (standard library only).
+langgraph==1.2.15 --hash=sha256:6e1611c4dad33d933b8cf21a91db73285221e67508feb2db5a0397af55fb838f
+temporalio==1.34.0 --hash=sha256:03bd86561188c18d88425178bc690fe0791104b78566dcebd98f59cbdbce0952
+nexus-rpc==1.4.0 --hash=sha256:14c953d3519113f8ccec533a9efdb6b10c28afef75d11cdd6d422640c40b3a49
+langchain-core==1.6.10 --hash=sha256:14341bdd8b42d0dd9a53dbbcd8b0599ab47b0c718c7caa12e3eb5c50b32cffcb
+httpx==0.28.1 --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
+httpcore==1.0.9 --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55
+jsonpatch==1.35 --hash=sha256:417e05303ebf7aef98d3ebf1e1ae7e7a4de6ec57bc5d243cd3509eff650e959f
+langgraph-checkpoint==4.3.0 --hash=sha256:bedfafe2f997ded60e4fa593e79f56f436a6e45586392dc382aa810d0c751c64
+langgraph-prebuilt==1.1.0 --hash=sha256:51e311747d755b751d5c6b39b0c1446124d3a7643d2515017e6714b323508fc9
+langgraph-sdk==0.4.7 --hash=sha256:a005c7ac662c318a3405e436e9effaa90c05343f9f4ae9e11dca19c9369727dd
+langsmith==0.14.8 --hash=sha256:bda7ec3d74bc5af3244c90920e924efcf99a700638860bf87d0231bfdb4f4ce4
+httpx2==2.13.1 --hash=sha256:6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4
+httpcore2==2.13.1 --hash=sha256:e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a
+protobuf==7.36.2 --hash=sha256:a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353
+pydantic==2.14.1 --hash=sha256:9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454
+pydantic_core==2.50.1 --hash=sha256:7816e98acc08119dc0f340ab167048ecc54126316330c1f0caf7c6756c88e28f
+PyYAML==6.0.3 --hash=sha256:79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c
+tenacity==9.2.1 --hash=sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e
+types-protobuf==7.35.1.20260906 --hash=sha256:5155e48569e0dabff303fdf578db96cd31ea9a4a63b18018a4ceac6b0ae17462
+typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+uuid_utils==0.17.1 --hash=sha256:1cf7a837c3467f69ba3ef32caa43b1c5f5a462b7d960bcc59083459aed2b4202
+websockets==16.1.1 --hash=sha256:d9531d9cbeac99af6f038fb1bc351403531f7d634a2c2e10e2f7c854c6ed5b68
+annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
+anyio==4.15.1 --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101
+distro==1.9.0 --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
+h11==0.16.0 --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
+idna==3.20 --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+jsonpointer==3.2.1 --hash=sha256:b19ee68644e9ffb51440448d8f7811af2b7406eea1db90603e93f5849323119a
+langchain-protocol==0.0.19 --hash=sha256:4cdf879a492a35980fd859ae792d3c65458ccaae504e183c9a10d7eac1f0720f
+orjson==3.13.0 --hash=sha256:4ee06e53b998c71ce3eb93b86222912fdd9dcced685ac64d4525d36fac338ea4
+ormsgpack==1.12.2 --hash=sha256:21f4276caca5c03a818041d637e4019bc84f9d6ca8baa5ea03e5cc8bf56140e9
+packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+requests==2.34.2 --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+charset-normalizer==3.5.2 --hash=sha256:78456a747de8dc58360ffa581f30a002baf5aa28cb262536545e91f113ed7639
+urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+certifi==2026.7.22 --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+requests-toolbelt==1.0.0 --hash=sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06
+sniffio==1.3.1 --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2
+truststore==0.10.5 --hash=sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c
+typing-inspection==0.4.4 --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
+xxhash==4.0.1 --hash=sha256:97b94fb29abf21f5f0bde15f7dbdd3a4aa2dc59f37026adc7b4bee8563b84375
+zstandard==0.25.0 --hash=sha256:1f830a0dac88719af0ae43b8b2d6aef487d437036468ef3c2ea59c51f9d55fd5
+langgraph-checkpoint-sqlite==3.1.2 --hash=sha256:249640b84efd4872585a9ce596a63c2593e543f748341791591aeaf4c878329c
+aiosqlite==0.22.1 --hash=sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb
+sqlite-vec==0.1.9 --hash=sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32

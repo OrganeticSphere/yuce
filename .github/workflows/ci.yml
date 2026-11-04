@@ -1,0 +1,67 @@
+name: CI
+
+# Actions minutes are limited (the owner, 2026-10-30): a change of documentation alone is not built, a newer push to the same
+# branch cancels the older run, and the build is cached between runs.
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore: ["**.md"]
+  pull_request:
+    branches: [main, dev]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux on every push and pull request. Windows only on a manual run (owner, 2026-11-04: Windows minutes cost about twice
+        # Linux's and made half of the November spend): the full local gate before each pull request already runs on Windows, and
+        # Linux is the platform it does not cover. Run the workflow by hand on Windows before a release.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Repository language gate (no Cyrillic in tracked files)
+        run: python scripts/check_no_cyrillic.py
+
+      - name: Formatting (rustfmt.toml; Linux only, where checkouts keep LF line ends)
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --release -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --release
+
+      - name: Runner logic (offline unit tests; no server, no model calls)
+        run: python -m unittest discover -s benchmarks -p "test_*.py"
+
+      - name: EXP-10 self-test (MCP server, leases, guard; no model calls)
+        run: python benchmarks/run_exp10_mcp_swarm.py --selftest --skip-build
+
+      - name: Pilot A vs C self-test (audit-serve, stub model, both arms and phases; no model calls)
+        run: python benchmarks/run_pilot_ac.py --selftest
+
+      - name: No-LLM demo (quote gate, revoke, replay on the default v0.1 profile; no model calls)
+        run: |
+          python examples/revoke-and-replay/demo.py --report report.json --html inspector_report.html
+          python examples/revoke-and-replay/check_inspector.py report.json

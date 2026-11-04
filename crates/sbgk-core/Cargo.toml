@@ -1,0 +1,13 @@
+[package]
+name = "sbgk-core"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+sha2 = "0.10"
+serde_json = "1"
+
+[features]
+audit-root-profile = []
+audit-root-verify = []

@@ -1,0 +1,6 @@
+{
+  "format": "r2r-common-answer-guidance/1",
+  "chronology": "Use dates stated by the sources. A report date says when the report stated something, not when it took effect. When later evidence replaces or changes an earlier state for the same fact and scope, give the later state as the latest known and the earlier one as historical, as the sources state them. When later evidence only qualifies an earlier state by adding a scope or condition, both stand: give the earlier state with the later qualification. A later report date alone does not prove replacement. Never present an earlier state as current when later evidence supplied here replaces it.",
+  "coverage": "The material supplied in this task may be a selection rather than the whole corpus. Do not infer that a report or the corpus lacks a fact merely because it is absent from the supplied excerpts, notes, records or partial answers. If a report has not been read in full, say that the fact is not shown in the material supplied. State incomplete coverage in the answer.",
+  "target_claim_characters": 200
+}

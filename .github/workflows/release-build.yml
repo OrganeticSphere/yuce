@@ -1,0 +1,86 @@
+name: Release build
+
+# Release binaries for Linux, macOS and Windows (the owner, 2026-11-03: binaries for the v0.1 release). Built on demand only:
+# a pushed tag `build-*` or `v*`, or a manual run. No GitHub Release is created here: publishing is the owner's decision.
+# Actions minutes are limited (the owner, 2026-10-30): macOS minutes bill at ten times Linux and Windows at twice, so one macOS
+# job builds both Apple targets, and the jobs build and smoke-test the binaries without the full test suite (CI runs it).
+on:
+  push:
+    tags: ["build-*", "v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            # the oldest supported image: its glibc lets the binary run on older distributions too
+            os: ubuntu-22.04
+            targets: x86_64-unknown-linux-gnu
+          - name: macos
+            os: macos-latest
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            targets: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add the targets
+        shell: bash
+        run: for t in ${{ matrix.targets }}; do rustup target add "$t"; done
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Name the build
+        shell: bash
+        # a manual run from a branch such as claude/x has a slash in its ref name: not valid in file or artifact names
+        run: echo "BUILD_NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
+      - name: Build and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for t in ${{ matrix.targets }}; do
+            cargo build --release --locked -p sbgk-cli --target "$t"
+            ext=""; [[ "$t" == *windows* ]] && ext=".exe"
+            name="yuce-${BUILD_NAME}-${t}"
+            mkdir -p "dist/$name"
+            cp "target/$t/release/sbgk$ext" "target/$t/release/yuce$ext" LICENSE NOTICE THIRD_PARTY_LICENSES.md README.md "dist/$name/"
+            # smoke test where the binary runs on this host: the command line answers with its usage
+            if [[ "$t" == "x86_64-unknown-linux-gnu" || "$t" == "aarch64-apple-darwin" || "$t" == *windows* ]]; then
+              out="$("dist/$name/sbgk$ext" 2>&1 || true)"
+              echo "$out" | grep -q "usage: sbgk" || { echo "smoke test failed: $out"; exit 1; }
+            fi
+            if [[ "$t" == *windows* ]]; then
+              (cd dist && 7z a -tzip "$name.zip" "$name" > /dev/null)
+            else
+              tar -C dist -czf "dist/$name.tar.gz" "$name"
+            fi
+            rm -rf "dist/$name"
+          done
+          # the sums are written outside dist first, so the file does not list itself
+          (cd dist && for f in *; do sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"; done) > "$RUNNER_TEMP/sums.txt"
+          mv "$RUNNER_TEMP/sums.txt" "dist/SHA256SUMS-${{ matrix.name }}.txt"
+          cat "dist/SHA256SUMS-${{ matrix.name }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yuce-${{ env.BUILD_NAME }}-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

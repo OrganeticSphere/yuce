@@ -1,0 +1,1 @@
+{"goals": [{"entity": "svc_auth", "predicate": "needs_review"}, {"entity": "svc_pay", "predicate": "needs_review"}], "docs": ["policy"]}

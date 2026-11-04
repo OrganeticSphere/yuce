@@ -1,0 +1,3 @@
+{"seq":1,"op":"bind_evidence","local_id":"e1","doc_id":"policy","exact_quote":"Clause U.1: service svc_auth shall call interface api_v1 in production from t=100 until t=200."}
+{"seq":2,"op":"bind_evidence","local_id":"e2","doc_id":"policy","exact_quote":"Clause D.1: interface api_v1 is deprecated in production from t=150 until t=300."}
+{"seq":3,"op":"assert_fact","local_id":"f1","s":"svc_auth","p":"uses_api","o":"api_v1","polarity":"POS","ctx":"prod","t":[100,200],"evidence":["e1"]}

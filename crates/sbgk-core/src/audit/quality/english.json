@@ -1,0 +1,23 @@
+{
+  "language": "en",
+  "version": "graph-terms/1",
+  "literals": [
+    "true",
+    "false",
+    "none",
+    "null",
+    "yes",
+    "no"
+  ],
+  "clause_connectors": [
+    "not",
+    "rather than",
+    "instead of",
+    "without",
+    "until",
+    "as",
+    "or",
+    "but",
+    "whereas"
+  ]
+}

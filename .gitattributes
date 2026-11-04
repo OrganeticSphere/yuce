@@ -1,0 +1,28 @@
+# kernel files that rest on the private corpus of the first pilot stay out of an exported snapshot: a regression on the journal
+# of a private run with its fixture, and the offline profiling example over the private reports
+crates/sbgk-core/tests/private_run_replay.rs export-ignore
+crates/sbgk-core/tests/data/refused_refiner_map_adb94d9.wal export-ignore
+crates/sbgk-core/examples/audit_offline.rs export-ignore
+# journals are hash-chained bytes: never convert their line endings
+*.wal -text
+# open corpora are pinned upstream bytes: never convert their line endings
+benchmarks/corpora/** -text
+# the runner's closed layer (Jev, the private pilot set, the owner's subscription transports) stays out of an exported snapshot
+benchmarks/sbgk_bench/closed export-ignore
+# The public snapshot (git archive of one dev commit) shows the product and its final results. The internal experiment history
+# (EXP-1 .. EXP-12 data, their reports, the internal changelog and roadmap) and the release tooling stay in this repository.
+results export-ignore
+SBGK_EXPERIMENT_REPORT*.md export-ignore
+BYTEANCHOR_CONTINUITY.md export-ignore
+docs/internal export-ignore
+scripts/package_runs.py export-ignore
+# EXP-11A / EXP-12 ran through the owner's subscription transports and local installs: their runner, summaries and tests
+benchmarks/exp11a_native_smoke.py export-ignore
+benchmarks/exp11a_summary.py export-ignore
+benchmarks/exp12_summary.py export-ignore
+benchmarks/run_exp11a.py export-ignore
+benchmarks/run_exp12.py export-ignore
+benchmarks/test_exp11a_native.py export-ignore
+benchmarks/test_exp12_tiered.py export-ignore
+benchmarks/sbgk_bench/exp11a_native.py export-ignore
+benchmarks/sbgk_bench/exp12_tiered.py export-ignore

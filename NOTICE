@@ -1,0 +1,32 @@
+YuCe
+Copyright 2026 Aset Uisin, OrganeticSphere (organetic.ai)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+-------------------------------------------------------------------------------
+Included benchmark corpus: Model Context Protocol (MCP) specification
+-------------------------------------------------------------------------------
+benchmarks/corpora/mcp-spec-2026-07-28/ holds 22 pages of the MCP specification,
+read at tag 2026-07-28 of https://github.com/modelcontextprotocol/modelcontextprotocol
+(commit 5f5440bb26a62e2cf3440b92da5a667efa03b267). The pages keep their upstream bytes
+and repository-relative paths; manifest.json records each file's SHA-256 and upstream
+git blob id. No page was modified.
+
+Model Context Protocol specification, (c) Anthropic, PBC and contributors.
+The corpus is not licensed under this product's license. Its terms are in
+benchmarks/corpora/mcp-spec-2026-07-28/LICENSE (Apache-2.0, with the project's notice
+on MIT contributions and CC-BY-4.0 documentation) and
+benchmarks/corpora/mcp-spec-2026-07-28/LICENSE-MIT ("Copyright (c) 2024-2025
+Anthropic, PBC and contributors"); benchmarks/corpora/mcp-spec-2026-07-28/README.md
+describes the selection.
+
+The question sets, checklists and gold files under benchmarks/corpora/gold/ are
+part of this product.
+
+-------------------------------------------------------------------------------
+Third-party software
+-------------------------------------------------------------------------------
+The Rust crates the binaries are built from, and the Python packages the runner's
+optional LangGraph and Temporal baselines install, are listed with their licenses
+in THIRD_PARTY_LICENSES.md. They are not part of this repository's source; their
+own license terms apply to them.

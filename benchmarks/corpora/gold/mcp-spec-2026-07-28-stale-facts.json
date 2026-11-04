@@ -1,0 +1,329 @@
+{
+ "corpus": "mcp-spec-2026-07-28",
+ "as_of": "2026-07-28",
+ "use": "the oracle of the stale-current measure, judged against the target version 2026-07-28. One fact is one unit of counting. A removed, replaced or changed fact stated as current for 2026-07-28 is an error; a deprecated fact is an error only when stated as current without its deprecation. A control fact stays true: marking it superseded is an error. A statement explicitly scoped to an older version (for example 'in 2025-06-18 ...') or to legacy clients is not an error. Each fact quotes where it held and where it ended; boundary says what did not end with it",
+ "selection": "facts with a quote in an older page or changelog of the corpus; facts attested only by the later changelog (elicitationId, the -32002 error code, resources/subscribe, logging/setLevel) are left out",
+ "author": "claude-opus-5-5, after Codex reviews MCP-02 and MCP-03 (2026-10-29); every quote is checked verbatim by benchmarks/test_mcp_corpus.py",
+ "facts": [
+  {
+   "id": "batching",
+   "fact": "JSON-RPC batching is supported",
+   "held_in": [
+    "2025-03-26"
+   ],
+   "old": {
+    "file": "docs/specification/2025-03-26/changelog.mdx",
+    "quote": "Added support for JSON-RPC **[batching](https://www.jsonrpc.org/specification#batch)**"
+   },
+   "status": "removed",
+   "since": "2025-06-18",
+   "ended_by": [
+    "2025-06-18/major/1"
+   ],
+   "new": {
+    "file": "docs/specification/2025-06-18/changelog.mdx",
+    "quote": "Remove support for JSON-RPC **[batching](https://www.jsonrpc.org/specification#batch)**"
+   }
+  },
+  {
+   "id": "sessions",
+   "fact": "Streamable HTTP has protocol-level sessions carried in the MCP-Session-Id header",
+   "held_in": [
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/transports.mdx",
+    "quote": "the Streamable HTTP transport **MUST** include it in the `MCP-Session-Id` header on"
+   },
+   "status": "removed",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/1"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Remove protocol-level sessions and the `Mcp-Session-Id` header from the Streamable HTTP transport."
+   },
+   "boundary": "the Streamable HTTP transport itself stays (control fact streamable-http)"
+  },
+  {
+   "id": "initialize",
+   "fact": "an initialization phase (initialize / initialized) must be the first interaction",
+   "held_in": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+    "quote": "The initialization phase **MUST** be the first interaction between client and server."
+   },
+   "status": "removed",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/2"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Make MCP stateless: remove the `initialize`/`notifications/initialized` handshake."
+   },
+   "boundary": "HTTP POST requests still must carry the MCP-Protocol-Version header (control fact protocol-version-header)"
+  },
+  {
+   "id": "get-stream",
+   "fact": "the client may open a server-to-client SSE stream with an HTTP GET to the MCP endpoint",
+   "held_in": [
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/transports.mdx",
+    "quote": "1. The client **MAY** issue an HTTP GET to the MCP endpoint. This can be used to open an"
+   },
+   "status": "replaced",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/4"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Replace the HTTP GET endpoint and `resources/subscribe`/`resources/unsubscribe` with `subscriptions/listen`"
+   }
+  },
+  {
+   "id": "resumability",
+   "fact": "a broken SSE stream is resumed with the Last-Event-ID header",
+   "held_in": [
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/transports.mdx",
+    "quote": "Resumption is always via HTTP GET with `Last-Event-ID`."
+   },
+   "status": "removed",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/9"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Remove SSE stream resumability and message redelivery (the `Last-Event-ID` header and SSE event IDs)"
+   }
+  },
+  {
+   "id": "ping",
+   "fact": "ping is a protocol utility",
+   "held_in": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+    "quote": "[pings](/specification/2025-11-25/basic/utilities/ping)"
+   },
+   "status": "removed",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/5"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Remove `ping`, `logging/setLevel`, and `notifications/roots/list_changed`."
+   }
+  },
+  {
+   "id": "tasks-core",
+   "fact": "tasks are an experimental part of the core protocol",
+   "held_in": [
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/changelog.mdx",
+    "quote": "Add experimental support for [tasks](/specification/2025-11-25/basic/utilities/tasks)"
+   },
+   "status": "replaced",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/major/6"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Move experimental tasks out of the core protocol and into an official extension (`io.modelcontextprotocol/tasks`)."
+   },
+   "boundary": "tasks still exist, as an official extension"
+  },
+  {
+   "id": "http-sse",
+   "fact": "HTTP with SSE is a current, recommended transport",
+   "held_in": [
+    "2024-11-05"
+   ],
+   "old": {
+    "file": "docs/specification/2024-11-05/basic/transports.mdx",
+    "quote": "In the **SSE** transport, the server operates as an independent process that can handle"
+   },
+   "status": "deprecated",
+   "since": "2025-03-26",
+   "ended_by": [
+    "2025-03-26/major/2",
+    "2026-07-28/deprecated/2"
+   ],
+   "new": {
+    "file": "docs/specification/2025-03-26/changelog.mdx",
+    "quote": "Replaced the previous HTTP+SSE transport with a more flexible **[Streamable HTTP"
+   },
+   "boundary": "it remains in the specification as Deprecated for backwards compatibility: saying so is correct"
+  },
+  {
+   "id": "dcr-should-support",
+   "fact": "authorization servers and MCP clients SHOULD support Dynamic Client Registration",
+   "held_in": [
+    "2025-03-26",
+    "2025-06-18"
+   ],
+   "old": {
+    "file": "docs/specification/2025-06-18/basic/authorization.mdx",
+    "quote": "1. Authorization servers and MCP clients **SHOULD** support the OAuth 2.0 Dynamic Client Registration"
+   },
+   "status": "changed",
+   "since": "2025-11-25",
+   "ended_by": [
+    "2025-11-25/major/8"
+   ],
+   "new": {
+    "file": "docs/specification/2025-11-25/basic/authorization.mdx",
+    "quote": "3. Authorization servers and MCP clients **MAY** support the OAuth 2.0 Dynamic Client Registration"
+   },
+   "boundary": "from 2025-11-25 support is optional (MAY) and Client ID Metadata Documents come first; DCR stays allowed"
+  },
+  {
+   "id": "dcr-fallback",
+   "fact": "Dynamic Client Registration is an active (not deprecated) fallback registration mechanism",
+   "held_in": [
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/authorization.mdx",
+    "quote": "3. Use Dynamic Client Registration as a fallback if the Authorization Server supports it"
+   },
+   "status": "deprecated",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/deprecated/4"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/basic/authorization/client-registration.mdx",
+    "quote": "Dynamic Client Registration is deprecated. New implementations should use"
+   },
+   "boundary": "it remains available for backwards compatibility: saying so is correct"
+  },
+  {
+   "id": "roots",
+   "fact": "Roots is an active (not deprecated) feature",
+   "held_in": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+    "quote": "Ability to provide filesystem [roots](/specification/2025-11-25/client/roots)"
+   },
+   "status": "deprecated",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/deprecated/1"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Deprecate the Roots, Sampling, and Logging features"
+   },
+   "boundary": "it remains fully functional during the deprecation window: saying so is correct"
+  },
+  {
+   "id": "sampling",
+   "fact": "Sampling is an active (not deprecated) feature",
+   "held_in": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+    "quote": "Support for LLM [sampling](/specification/2025-11-25/client/sampling) requests"
+   },
+   "status": "deprecated",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/deprecated/1"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Deprecate the Roots, Sampling, and Logging features"
+   },
+   "boundary": "it remains fully functional during the deprecation window: saying so is correct"
+  },
+  {
+   "id": "logging",
+   "fact": "Logging is an active (not deprecated) feature",
+   "held_in": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25"
+   ],
+   "old": {
+    "file": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+    "quote": "Emits structured [log messages](/specification/2025-11-25/server/utilities/logging)"
+   },
+   "status": "deprecated",
+   "since": "2026-07-28",
+   "ended_by": [
+    "2026-07-28/deprecated/1"
+   ],
+   "new": {
+    "file": "docs/specification/2026-07-28/changelog.mdx",
+    "quote": "Deprecate the Roots, Sampling, and Logging features"
+   },
+   "boundary": "it remains fully functional during the deprecation window: saying so is correct"
+  }
+ ],
+ "controls": [
+  {
+   "id": "protocol-version-header",
+   "fact": "HTTP requests carry the MCP-Protocol-Version header",
+   "since": "2025-06-18",
+   "old": {
+    "file": "docs/specification/2025-06-18/changelog.mdx",
+    "quote": "Require [negotiated protocol version to be specified](/specification/2025-06-18/basic/transports#protocol-version-header)"
+   },
+   "still": {
+    "file": "docs/specification/2026-07-28/basic/transports/streamable-http.mdx",
+    "quote": "Every POST request to the MCP endpoint **MUST** include an\n`MCP-Protocol-Version` header."
+   }
+  },
+  {
+   "id": "streamable-http",
+   "fact": "Streamable HTTP is a standard transport",
+   "since": "2025-03-26",
+   "old": {
+    "file": "docs/specification/2025-03-26/changelog.mdx",
+    "quote": "Replaced the previous HTTP+SSE transport with a more flexible **[Streamable HTTP"
+   },
+   "still": {
+    "file": "docs/specification/2026-07-28/basic/transports/streamable-http.mdx",
+    "quote": "Streamable HTTP was introduced in protocol version 2025-03-26 as a replacement\nfor the [HTTP+SSE transport][http-sse] from protocol version 2024-11-05."
+   }
+  }
+ ]
+}

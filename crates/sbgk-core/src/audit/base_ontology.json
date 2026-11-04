@@ -1,0 +1,18 @@
+{
+  "format": "r2r-audit-ontology/1",
+  "types": ["Report", "Component", "Revision", "RevisionRef", "Check", "Gate", "Stage", "Rule", "Limitation", "Decision", "Issue"],
+  "relations": [
+    {"id": "supports", "from": "record", "to": "record"},
+    {"id": "contradicts", "from": "record", "to": "record"},
+    {"id": "qualifies", "from": "record", "to": "record"},
+    {"id": "supersedes", "from": "record", "to": "record"},
+    {"id": "depends_on", "from": "record", "to": "record"},
+    {"id": "same_as", "from": "record", "to": "record"},
+    {"id": "duplicate_of", "from": "record", "to": "record"},
+    {"id": "about", "from": "record", "to": "concept"},
+    {"id": "validated_by", "from": "concept:Check", "to": "concept:Revision"},
+    {"id": "in_report", "from": "record", "to": "concept:Report"}
+  ],
+  "stances": ["reported", "confirmed", "refuted", "qualified", "superseded", "open", "unknown"],
+  "concepts": []
+}

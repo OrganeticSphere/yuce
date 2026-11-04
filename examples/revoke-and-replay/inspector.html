@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network: everything on this page comes from the report file the viewer opens. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<title>YuCe evidence inspector</title>
+<style>
+:root {
+  --bg: #f6f8f7; --panel: #ffffff; --line: #d9e0dd; --text: #18211e; --muted: #5d6b66;
+  --ok: #0f8a5f; --ok-bg: #e3f5ec; --bad: #c0392b; --bad-bg: #fbe9e6; --mark: #fff1b8; --mark2: #d8ecff; --accent: #0b7a55;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b100e; --panel: #121a17; --line: #24302b; --text: #e4ebe8; --muted: #93a39d;
+    --ok: #34c88c; --ok-bg: #11301f; --bad: #ff7b6b; --bad-bg: #3a1714; --mark: #5a4a10; --mark2: #173a5c; --accent: #34c88c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { border-bottom: 1px solid var(--line); background: var(--panel); }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 14px 16px; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, .file { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+button:hover, .file:hover { border-color: var(--accent); }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.file input { display: none; }
+.badge { display: inline-block; font: 600 12px var(--mono); padding: 2px 8px; border-radius: 999px; }
+.badge.ok { color: var(--ok); background: var(--ok-bg); }
+.badge.bad { color: var(--bad); background: var(--bad-bg); }
+.roots { font: 12px var(--mono); color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
+.roots b { color: var(--text); font-weight: 500; }
+main .wrap { display: grid; gap: 14px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+.grid2 { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 860px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+ol.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+ol.steps li { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; font-size: 14px; align-items: start; }
+ol.steps li > .badge { justify-self: start; }
+.note { color: var(--muted); font-size: 13px; }
+.drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px; text-align: center; }
+.drop.over { border-color: var(--accent); }
+code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+.directive { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--bg); }
+mark { background: var(--mark); color: inherit; border-radius: 2px; }
+mark.q2 { background: var(--mark2); }
+mark.gone { background: var(--bad-bg); color: var(--bad); text-decoration: line-through; }
+.diff { color: var(--bad); font-weight: 700; text-decoration: underline; }
+svg { width: 100%; height: auto; display: block; }
+.node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.node.ok rect { stroke: var(--ok); }
+.node.bad rect { stroke: var(--bad); stroke-dasharray: 5 4; }
+.node.revoked rect { stroke: var(--muted); stroke-dasharray: 2 3; }
+.node text { fill: var(--text); font: 12px system-ui, sans-serif; }
+.node text.small { fill: var(--muted); font: 11px var(--mono); }
+.node { cursor: pointer; }
+.edge { fill: none; stroke-width: 2; }
+.edge.ok { stroke: var(--ok); }
+.edge.bad { stroke: var(--bad); stroke-dasharray: 6 5; }
+.cards { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 640px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { border: 1px solid var(--line); border-radius: 6px; padding: 10px; font-size: 13px; overflow-wrap: anywhere; }
+.card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 6px 0 0; }
+.card dt { color: var(--muted); }
+.card dd { margin: 0; font-family: var(--mono); font-size: 12px; }
+.cmd { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<!-- The report fields this page reads; check_inspector.py checks each one against a report the demo wrote. -->
+<script type="application/json" id="report-fields">
+["format", "binary_version", "page", "question", "all_ok", "seconds", "steps", "task.task_id", "task.kind", "task.doc_id", "directive",
+ "altered.quote", "altered.original", "altered.reply_status", "altered.code", "altered.message", "altered.records_stored",
+ "submitted.receipts", "claims", "revoke.record", "revoke.reply.status", "before_stop.audit_root", "before_stop.engine_root",
+ "before_stop.wal_head", "after_restart.audit_root", "after_restart.engine_root", "after_restart.resumed", "after_restart.grounded",
+ "edited_copy.change", "edited_copy.refusal", "edited_copy.original_unchanged", "receipt", "verify.journal.status",
+ "verify.journal.exit", "verify.journal.entries", "verify.journal.records", "verify.journal.audit_root", "verify.journal.engine_root",
+ "verify.journal.wal_head", "verify.journal.expected.found_after_entries", "verify.edited_copy.status", "verify.edited_copy.exit",
+ "repeat"]
+</script>
+<!-- demo.py --html writes this page with its report here, so the file opens with its data; empty in the template. -->
+<script type="application/json" id="yuce-report"></script>
+<header>
+  <div class="wrap">
+    <div class="bar">
+      <div>
+        <h1>YuCe evidence inspector</h1>
+        <p class="sub">The no-LLM demo as the real <code>sbgk</code> answered it: quotes, claims, a revocation, a replay and the journal check.</p>
+      </div>
+      <div class="row">
+        <span id="verdict"></span>
+        <label class="file">Open report.json<input id="file" type="file" accept=".json,application/json"></label>
+        <button id="copy-receipt" type="button" hidden>Copy receipt</button>
+      </div>
+    </div>
+    <div class="roots" id="roots" hidden></div>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <section class="panel" id="empty">
+      <div class="drop" id="drop">
+        <p><b>Open the report the demo writes</b>, or drop it here.</p>
+        <p class="cmd" style="justify-content:center"><code>python examples/revoke-and-replay/demo.py --report report.json</code></p>
+        <p class="note">This page has no data of its own and makes no network requests: everything it shows comes from the file you open.</p>
+      </div>
+      <p class="note" id="load-error" hidden></p>
+    </section>
+
+    <section class="panel" id="steps-panel" hidden>
+      <h2>Steps</h2>
+      <ol class="steps" id="steps"></ol>
+      <p class="note" id="run-line"></p>
+    </section>
+
+    <div class="grid2" id="main-grid" hidden>
+      <section class="panel">
+        <h2>Claims and the quotes they rest on</h2>
+        <div class="row" role="group" aria-label="State shown">
+          <button type="button" data-state="before" aria-pressed="true">Before the revocation</button>
+          <button type="button" data-state="after" aria-pressed="false">After it</button>
+          <button type="button" data-state="restart" aria-pressed="false">After the restart</button>
+        </div>
+        <svg id="graph" viewBox="0 0 560 300" role="img" aria-label="quotes on the left, claims on the right, based_on links between them"></svg>
+        <p class="note" id="graph-note"></p>
+        <p class="note">Each state is the kernel's own answer (<code>audit_record</code>), recorded by the demo. Nothing is computed here.</p>
+        <h2 style="margin-top:14px">Step 1: the refused quote</h2>
+        <p class="note">The same sentence with one byte changed, sent before the exact quotes. It never entered the journal:</p>
+        <pre id="altered" class="card"></pre>
+        <p class="note" id="altered-reply"></p>
+      </section>
+      <section class="panel">
+        <h2>What the reader was handed</h2>
+        <p class="note" id="directive-note"></p>
+        <div class="directive"><pre id="directive"></pre></div>
+        <p class="note" id="offsets"></p>
+      </section>
+    </div>
+
+    <section class="panel" id="journal-panel" hidden>
+      <h2>The journal check, without the server</h2>
+      <p class="note">The receipt (audit and engine roots, chain head) was saved before the server stopped. <code>sbgk audit-verify</code> replays a journal and looks for that state.</p>
+      <div class="cards">
+        <div class="card" id="card-journal"></div>
+        <div class="card" id="card-copy"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="repeat-panel" hidden>
+      <h2>Repeat it</h2>
+      <div id="repeat"></div>
+      <p class="note">The kernel checks bytes and registered dependencies, not meaning. Keep the receipt where the journal's writer cannot change it, such as a protected commit or a CI artifact.</p>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const SVG_NS = "http://www.w3.org/2000/svg";
+let report = null;
+let shown = "before";
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function get(obj, path) { return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+function short(h) { return typeof h === "string" && h.length > 20 ? h.slice(0, 12) + "..." + h.slice(-4) : String(h); }
+function badge(ok, text) { return el("span", { class: "badge " + (ok ? "ok" : "bad") }, text); }
+function copy(text, button) {
+  const done = () => { const t = button.textContent; button.textContent = "Copied"; setTimeout(() => { button.textContent = t; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, () => fallback(text, done)); }
+  else fallback(text, done);
+}
+function fallback(text, done) {
+  const t = el("textarea", { readonly: "" }, text);
+  document.body.append(t); t.select();
+  try { document.execCommand("copy"); done(); } finally { t.remove(); }
+}
+
+function check(r) {
+  const fields = JSON.parse($("report-fields").textContent);
+  const missing = fields.filter((f) => get(r, f) == null);
+  if (r.format !== "yuce-no-llm-demo-report/1") return "not a report of the no-LLM demo (format " + String(r.format) + ")";
+  if (missing.length) return "the report lacks " + missing.join(", ");
+  return null;
+}
+
+function load(text) {
+  let r;
+  try { r = JSON.parse(text); } catch (e) { return fail("not JSON: " + e.message); }
+  const why = check(r);
+  if (why) return fail(why);
+  report = r;
+  $("empty").hidden = true;
+  for (const id of ["steps-panel", "main-grid", "journal-panel", "repeat-panel", "roots", "copy-receipt"]) $(id).hidden = false;
+  renderHeader(); renderSteps(); renderDirective(); renderAltered(); renderGraph(); renderJournal(); renderRepeat();
+}
+function fail(msg) { const n = $("load-error"); n.hidden = false; n.textContent = "Cannot show this file: " + msg; }
+
+function renderHeader() {
+  const v = report.verify.journal;
+  const c = report.verify.edited_copy;
+  $("verdict").replaceChildren(badge(v.status === "VERIFIED" && v.exit === 0, "journal: " + v.status + " (exit " + v.exit + ")"), " ",
+    badge(c.status === "VERIFIED", "edited copy: " + c.status + " (exit " + c.exit + ")"));
+  $("roots").replaceChildren(
+    el("span", {}, "audit_root ", el("b", {}, short(v.audit_root))),
+    el("span", {}, "engine_root ", el("b", {}, short(v.engine_root))),
+    el("span", {}, "wal_head ", el("b", {}, short(v.wal_head))),
+    el("span", {}, "page ", el("b", {}, report.page)));
+}
+function renderSteps() {
+  $("steps").replaceChildren(...report.steps.map((s) => el("li", {}, badge(s.ok, s.ok ? "ok" : "FAILED"), el("span", {}, s.n + ". " + s.text))));
+  $("run-line").textContent = (report.all_ok ? "All steps behaved as described" : "Some step did not behave as described") +
+    " (" + report.seconds + " s, " + report.binary_version + ").";
+}
+
+function quotes() {
+  return report.claims.map((c, i) => ({ text: c.quote, cls: i === 0 ? "q1" : "q2", record: c.based_on }));
+}
+function renderDirective() {
+  const d = report.directive;
+  const hits = [];
+  for (const q of quotes()) {
+    const at = d.indexOf(q.text);
+    if (at >= 0) hits.push({ at, end: at + q.text.length, q });
+  }
+  hits.sort((a, b) => a.at - b.at);
+  const parts = [];
+  let pos = 0;
+  for (const h of hits) {
+    if (h.at < pos) continue;
+    parts.push(d.slice(pos, h.at));
+    const m = el("mark", { class: h.q.cls, id: "mark-" + h.q.cls, title: "quote " + h.q.record }, d.slice(h.at, h.end));
+    parts.push(m);
+    pos = h.end;
+  }
+  parts.push(d.slice(pos));
+  $("directive").replaceChildren(...parts);
+  // the section starts after "(bytes a..b):" and "<<<"; its bytes are the page's bytes a..b
+  const head = /\(bytes (\d+)\.\.(\d+)\):\s*\n<<<\n/.exec(d);
+  const utf8 = (t) => new TextEncoder().encode(t).length;
+  if (head) {
+    const base = Number(head[1]), start = head.index + head[0].length;
+    $("offsets").textContent = hits.map((h) => "quote " + h.q.record + ": page bytes [" + (base + utf8(d.slice(start, h.at))) + ".." +
+      (base + utf8(d.slice(start, h.end))) + ")").join("; ") + ", found by searching the quote's bytes in the section above.";
+  }
+  const first = $("directive").querySelector("mark");
+  if (first) requestAnimationFrame(() => { const box = $("directive").parentElement; box.scrollTop = first.offsetTop - box.offsetTop - 60; });
+  $("directive-note").textContent = "The whole directive of task " + report.task.task_id + " (" + report.task.kind + "), as the kernel sent it. " +
+    hits.length + " of " + report.claims.length + " quotes found byte for byte in it.";
+}
+function renderAltered() {
+  const a = report.altered.quote, o = report.altered.original;
+  let i = 0;
+  while (i < a.length && a[i] === o[i]) i++;
+  let j = 0;
+  while (j < a.length - i && a[a.length - 1 - j] === o[o.length - 1 - j]) j++;
+  $("altered").replaceChildren(a.slice(0, i), el("span", { class: "diff" }, a.slice(i, a.length - j)), a.slice(a.length - j));
+  $("altered-reply").replaceChildren("Kernel: ", el("code", {}, report.altered.reply_status), ", ", el("code", {}, report.altered.code),
+    " (" + report.altered.message + "). Records stored: " + report.altered.records_stored + ".");
+}
+
+function states() {
+  const c = report.claims;
+  if (shown === "before") return c.map((x) => x.grounded_before_revoke);
+  if (shown === "after") return c.map((x) => x.grounded_after_revoke);
+  return report.after_restart.grounded || [];
+}
+function wrap(text, width) {
+  const words = String(text).split(/\s+/), lines = [];
+  let line = "";
+  for (const w of words) {
+    if ((line + " " + w).trim().length > width) { if (line) lines.push(line); line = w; } else line = (line + " " + w).trim();
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 4);
+}
+function node(x, y, w, h, cls, title, lines, foot, onClick) {
+  const g = svgEl("g", { class: "node " + cls, tabindex: "0" });
+  g.append(svgEl("rect", { x, y, width: w, height: h, rx: 6 }));
+  g.append(svgEl("text", { x: x + 10, y: y + 18 }, title));
+  lines.forEach((l, k) => g.append(svgEl("text", { x: x + 10, y: y + 36 + k * 15 }, l)));
+  g.append(svgEl("text", { x: x + 10, y: y + h - 9, class: "small" }, foot));
+  g.addEventListener("click", onClick);
+  g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") onClick(); });
+  return g;
+}
+function renderGraph() {
+  const svg = $("graph"), st = states(), revoked = shown !== "before" && report.revoke.reply.status === "REVOKED";
+  svg.replaceChildren();
+  const qs = quotes();
+  report.claims.forEach((c, i) => {
+    const y = 20 + i * 140, grounded = st[i] === true;
+    const qRevoked = revoked && c.based_on === report.revoke.record;
+    svg.append(svgEl("path", { class: "edge " + (qRevoked ? "bad" : "ok"), d: "M 250 " + (y + 50) + " C 290 " + (y + 50) + ", 290 " + (y + 50) + ", 320 " + (y + 50) }));
+    const focus = () => { const m = $("mark-" + qs[i].cls); if (m) m.scrollIntoView({ block: "center", behavior: "smooth" }); };
+    svg.append(node(10, y, 240, 100, qRevoked ? "revoked" : "ok", "quote " + c.based_on + (qRevoked ? "  REVOKED" : ""), wrap(c.quote, 34), "observe, byte-exact", focus));
+    svg.append(node(320, y, 230, 100, grounded ? "ok" : "bad", "claim " + c.record, wrap(c.text, 32), "grounded: " + (grounded ? "yes" : "no"), focus));
+  });
+  qs.forEach((q) => { const m = $("mark-" + q.cls); if (m) m.classList.toggle("gone", revoked && q.record === report.revoke.record); });
+  // every sentence is built from the recorded answers, so a report with other answers reads as it is
+  const rev = report.revoke.record, cl = report.claims;
+  const yn = (v) => (v === true ? "grounded" : v === false ? "not grounded" : "no answer recorded");
+  const desc = (s) => cl.map((c, i) => (c.based_on === rev ? "the claim on the revoked quote: " : "the claim on the other quote: ") + yn(s[i])).join("; ");
+  const after = cl.map((c) => c.grounded_after_revoke);
+  const selective = cl.every((c, i) => (c.based_on === rev ? after[i] === false : after[i] === true));
+  const b = report.before_stop, a = report.after_restart;
+  const roots = a.audit_root === b.audit_root && a.engine_root === b.engine_root ? "the same audit and engine roots as before the stop" : "audit and engine roots different from those before the stop";
+  const text = { before: "The kernel's answers before the revocation: " + desc(cl.map((c) => c.grounded_before_revoke)) + ".",
+    after: "The owner revoked quote " + rev + " (" + report.revoke.reply.status + "). The kernel's answers after it: " + desc(after) + "." +
+      (selective ? " No model was asked which claims it touches: the registered based_on links answer it." : ""),
+    restart: "Stopped and started on the same journal (resumed: " + a.resumed + "): " + desc(a.grounded || []) + "; " + roots + "." };
+  $("graph-note").textContent = text[shown];
+}
+for (const b of document.querySelectorAll("[data-state]")) {
+  b.addEventListener("click", () => {
+    shown = b.dataset.state;
+    for (const o of document.querySelectorAll("[data-state]")) o.setAttribute("aria-pressed", String(o === b));
+    if (report) renderGraph();
+  });
+}
+
+function dl(pairs) { return el("dl", {}, ...pairs.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)])); }
+function renderJournal() {
+  const j = report.verify.journal, c = report.verify.edited_copy, b = report.before_stop, a = report.after_restart;
+  const same = j.audit_root === b.audit_root && j.engine_root === b.engine_root && j.wal_head === b.wal_head;
+  $("card-journal").replaceChildren(el("b", {}, "The journal "), badge(j.status === "VERIFIED" && j.exit === 0, j.status + " (exit " + j.exit + ")"),
+    dl([["entries", j.entries], ["records", j.records], ["receipt state found", "after " + j.expected.found_after_entries + " of " + j.entries + " entries"],
+        ["roots = receipt", same ? "yes" : "no"], ["audit_root", short(j.audit_root)], ["engine_root", short(j.engine_root)], ["wal_head", short(j.wal_head)],
+        ["after the restart", a.audit_root === b.audit_root && a.engine_root === b.engine_root ? "same audit and engine roots" : "different roots"]]));
+  $("card-copy").replaceChildren(el("b", {}, "The edited copy "), badge(c.status === "VERIFIED", c.status + " (exit " + c.exit + ")"),
+    dl([["change", report.edited_copy.change], ["audit-verify", (c.error || {}).message || "no error recorded"], ["server start", report.edited_copy.refusal.includes("hash mismatch") ? "refused: hash mismatch" : report.edited_copy.refusal],
+        ["original journal", report.edited_copy.original_unchanged ? "unchanged" : "changed"]]));
+}
+function renderRepeat() {
+  $("repeat").replaceChildren(...report.repeat.map((cmd) => {
+    const b = el("button", { type: "button" }, "Copy");
+    b.addEventListener("click", () => copy(cmd, b));
+    return el("div", { class: "cmd" }, el("code", {}, cmd), b);
+  }));
+}
+$("copy-receipt").addEventListener("click", (e) => copy(JSON.stringify(report.receipt, null, 1), e.currentTarget));
+
+const embedded = $("yuce-report").textContent.trim();
+if (embedded) load(embedded);
+$("file").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) f.text().then(load);
+});
+const drop = $("drop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) f.text().then(load);
+});
+</script>
+</body>
+</html>

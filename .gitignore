@@ -1,0 +1,13 @@
+/target
+/results/work
+__pycache__/
+*.pyc
+SBGK_EXPERIMENT_REPORT_RU.quick.md
+.idea/
+
+# Russian is used only outside the open-source repository (local reports, notes and their generators)
+*_RU.md
+*_RU.json
+*_RU.*.md
+benchmarks/sbgk_bench/*_ru.py
+standalone_byte_graph_kernel_prompt.md
