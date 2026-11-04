@@ -148,7 +148,7 @@ Q=examples/quickstart
 ./target/release/sbgk apply --ontology $Q/ontology.json --docs $Q/docs --stream $Q/stream.jsonl --out graph.sbgk
 ./target/release/sbgk apply --ontology $Q/ontology.json --docs $Q/docs --stream $Q/stream_prefix.jsonl --out graph_prefix.sbgk
 
-# Check the container: header, chunks, node table, hash chain of the log, quote anchors
+# Check the container: header, chunks, node table, hash chain of the log, quote anchors (exit code 1 if a check fails)
 ./target/release/sbgk verify graph.sbgk
 
 # The support cone of one entity: only what its conclusions rest on

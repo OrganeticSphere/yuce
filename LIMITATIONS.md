@@ -46,7 +46,7 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Not in 0.1
 
-* A Python client library (`pip install yuce`) is planned for 0.1.1; until then agents talk to the server over MCP JSON-RPC
+* A Python client library (`pip install yuce`) is planned for 0.1.2; until then agents talk to the server over MCP JSON-RPC
   or through `sbgk mcp-bridge`.
 * Settings as a file and a page to edit them, and agents of any model joining and leaving with their own profile, are planned
   for 0.2.
