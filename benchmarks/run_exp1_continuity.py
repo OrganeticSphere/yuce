@@ -91,7 +91,7 @@ class CliRecorder:
             handle.write(json.dumps({"call": self.calls, "argv": cmd, "stdin": stdin,
                                      "started_utc": started, "elapsed_seconds": time.perf_counter() - t0,
                                      "exit_code": proc.returncode}) + "\n")
-        if proc.returncode:
+        if proc.returncode and not C.verdict_exit(args, proc.returncode, proc.stdout):
             raise RuntimeError(f"CLI call {self.calls} exited {proc.returncode}: {proc.stderr[:500]}")
         return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()] if json_lines else json.loads(proc.stdout)
 

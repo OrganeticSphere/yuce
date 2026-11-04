@@ -87,7 +87,7 @@ def check(root: pathlib.Path, version: str) -> tuple[list[str], int, int]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("snapshot", type=pathlib.Path)
-    ap.add_argument("--version", default="0.1.1")
+    ap.add_argument("--version", default="0.1.2")
     a = ap.parse_args()
     root = a.snapshot.resolve()
     problems, files, scanned = check(root, a.version)

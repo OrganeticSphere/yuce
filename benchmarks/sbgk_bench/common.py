@@ -57,11 +57,17 @@ def workdir(name: str) -> pathlib.Path:
     return p
 
 
+def verdict_exit(args: tuple, returncode: int, stdout: str) -> bool:
+    """True when a non-zero exit is the command's answer, not a failure: since 0.1.1 `sbgk verify` exits 1 when a check
+    fails and prints its verdict (`"ok": false`) on stdout. Callers read that verdict, as they did when it exited 0."""
+    return returncode == 1 and bool(args) and str(args[0]) == "verify" and bool(stdout.strip())
+
+
 def cli(*args: Any, stdin: str | None = None) -> dict | list:
     """Run `sbgk` and parse its single JSON output document."""
     cmd = [str(BIN)] + [str(a) for a in args]
     r = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", cwd=ROOT)
-    if r.returncode != 0:
+    if r.returncode != 0 and not verdict_exit(args, r.returncode, r.stdout):
         raise RuntimeError(f"sbgk {' '.join(map(str, args[:3]))}... failed: {r.stderr.strip()[:500]}")
     return json.loads(r.stdout)
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 (2026-11-05)
+
+* **The benchmark helpers read `sbgk verify`'s verdict again when a check fails.** Since 0.1.1 verify exits 1 on a failed
+  check; the CLI wrappers of the benchmark suite took any non-zero exit for a crash, so the tamper-attack experiment
+  (`run_sbgk_suite.py --only 6`) stopped at its first tampered container. The wrappers now take exit 1 from verify, with its
+  verdict on stdout, as the answer; every other non-zero exit is still a failure. A test runs the experiment and checks that
+  every attack is caught. The binaries behave as in 0.1.1.
+
 ## 0.1.1 (2026-11-04)
 
 * **`sbgk verify` exits 1 when a check fails.** It printed `"ok": false` for a tampered container but exited 0, so a
