@@ -7,7 +7,7 @@ crates/sbgk-core/examples/audit_offline.rs export-ignore
 *.wal -text
 # open corpora are pinned upstream bytes: never convert their line endings
 benchmarks/corpora/** -text
-# the runner's closed layer (Jev, the private pilot set, the owner's subscription transports) stays out of an exported snapshot
+# parts of the runner that are not in the public source stay out of an exported snapshot
 benchmarks/sbgk_bench/closed export-ignore
 # The public snapshot (git archive of one dev commit) shows the product and its final results. The internal experiment history
 # (EXP-1 .. EXP-12 data, their reports, the internal changelog and roadmap) and the release tooling stay in this repository.
@@ -16,7 +16,7 @@ SBGK_EXPERIMENT_REPORT*.md export-ignore
 BYTEANCHOR_CONTINUITY.md export-ignore
 docs/internal export-ignore
 scripts/package_runs.py export-ignore
-# EXP-11A / EXP-12 ran through the owner's subscription transports and local installs: their runner, summaries and tests
+# EXP-11A / EXP-12 are internal experiments: their runner, summaries and tests
 benchmarks/exp11a_native_smoke.py export-ignore
 benchmarks/exp11a_summary.py export-ignore
 benchmarks/exp12_summary.py export-ignore

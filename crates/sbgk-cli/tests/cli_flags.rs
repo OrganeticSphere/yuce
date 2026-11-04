@@ -23,6 +23,22 @@ fn a_mistyped_flag_is_refused_and_named() {
 }
 
 #[test]
+fn a_flag_with_one_dash_a_long_dash_or_no_dash_is_refused_too() {
+    for (args, stray) in [
+        (&["audit-verify", "--wal", "x.wal", "-expect", "r.json"][..], "-expect"),
+        (&["audit-verify", "--wal", "x.wal", "r.json"][..], "r.json"),
+        (&["audit-verify", "--wal", "x.wal", "\u{2014}expect", "r.json"][..], "expect"),
+        (&["mcp-bridge", "--connect", "127.0.0.1:1", "--agent-id", "owner", "-allow-tools", "audit_status"][..], "-allow-tools"),
+        (&["audit-serve", "--wal", "x.wal", "--allow-remote", "false"][..], "false"),
+        (&["verify", "a.sbgk", "b.sbgk"][..], "b.sbgk"),
+    ] {
+        let (code, stdout, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stdout} {stderr}");
+        assert!(stderr.contains(stray) && stdout.is_empty(), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn a_switch_of_another_command_is_refused_too() {
     let (code, _, stderr) = run(&["verify", "x.sbgk", "--allow-remote"]);
     assert_eq!(code, 2);

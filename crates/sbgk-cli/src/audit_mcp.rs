@@ -1411,8 +1411,9 @@ fn with_profile(a: &Args) -> Args {
 /// `--expect`, the receipt's `audit_root` (with its `engine_root`, `session_root` and `wal_head` where it has them; a close stamp
 /// has no engine root) must name a state the journal passed through, such as a phase receipt or the final one; a `wal_head`
 /// binds the chain up to that state, not only the state. Exit 0 when verified, 1 when the journal is refused, the receipt names
-/// no state of it, or (without a receipt) bytes after the last complete entry were left unverified: status TORN_TAIL, the crash or
-/// the change that this check cannot tell apart. Exit 2 when the file cannot be read: that says nothing about the journal.
+/// no state of it, or (without a receipt) bytes after the last complete entry were left unverified: status TORN_TAIL, usually a
+/// crash. Exit 2 when the file cannot be read: that says nothing about the journal. A journal cut back to a complete entry is a
+/// shorter sound journal: only a receipt shows that anything is missing.
 pub fn cmd_audit_verify(a: &Args) {
     let wal = a.req("wal");
     if let Err(e) = std::fs::File::open(&wal).and_then(|mut f| std::io::Read::read(&mut f, &mut [0u8; 1])) {
@@ -1458,13 +1459,36 @@ pub fn cmd_audit_verify(a: &Args) {
             println!("{out}");
             std::process::exit(1);
         }
+        if read.bytes != read.complete_bytes {
+            out["note"] = json!(
+                "the receipt's state is there, but bytes after the last complete entry were not read: only the latest receipt shows that nothing was lost"
+            );
+        }
     } else if read.bytes != read.complete_bytes {
         out["status"] = json!("TORN_TAIL");
-        out["note"] = json!("the entries above verify, but the bytes after them are no complete entry: a crash or a change; a receipt tells which");
+        out["note"] = json!("the entries above verify, but the bytes after them are no complete entry, usually from a crash; the latest receipt tells whether anything was lost");
         println!("{out}");
         std::process::exit(1);
     }
+    let earlier = torn_files(&wal);
+    if !earlier.is_empty() {
+        out["torn_tail_files"] = json!(earlier);
+        out["note"] = json!("a recovery cut bytes off this journal's end and kept them in these files; the latest receipt tells whether anything was lost");
+    }
     println!("{out}");
+}
+
+/// The files beside `wal` that keep the tails cut off it by a recovery.
+fn torn_files(wal: &str) -> Vec<String> {
+    let path = Path::new(wal);
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return Vec::new() };
+    let prefix = format!("{name}.torn-");
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .map(|entries| entries.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(&prefix)).map(|e| e.path().display().to_string()).collect())
+        .unwrap_or_default();
+    found.sort();
+    found
 }
 
 pub fn cmd_audit_serve(a: &Args) {
@@ -1621,6 +1645,12 @@ pub fn cmd_audit_serve(a: &Args) {
     } else {
         create_run(a, Path::new(&wal))
     };
+    // said here, before any check below can stop the start: the cut has happened, and a later message would be lost with it
+    if let Some((bytes, kept)) = state.dropped_tail() {
+        let message =
+            format!("the journal ended in {bytes} bytes that are no complete entry; the run resumes before them, which can undo what they held; check it against the latest receipt");
+        eprintln!("{}", json!({"status": "warning", "message": message, "kept_in": kept.display().to_string()}));
+    }
     if build_scope == "versions" {
         let lineage = a
             .get("version-lineage")
@@ -1743,14 +1773,14 @@ pub fn cmd_audit_serve(a: &Args) {
     }
     let mut hello = json!({"run_id": run.state.run_id(), "resumed": resume, "records": run.state.head(), "builder_cursor": run.cursor(),
                            "audit_root": to_hex(&run.state.audit_root()), "subjects": subjects.len()});
-    // a recovery that cut the journal's end is said out loud: a crash and a changed last entry look the same from here
+    // and in the first line, with the files that earlier recoveries kept
     if let Some((bytes, kept)) = run.state.dropped_tail() {
         hello["torn_tail_bytes"] = json!(bytes);
         hello["torn_tail_kept_in"] = json!(kept.display().to_string());
-        let message = format!(
-            "the journal ended in {bytes} bytes that are no complete entry, from a crash or a change; the run resumes before them; check it against a receipt"
-        );
-        eprintln!("{}", json!({"status": "warning", "message": message, "kept_in": kept.display().to_string()}));
+    }
+    let earlier = torn_files(&wal);
+    if !earlier.is_empty() {
+        hello["torn_tail_files"] = json!(earlier);
     }
     let server = Arc::new(AuditServer { run: Mutex::new(run), changed: Condvar::new(), subjects, max_message_bytes, started: Instant::now() });
     let note = json!({"status": "ready", "audit": hello});

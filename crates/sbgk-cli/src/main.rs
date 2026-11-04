@@ -160,6 +160,16 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "zones",
 ];
 
+/// How many arguments without a flag name a command takes. A flag written with one dash, or with a dash a document turned into a
+/// long one, parses as such an argument: it must not be dropped in silence any more than a mistyped flag.
+fn positional_args(cmd: &str) -> usize {
+    match cmd {
+        "diff" => 2,
+        "update-doc" | "root" | "view" | "dump-nodes" | "dump-claims" | "node-table" | "timetravel" | "timetravel-all" | "cone" | "verify" | "tamper" => 1,
+        _ => 0,
+    }
+}
+
 fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
         "apply" => &["continue-on-error", "oracle", "out", "pretty", "stream", "timings", "track-roots"],
@@ -937,6 +947,11 @@ pub fn main() {
         given.sort_unstable();
         if let Some(unknown) = given.into_iter().find(|f| !known.contains(f)) {
             fail(&format!("unknown flag --{unknown} for {cmd}: sbgk --help lists the commands"));
+        }
+        let takes = positional_args(&cmd);
+        let stray = a.pos.iter().find(|p| p.starts_with(['-', '\u{2013}', '\u{2014}'])).or(a.pos.get(takes));
+        if let Some(stray) = stray {
+            fail(&format!("unexpected argument {stray} for {cmd}: sbgk --help lists the commands"));
         }
     }
     let out = match cmd.as_str() {

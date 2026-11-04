@@ -89,17 +89,17 @@ The tables are what was measured. What they do not show:
   K against T: +17.2, [+4.4, +30.0]), none after a correction for 18 comparisons. They are not independent either: the kernel's
   answers of stage 1 and 2A are the same text.
 * **The naming rule is a label, not a test.** Its 7 points were fixed before the runs. T moved by 8.7 to 10.9 points between the
-  two DeepSeek series, which differ only in the output limit, so "better" at +8.4 to +10.6 is within what one side does from
-  run to run.
+  two DeepSeek series, which differ only in the output limit, so "better than T" at +8.4 to +10.6 is within what T did from run
+  to run (K moved by 2.1, L by 2.0 to 3.8).
 * **What stage 1 shows.** No source has been withdrawn yet, so the cascade and the journal play no part in it: a difference there
-  comes from how the reading is organized, which can be built without the kernel. Where the cascade does work, in 2A and 2B, the
-  differences are smaller or mixed.
+  comes from how the reading is organized, which can be built without the kernel. Nor did the cascade change K's answers in 2A,
+  which are the same text as in stage 1: a difference there comes from what the other side lost.
 * **Work done.** In stage 1 K made 326 model calls on Haiku against 127 for T and L, and 371 to 381 on DeepSeek against 185 to 202.
   The journal and the cascade cannot change stage 1, and section 2 shows the reading process alone is worth about 12 points. No
   side with an equal budget of calls was run: the kernel's effect on quality is not separated from the extra reading.
 * **Model calls after a withdrawal.** The first withdrawal touched no answer of K (on Haiku, no record of it), which is why K made
-  no call. A side without the kernel could learn the same for free by searching its answers for the withdrawn bytes; the runner
-  gave it no such check. Of its calls on DeepSeek, most repeat pages marked incomplete in stage 1 and have nothing to do with the
+  no call. In this case a side without the kernel could have learned the same by searching its answers for the withdrawn bytes,
+  though a search finds a quotation, not a claim resting on a claim or a retelling; the runner gave it no such check. Of its calls on DeepSeek, most repeat pages marked incomplete in stage 1 and have nothing to do with the
   withdrawal:
 
   | Run, side | Calls after 2A | On the withdrawn page | Bringing the answer together | On other pages |
@@ -119,7 +119,7 @@ The tables are what was measured. What they do not show:
   vendor of Claude Haiku 5.5.
 * **Reproducing a run.** The journals check out against their receipts, but the link from these numbers to this code rests on
   our word: the `provenance.json` of a run names commits of the private development repository, which the public history does
-  not hold, and the binaries of the runs are not the release binaries. A run's settings are in its `summary.json`.
+  not hold, and the binaries of the runs are not the release binaries.
 
 ## 2. Circles against a shared queue (grader Fable 5.1, agents on Claude Haiku 5.5)
 
@@ -173,7 +173,7 @@ recorded runs of about 3,000 records, more than this table gives for 10,000.
 |---|---|---|---|---|
 | Tasks per second | 9.5 | 13.4 | 15.5 | 16.0 |
 
-Recommended for 0.1: up to **10,000 records** in a run and up to **8 agents** at once. The published runs hold about
+Recommended for 0.1: runs of **a few thousand records** and up to **8 agents** at once. The published runs hold about
 3,000 records. The cost of a commit and of a replay grows with the journal; more than 16 agents add little.
 
 ## Caveats
