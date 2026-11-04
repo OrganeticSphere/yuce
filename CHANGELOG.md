@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (unreleased)
+## 0.1.1 (2026-11-04)
 
 * **`sbgk verify` exits 1 when a check fails.** It printed `"ok": false` for a tampered container but exited 0, so a
   script or a CI step that reads the exit code took the container for a sound one. Exit codes now: 0 verified, 1 a check
