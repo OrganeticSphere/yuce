@@ -7,13 +7,15 @@ Fixes from an outside review of 0.1.2.
 * **`apply` exits 1 when a step is refused.** The refusal was only in its JSON report and the exit code stayed 0, so
   `apply && verify` took a refused run for a sound one: the container of the steps accepted before it is still written and
   verifies. The benchmark helpers read that report as they read `verify`'s.
-* **An unknown flag is refused.** Any `--name value` used to be accepted, so a typo switched a check or a limit off in silence:
-  `audit-verify --expct receipt.json` printed `VERIFIED` without looking at the receipt, and `mcp-bridge --allow-tool x` passed
-  every tool. Each command now names its flags, and any other flag exits 2 before the command runs.
-* **A damaged last journal entry is no longer a clean pass.** Without a receipt, `audit-verify` reports bytes after the last
-  complete entry as `TORN_TAIL` with exit 1 (it said `VERIFIED`, exit 0). A resuming server still recovers from them, as it must
-  after a crash, but now says so in its first line and on stderr and keeps the bytes in a file beside the journal; it used to cut
-  them off in silence, which could undo the last transaction without a trace.
+* **An unknown flag or a stray argument is refused.** Any `--name value` used to be accepted, and anything else dropped, so a
+  typo switched a check or a limit off in silence: `audit-verify --expct receipt.json` and `-expect` printed `VERIFIED` without
+  looking at the receipt, and `mcp-bridge --allow-tool x` passed every tool. Each command now names its flags and how many other
+  arguments it takes, and anything else exits 2 before the command runs.
+* **A journal whose end is no complete entry is no longer a clean pass.** Without a receipt, `audit-verify` reports bytes after
+  the last complete entry as `TORN_TAIL` with exit 1 (it said `VERIFIED`, exit 0). A resuming server still recovers from them, as
+  it must after a crash, but now says so at once on stderr and in its first line and keeps the bytes in a file beside the journal,
+  which `audit-verify` then lists; it used to cut them off in silence, which could undo what they held without a trace. A journal
+  cut back to a complete entry still shows nothing without a receipt: see LIMITATIONS.md.
 * **`audit-verify` on a file it cannot read exits 2**, not 1: a missing file is not a refused journal.
 * **A port that is taken leaves no journal behind:** `audit-serve` binds its socket before it creates the run.
 * **`update-doc` refuses a document the container does not have** (it added one in silence) and reports `saved_to`; without

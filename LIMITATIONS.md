@@ -16,19 +16,27 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## What a command checks
 
-* Only `verify` checks a container. `root`, `diff`, `cone`, `view`, `timetravel` and the `dump-*` commands read it as it is and
-  exit 0 on a damaged one: on a file you do not trust, run `verify` first and stop if it exits non-zero. `cone` on an entity the
+* Only `verify` and `tamper` check a container first. `root`, `diff`, `cone`, `view`, `timetravel`, `node-table` and the `dump-*`
+  commands read it as it is and can exit 0 on a damaged one: on a file you do not trust, run `verify` first and stop if it exits
+  non-zero. `cone` on an entity the
   graph does not hold returns an empty cone, not an error.
 
 ## What the journal proves, and what it does not
 
 * The journal is hash-chained and replays to the same audit and engine roots, and a changed byte in a complete entry is refused.
-  A damaged last entry cannot be told from a crash in the middle of a write: without a receipt `sbgk audit-verify` reports
-  `TORN_TAIL` (exit 1), and a server that resumes on it recovers to the entry before, reports it in its first line and on stderr
-  and keeps the bytes beside the journal. That can undo the last transaction, so check against a receipt after any such report.
+* **Without a receipt the journal cannot show that its end is missing.** Cut back to a complete entry, it is a shorter sound
+  journal: `sbgk audit-verify` says `VERIFIED` and a server resumes on it, and that can undo a revocation without rebuilding any
+  chain. Keep the latest receipt and check against it.
+* An end that is no complete entry, as a crash in the middle of a write leaves and a lost line end does too: without a receipt
+  `sbgk audit-verify` reports `TORN_TAIL` (exit 1), and a server that resumes on it recovers to the last complete entry, says so
+  at once on stderr and in its first line, and keeps the bytes beside the journal (`<wal>.torn-*`, which `audit-verify` then
+  lists). More than one entry can be lost this way. A receipt older than the lost entries still matches: only the latest one
+  shows that nothing is missing.
+* Check a stopped journal: a live server's lock blocks reading on Windows (exit 2), and elsewhere a read in the middle of a write
+  can report a torn tail that is not there.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
   `at_end` in the report says whether the state is the journal's end.
-* `audit_close` is not journaled: a server restarted on the same journal is open again, and agents get tasks.
+* `audit_close` is not journaled: a server restarted on the same journal is open again.
 * A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
   `engine_root`, `wal_head`) where the journal's writer cannot change it, such as a protected commit or a CI artifact, and
   check the journal against it with `sbgk audit-verify --expect`. There is no external witness service in 0.1.

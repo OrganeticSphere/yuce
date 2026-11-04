@@ -200,6 +200,7 @@ function fallback(text, done) {
 const PANELS = ["steps-panel", "main-grid", "journal-panel", "repeat-panel", "roots", "copy-receipt"];
 
 function check(r) {
+  if (r === null || typeof r !== "object") return "not a report of the no-LLM demo";
   const fields = JSON.parse($("report-fields").textContent);
   const missing = fields.filter((f) => get(r, f) == null);
   if (r.format !== "yuce-no-llm-demo-report/1") return "not a report of the no-LLM demo (format " + String(r.format) + ")";
@@ -209,6 +210,7 @@ function check(r) {
   for (const f of Object.keys(kinds)) if (typeof get(r, f) !== kinds[f]) return f + " is not a " + kinds[f];
   for (const f of ["steps", "claims", "repeat"]) if (!Array.isArray(get(r, f))) return f + " is not a list";
   if (r.steps.some((s) => s === null || typeof s.ok !== "boolean")) return "a step has no true or false ok";
+  if (r.all_ok !== r.steps.every((s) => s.ok)) return "all_ok disagrees with the steps";
   return null;
 }
 

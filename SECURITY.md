@@ -26,8 +26,8 @@ issue for it. We aim to answer within seven days; a confirmed issue gets a fix a
 * **No TLS.** The servers listen on loopback by default; a non-loopback `--listen` address needs `--allow-remote`. For
   agents on other machines, put the server behind a tunnel or a TLS proxy.
 * **The journal is tamper-evident, not tamper-proof.** A changed byte in a complete entry is refused on start and by
-  `sbgk audit-verify`. A damaged last entry looks like a crash: it is reported, not refused. A writer of the whole journal can
-  rebuild its chain. Keep the terminal receipt outside the writer's reach and check against
+  `sbgk audit-verify`. An end that is no complete entry looks like a crash: it is reported, not refused. A journal cut back to a
+  complete entry shows nothing without a receipt, and a writer of the whole journal can rebuild its chain. Keep the terminal receipt outside the writer's reach and check against
   it (`sbgk audit-verify --expect receipt.json`).
 * **The kernel calls no model.** Prompts and corpus text reach a model provider only through the agents you run; the
   benchmark runner sends them to the provider you choose (DeepSeek, Claude through Claude Code) and reads a DeepSeek key from

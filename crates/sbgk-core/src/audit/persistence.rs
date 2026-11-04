@@ -123,7 +123,8 @@ impl AuditJournal {
     }
 
     /// The checks of `open` on a file opened for reading only and without the writer's lock: nothing can be cut or appended,
-    /// and a journal that a live server is writing reads as the frames complete at that moment.
+    /// and a journal that a live server is writing reads as the frames complete at that moment, or not at all where the server's
+    /// lock blocks reading (Windows): check a stopped journal.
     pub(crate) fn read(path: &Path) -> KResult<JournalScan> {
         Self::scan(&mut File::open(path).map_err(|e| io_error("open", e))?)
     }
@@ -202,8 +203,8 @@ impl AuditJournal {
                 return Err(std::io::Error::other("audit WAL length changed during recovery"));
             }
             if self.opened_bytes != self.complete_bytes {
-                // the tail is what a crash left, or what a changed last byte left: this journal cannot tell which, so its bytes
-                // are kept beside it and the caller reports them; a tail that cannot be kept stops the recovery
+                // usually what a crash left, but a lost line end looks the same: the bytes are kept beside the journal and the
+                // caller reports them; a tail that cannot be kept stops the recovery
                 self.dropped_tail = Some((self.opened_bytes - self.complete_bytes, self.keep_tail()?));
                 self.file.set_len(self.complete_bytes)?;
             }
@@ -233,6 +234,11 @@ impl AuditJournal {
                 Ok(mut file) => {
                     file.write_all(&tail)?;
                     file.sync_all()?;
+                    // the file's name too must outlive a power loss before the journal is cut (Windows has no such step)
+                    #[cfg(unix)]
+                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                        File::open(parent)?.sync_all()?;
+                    }
                     return Ok(path);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
