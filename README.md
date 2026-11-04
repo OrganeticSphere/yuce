@@ -8,6 +8,8 @@ hash-chained journal. When a source is revoked, the kernel itself finds the conc
 others standing: no model is asked what the revocation touches. A stopped run replays its journal to the same roots, and
 anyone can check a published journal against its receipt without a model.
 
+**An agent sends the text of a quote, not offsets: the kernel itself finds its bytes in the section the agent was leased.**
+
 The kernel is written in Rust and calls no model. Agents of any model are its clients, over MCP. Deterministic here means that
 the kernel's answers follow from its inputs and a journal replays to the same roots; two runs of a team differ, in their
 timestamps and in what their models write.

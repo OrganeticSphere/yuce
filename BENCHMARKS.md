@@ -93,7 +93,7 @@ The tables are what was measured. What they do not show:
   to run (K moved by 2.1, L by 2.0 to 3.8).
 * **What stage 1 shows.** No source has been withdrawn yet, so the cascade and the journal play no part in it: a difference there
   comes from how the reading is organized, which can be built without the kernel. Nor did the cascade change K's answers in 2A,
-  which are the same text as in stage 1: a difference there comes from what the other side lost.
+  which are the same text as in stage 1: a difference there comes from what the other side changed.
 * **Work done.** In stage 1 K made 326 model calls on Haiku against 127 for T and L, and 371 to 381 on DeepSeek against 185 to 202.
   The journal and the cascade cannot change stage 1, and section 2 shows the reading process alone is worth about 12 points. No
   side with an equal budget of calls was run: the kernel's effect on quality is not separated from the extra reading.
