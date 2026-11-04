@@ -235,10 +235,9 @@ impl AuditJournal {
                     file.write_all(&tail)?;
                     file.sync_all()?;
                     // the file's name too must outlive a power loss before the journal is cut (Windows has no such step)
+                    // a filesystem that cannot sync a folder must not stop a recovery whose file is already synced
                     #[cfg(unix)]
-                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                        File::open(parent)?.sync_all()?;
-                    }
+                    let _ = File::open(path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))).and_then(|dir| dir.sync_all());
                     return Ok(path);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

@@ -1447,6 +1447,12 @@ pub fn cmd_audit_verify(a: &Args) {
                          "corpus_manifest_hash": to_hex(&state.manifest_hash()), "entries": entries, "records": state.head(),
                          "audit_root": to_hex(&state.audit_root()), "engine_root": to_hex(&state.engine_root()),
                          "session_root": to_hex(&state.session_root()), "wal_head": to_hex(&read.wal_head)});
+    // listed whatever the verdict: after a cut, a mismatch is just the case where these files matter
+    let earlier = torn_files(&wal);
+    if !earlier.is_empty() {
+        out["torn_tail_files"] = json!(earlier);
+        out["note"] = json!("a recovery cut bytes off this journal's end and kept them in these files; the latest receipt tells whether anything was lost");
+    }
     if let Some((audit, engine, session, head)) = expect {
         let found = states.iter().find(|s| s.1 == audit && engine.is_none_or(|e| s.2 == e) && head.is_none_or(|h| s.3 == h));
         let at = found.map(|s| s.0);
@@ -1469,11 +1475,6 @@ pub fn cmd_audit_verify(a: &Args) {
         out["note"] = json!("the entries above verify, but the bytes after them are no complete entry, usually from a crash; the latest receipt tells whether anything was lost");
         println!("{out}");
         std::process::exit(1);
-    }
-    let earlier = torn_files(&wal);
-    if !earlier.is_empty() {
-        out["torn_tail_files"] = json!(earlier);
-        out["note"] = json!("a recovery cut bytes off this journal's end and kept them in these files; the latest receipt tells whether anything was lost");
     }
     println!("{out}");
 }
