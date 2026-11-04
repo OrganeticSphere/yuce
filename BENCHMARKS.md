@@ -1,7 +1,7 @@
 # Benchmarks
 
-What was measured, on what, by whom, and with which caveats. Every comparison names its grader; numbers from different
-graders are never put side by side.
+What was measured, on what, by whom, and with which caveats. Every comparison names its grader and is made within that
+grader's numbers.
 
 ## The setup common to all runs
 
@@ -18,8 +18,9 @@ graders are never put side by side.
   quote changed). One grader call per stage with all variants, in two label orders; the share of correct statements is the
   mean of the two. The grader sees the checklist, the 22 pages and a gold file of the corpus's version transitions.
 * **Naming rule, fixed before each run.** "Kernel better" when the kernel's share of correct statements is more than
-  7 points higher (the spread of two identical runs), or when it keeps a withdrawal the other side breaks; "on par" within
-  ±7; "kernel worse" when more than 7 points lower.
+  7 points higher (the spread of two identical earlier runs, which are not attached), or when it keeps a withdrawal the other side breaks; "on par" within
+  ±7; "kernel worse" when more than 7 points lower. It names the rows below; see "How far these numbers go" for what it does
+  not establish.
 * **Runs.** One per side on Claude Haiku 5.5; two series per side on DeepSeek Flash.
 
 ## 1. The kernel against the same team without it
@@ -28,11 +29,12 @@ The side without the kernel is the same team with the same prompts and answer gu
 [Temporal](https://temporal.io/) (T) or native [LangGraph](https://www.langchain.com/langgraph) (L). The runner gives it
 what a careful team would build: it checks every quote byte for byte, keeps the readers' notes, answers by map-reduce over
 the pages and rebuilds its answer after a withdrawal. What it lacks is the kernel: registered `based_on` dependencies, the
-cascade on revocation, a replayable journal and leased coordination. K is the kernel's side in the default v0.1 profile.
+cascade on revocation, a replayable journal and leased coordination. K is the kernel's side in the v0.1 profile, with the
+runner's own retry and timeout settings (`agent_attempts`, `answer_timeout_ms`).
 
 ### Agents on Claude Haiku 5.5, grader Fable 5.1
 
-| Stage | K | T | L | Named |
+| Stage | K | T | L | Named by the rule |
 |---|---|---|---|---|
 | 1: reading and answers, share of correct statements | 89.9% | 79.3% | 84.9% | K better than T (+10.6); on par with L (+5.0) |
 | 2A: after the first withdrawal | 90.5% | 86.6% | 88.8% | on par |
@@ -41,7 +43,7 @@ cascade on revocation, a replayable journal and leased coordination. K is the ke
 | An outdated rule given as current | 0 | 0 | 1 (2A) | |
 | A current rule given as replaced | 1 control fact, in every stage | 0 | 0 | the kernel side's known error |
 | Quotes byte for byte in the named page | 203 of 204 | 134 of 134 | 126 of 126 | not a difference: the runner checks both sides |
-| Model calls to answer again after 2A | **0** | 6 | 6 | the kernel finds that the withdrawal touches no answer |
+| Model calls to answer again after 2A | 0 | 6 | 6 | the withdrawal touched no answer of K: see below |
 | Whole run: wall time, cost | 54.2 min, $1.37 | 23.3 min, $0.96 | 22.0 min, $0.96 | the kernel ×2.3–2.5 slower, ×1.4 the cost |
 
 K ran on an earlier revision than T and L (the kernel side's code did not change between them); the cost of the Claude
@@ -54,7 +56,7 @@ All three sides on one revision; agents `deepseek-flash` (V4.1 Flash, thinking o
 Series 2 is the same with one change: an output limit of 32,000 tokens per call instead of 8,192 (series 1 cut one long
 answer of L, its stage 1 RQ2 summary, at 8,192; series 2 cut none).
 
-| Stage | Series | K | T | L | Named |
+| Stage | Series | K | T | L | Named by the rule |
 |---|---|---|---|---|---|
 | 1 | 1 | 91.8% | 83.3% | 83.0% | K better than T (+8.4) and L (+8.8) |
 | 1 | 2 | 89.6% | 92.1% | 84.9% | on par (−2.4, +4.7) |
@@ -69,7 +71,7 @@ answer of L, its stage 1 RQ2 summary, at 8,192; series 2 cut none).
 | An outdated rule given as current (of 13, per stage) | series 1: 0; series 2: 1 | series 1: 5 in 2A; series 2: 0 | 0 |
 | A current rule given as replaced (per stage) | 0 | series 1: 0; series 2: 1 in 2A and 2B | series 2: 1 in 2A |
 | Version transitions named (of 13, stage 1) | 9; 7 to 8 | 13 and 12 | 6 (the cut answer) and 12 |
-| Model calls to answer again after 2A | **0** and 0 | 62 and 55 | 65 and 40 |
+| Model calls to answer again after 2A (most of T's and L's are unrelated: see below) | 0 and 0 | 62 and 55 | 65 and 40 |
 | Wall time (series 1, series 2) | 15.0, 14.7 min | 11.8, 11.8 min | 12.9, 11.8 min |
 | Cost (series 1, series 2) | $0.50, $0.48 | $0.32, $0.30 | $0.33, $0.30 |
 
@@ -77,6 +79,47 @@ The advantage of series 1 in stage 1 and 2A did not repeat in series 2; the kern
 It took 1.2 to 1.3 times the wall time and 1.5 to 1.6 times the cost of the sides without it. The sides without the kernel
 often wrote a closing line over its length limit, which the runner refuses (their pages are then marked incomplete); their
 claims were kept (in series 1, 6 of about 2,000 were refused).
+
+### How far these numbers go
+
+The tables are what was measured. What they do not show:
+
+* **Sample size.** 45 to 121 statements were graded per side and stage. The 95% interval of a difference of two such shares is
+  about 10 to 12 points either way: +10.6 on Haiku is [-1.8, +22.9]. One difference of the 18 clears it (DeepSeek series 1, 2A,
+  K against T: +17.2, [+4.4, +30.0]), none after a correction for 18 comparisons. They are not independent either: the kernel's
+  answers of stage 1 and 2A are the same text.
+* **The naming rule is a label, not a test.** Its 7 points were fixed before the runs. T moved by 8.7 to 10.9 points between the
+  two DeepSeek series, which differ only in the output limit, so "better" at +8.4 to +10.6 is within what one side does from
+  run to run.
+* **What stage 1 shows.** No source has been withdrawn yet, so the cascade and the journal play no part in it: a difference there
+  comes from how the reading is organized, which can be built without the kernel. Where the cascade does work, in 2A and 2B, the
+  differences are smaller or mixed.
+* **Work done.** In stage 1 K made 326 model calls on Haiku against 127 for T and L, and 371 to 381 on DeepSeek against 185 to 202.
+  The journal and the cascade cannot change stage 1, and section 2 shows the reading process alone is worth about 12 points. No
+  side with an equal budget of calls was run: the kernel's effect on quality is not separated from the extra reading.
+* **Model calls after a withdrawal.** The first withdrawal touched no answer of K (on Haiku, no record of it), which is why K made
+  no call. A side without the kernel could learn the same for free by searching its answers for the withdrawn bytes; the runner
+  gave it no such check. Of its calls on DeepSeek, most repeat pages marked incomplete in stage 1 and have nothing to do with the
+  withdrawal:
+
+  | Run, side | Calls after 2A | On the withdrawn page | Bringing the answer together | On other pages |
+  |---|---|---|---|---|
+  | Haiku, T | 6 | 4 | 2 | 0 |
+  | DeepSeek 1, T | 62 | 3 | 7 | 52 |
+  | DeepSeek 1, L | 65 | 10 | 7 | 48 |
+  | DeepSeek 2, T | 55 | 6 | 10 | 39 |
+  | DeepSeek 2, L | 40 | 4 | 7 | 29 |
+
+  After 2B, the withdrawal that touched an answer, K made 7, 12 and 1 calls, T 8, 54 and 43, L 7, 52 and 34.
+* **Withdrawals.** The second withdrawal touched an answer of K once per run: three cases, on one corpus. T and L kept the
+  withdrawals fully in 10 and 8 of 12 gradings and partly in the others.
+* **The graders.** Each comparison has one grader and no human spot check; its two label orders differ by up to 20.3 points. The
+  grading is blind by labels only: K's answers carry status notes that the neutralization does not remove. The gold file was
+  written with Opus 5.5, which also grades the DeepSeek runs and took part in building YuCe. Fable 5.1 and Opus 5.5 come from the
+  vendor of Claude Haiku 5.5.
+* **Reproducing a run.** The journals check out against their receipts, but the link from these numbers to this code rests on
+  our word: the `provenance.json` of a run names commits of the private development repository, which the public history does
+  not hold, and the binaries of the runs are not the release binaries. A run's settings are in its `summary.json`.
 
 ## 2. Circles against a shared queue (grader Fable 5.1, agents on Claude Haiku 5.5)
 
@@ -107,7 +150,7 @@ built on the same corpus, all with Claude Haiku 5.5.
 
 The graph systems give fewer statements, and most of their quotes are not found byte for byte in the page they name
 (GraphRAG names none). The kernel's graph is off by default: its share is within the noise of the no-graph mode, but it knew fewer version transitions
-than Graphiti (8 against 15 of 25) and cost three times as much.
+than Graphiti (8 against 15 of the 25 version-knowledge items this comparison checked) and cost three times as much.
 
 ## 4. The kernel's limits, without a model
 
@@ -121,6 +164,10 @@ v0.1 profile, no artificial pauses; every journal is closed, reopened in a new p
 | 1,000 | 4.6 / 4.9 ms | 0.14 s | 8.5 MiB |
 | 5,000 | 20.2 / 26.1 ms | 3.2 s | 39.5 MiB |
 | 10,000 | 40.9 / 69.9 ms | 13.0 s | 64 MiB |
+
+The scripts of this campaign are not published, so these numbers cannot be repeated from this repository. These journals hold
+quotes alone. The journals of real runs are heavier per record: `audit-verify` takes 14 to 19 s on the
+recorded runs of about 3,000 records, more than this table gives for 10,000.
 
 | Agents at once, on a journal of 5,000 records | 3 | 8 | 16 | 32 |
 |---|---|---|---|---|

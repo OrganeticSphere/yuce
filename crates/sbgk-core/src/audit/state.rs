@@ -942,6 +942,10 @@ impl AuditState {
     pub fn transaction_sequence(&self) -> Option<u64> {
         self.journal.as_ref().map(AuditJournal::sequence)
     }
+    /// The bytes that recovery cut off the journal's end, and the file beside it that keeps them.
+    pub fn dropped_tail(&self) -> Option<(u64, &Path)> {
+        self.journal.as_ref().and_then(AuditJournal::dropped_tail)
+    }
     pub fn is_grounded(&self, id: &RecordId) -> bool {
         self.core.grounded(id)
     }

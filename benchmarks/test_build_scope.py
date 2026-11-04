@@ -224,8 +224,8 @@ class StrongGraph(unittest.TestCase):
         self.assertGreater(st["links"]["accepted"], 0, st["links"])
 
     def test_a_graph_option_the_kernel_did_not_take_stops_the_run_before_any_model_call(self):
-        P.GRAPH_QUALITY = {"no_such_option": "on"}  # a valued flag: the server parses it and ignores it
-        with self.assertRaisesRegex(RuntimeError, "no_such_option"):
+        P.GRAPH_QUALITY = {"no_such_option": "on"}  # a flag the server does not know: it refuses to start and names it
+        with self.assertRaisesRegex(RuntimeError, "no.such.option"):
             self.run_c("full")
 
 

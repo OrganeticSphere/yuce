@@ -1324,6 +1324,9 @@ class Kernel:
                 raise TimeoutError("audit-serve startup deadline expired") from exc
             if error:
                 raise error
+            if not line:  # it refused to start, an unknown flag for one: its reason is on stderr, not a line to parse
+                self.proc.wait(timeout=SHUTDOWN_TIMEOUT_S)
+                raise RuntimeError(f"audit-serve did not start: {(work / 'server.err').read_text(encoding='utf-8')[:500]}")
             self.hello = json.loads(line)
             self.port = self.hello["port"]
         except BaseException:

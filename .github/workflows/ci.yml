@@ -1,6 +1,6 @@
 name: CI
 
-# Actions minutes are limited (the owner, 2026-10-30): a change of documentation alone is not built, a newer push to the same
+# A change of documentation alone is not built, a newer push to the same
 # branch cancels the older run, and the build is cached between runs.
 on:
   push:
@@ -21,9 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux on every push and pull request. Windows only on a manual run (owner, 2026-11-04: Windows minutes cost about twice
-        # Linux's and made half of the November spend): the full local gate before each pull request already runs on Windows, and
-        # Linux is the platform it does not cover. Run the workflow by hand on Windows before a release.
+        # Linux on every push and pull request, Windows on a manual run: run the workflow by hand before a release.
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:

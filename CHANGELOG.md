@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.3 (2026-11-05)
+
+Fixes from an outside review of 0.1.2.
+
+* **`apply` exits 1 when a step is refused.** The refusal was only in its JSON report and the exit code stayed 0, so
+  `apply && verify` took a refused run for a sound one: the container of the steps accepted before it is still written and
+  verifies. The benchmark helpers read that report as they read `verify`'s.
+* **An unknown flag is refused.** Any `--name value` used to be accepted, so a typo switched a check or a limit off in silence:
+  `audit-verify --expct receipt.json` printed `VERIFIED` without looking at the receipt, and `mcp-bridge --allow-tool x` passed
+  every tool. Each command now names its flags, and any other flag exits 2 before the command runs.
+* **A damaged last journal entry is no longer a clean pass.** Without a receipt, `audit-verify` reports bytes after the last
+  complete entry as `TORN_TAIL` with exit 1 (it said `VERIFIED`, exit 0). A resuming server still recovers from them, as it must
+  after a crash, but now says so in its first line and on stderr and keeps the bytes in a file beside the journal; it used to cut
+  them off in silence, which could undo the last transaction without a trace.
+* **`audit-verify` on a file it cannot read exits 2**, not 1: a missing file is not a refused journal.
+* **A port that is taken leaves no journal behind:** `audit-serve` binds its socket before it creates the run.
+* **`update-doc` refuses a document the container does not have** (it added one in silence) and reports `saved_to`; without
+  `--out` it saves nothing.
+* **The inspector page** refuses a report whose fields have the wrong type, instead of stopping halfway with the previous
+  badges still on the page.
+* **The results are stated as far as they go.** README and BENCHMARKS no longer present a count of comparisons won or the model
+  calls after a withdrawal as a result: the numbers stand, but the samples are small, most of those calls had nothing to do with
+  the withdrawal, and the kernel's side makes more calls. See "How far these numbers go" in BENCHMARKS.md.
+
 ## 0.1.2 (2026-11-05)
 
 * **The benchmark helpers read `sbgk verify`'s verdict again when a check fails.** Since 0.1.1 verify exits 1 on a failed

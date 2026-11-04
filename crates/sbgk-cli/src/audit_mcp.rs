@@ -1410,10 +1410,14 @@ fn with_profile(a: &Args) -> Args {
 /// chain head it reaches. The kernel reads the file once, bounded and read-only: it is never locked, copied or written. With
 /// `--expect`, the receipt's `audit_root` (with its `engine_root`, `session_root` and `wal_head` where it has them; a close stamp
 /// has no engine root) must name a state the journal passed through, such as a phase receipt or the final one; a `wal_head`
-/// binds the chain up to that state, not only the state. Exit 0 when verified, 1 when the journal is refused or the receipt
-/// names no state of it.
+/// binds the chain up to that state, not only the state. Exit 0 when verified, 1 when the journal is refused, the receipt names
+/// no state of it, or (without a receipt) bytes after the last complete entry were left unverified: status TORN_TAIL, the crash or
+/// the change that this check cannot tell apart. Exit 2 when the file cannot be read: that says nothing about the journal.
 pub fn cmd_audit_verify(a: &Args) {
     let wal = a.req("wal");
+    if let Err(e) = std::fs::File::open(&wal).and_then(|mut f| std::io::Read::read(&mut f, &mut [0u8; 1])) {
+        fail(&format!("cannot read {wal}: {e}"));
+    }
     let expect = a.get("expect").map(|p| {
         let v: Value = serde_json::from_slice(&std::fs::read(p).unwrap_or_else(|e| fail(&format!("cannot read {p}: {e}"))))
             .unwrap_or_else(|e| fail(&format!("{p} is not JSON: {e}")));
@@ -1454,6 +1458,11 @@ pub fn cmd_audit_verify(a: &Args) {
             println!("{out}");
             std::process::exit(1);
         }
+    } else if read.bytes != read.complete_bytes {
+        out["status"] = json!("TORN_TAIL");
+        out["note"] = json!("the entries above verify, but the bytes after them are no complete entry: a crash or a change; a receipt tells which");
+        println!("{out}");
+        std::process::exit(1);
     }
     println!("{out}");
 }
@@ -1595,8 +1604,10 @@ pub fn cmd_audit_serve(a: &Args) {
     let questions = parse_questions(&read_json(&a.req("questions"), "--questions")).unwrap_or_else(|e| fail(&format!("--questions: {e}")));
     if let Some(addr) = a.get("listen") {
         // every request carries a subject token, so a remote listener only needs the operator's opt-in
-        mcp::check_listen(addr, a.sw("allow-remote"), true);
+        mcp::check_listen(addr, a.sw("allow-remote"), true, "--allow-remote");
     }
+    // before the run exists: a port that is taken must not leave a journal the same command then refuses to create again
+    let listener = a.get("listen").map(mcp::bind);
     let wal = a.req("wal");
     let resume = std::fs::metadata(&wal).map(|m| m.len() > 0).unwrap_or(false);
     let mut state = if resume {
@@ -1730,11 +1741,20 @@ pub fn cmd_audit_serve(a: &Args) {
     if circle_mode {
         run.prepare(0, unix_ms()).unwrap_or_else(|e| fail(&format!("cannot recover circles: {e}")));
     }
-    let hello = json!({"run_id": run.state.run_id(), "resumed": resume, "records": run.state.head(), "builder_cursor": run.cursor(),
-                       "audit_root": to_hex(&run.state.audit_root()), "subjects": subjects.len()});
+    let mut hello = json!({"run_id": run.state.run_id(), "resumed": resume, "records": run.state.head(), "builder_cursor": run.cursor(),
+                           "audit_root": to_hex(&run.state.audit_root()), "subjects": subjects.len()});
+    // a recovery that cut the journal's end is said out loud: a crash and a changed last entry look the same from here
+    if let Some((bytes, kept)) = run.state.dropped_tail() {
+        hello["torn_tail_bytes"] = json!(bytes);
+        hello["torn_tail_kept_in"] = json!(kept.display().to_string());
+        let message = format!(
+            "the journal ended in {bytes} bytes that are no complete entry, from a crash or a change; the run resumes before them; check it against a receipt"
+        );
+        eprintln!("{}", json!({"status": "warning", "message": message, "kept_in": kept.display().to_string()}));
+    }
     let server = Arc::new(AuditServer { run: Mutex::new(run), changed: Condvar::new(), subjects, max_message_bytes, started: Instant::now() });
     let note = json!({"status": "ready", "audit": hello});
-    mcp::run(server, a.get("listen"), max_connections, Some(note), json!({"audit": hello}));
+    mcp::run_bound(server, listener, max_connections, Some(note), json!({"audit": hello}));
 }
 
 /// A build scope without the graph builder: `none`, and `hints` (the owner, 2026-10-31: no build phase; a reading task gets one more

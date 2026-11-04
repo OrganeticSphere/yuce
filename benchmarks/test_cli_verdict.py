@@ -46,7 +46,9 @@ class VerifyVerdict(unittest.TestCase):
             C.cli("verify")  # no container: exit 2, a usage error, not a verdict
         failed = subprocess.CompletedProcess([], 1, stdout='{"ok": false}', stderr="boom")
         with mock.patch.object(C.subprocess, "run", return_value=failed), self.assertRaises(RuntimeError):
-            C.cli("apply", "x")  # exit 1 is a verdict only for verify
+            C.cli("root", "x")  # exit 1 is an answer only from verify and apply
+        with mock.patch.object(C.subprocess, "run", return_value=failed):
+            self.assertIs(C.cli("apply", "x")["ok"], False)
         silent = subprocess.CompletedProcess([], 1, stdout="", stderr="crash")
         with mock.patch.object(C.subprocess, "run", return_value=silent), self.assertRaises(RuntimeError):
             C.cli("verify", "x")  # exit 1 without a verdict on stdout is a crash

@@ -197,11 +197,18 @@ function fallback(text, done) {
   try { document.execCommand("copy"); done(); } finally { t.remove(); }
 }
 
+const PANELS = ["steps-panel", "main-grid", "journal-panel", "repeat-panel", "roots", "copy-receipt"];
+
 function check(r) {
   const fields = JSON.parse($("report-fields").textContent);
   const missing = fields.filter((f) => get(r, f) == null);
   if (r.format !== "yuce-no-llm-demo-report/1") return "not a report of the no-LLM demo (format " + String(r.format) + ")";
   if (missing.length) return "the report lacks " + missing.join(", ");
+  // a green badge is only ever drawn from a real boolean, and a field of the wrong kind must not stop the page halfway
+  const kinds = { all_ok: "boolean", directive: "string", "altered.quote": "string", seconds: "number" };
+  for (const f of Object.keys(kinds)) if (typeof get(r, f) !== kinds[f]) return f + " is not a " + kinds[f];
+  for (const f of ["steps", "claims", "repeat"]) if (!Array.isArray(get(r, f))) return f + " is not a list";
+  if (r.steps.some((s) => s === null || typeof s.ok !== "boolean")) return "a step has no true or false ok";
   return null;
 }
 
@@ -211,11 +218,21 @@ function load(text) {
   const why = check(r);
   if (why) return fail(why);
   report = r;
+  $("load-error").hidden = true;
   $("empty").hidden = true;
-  for (const id of ["steps-panel", "main-grid", "journal-panel", "repeat-panel", "roots", "copy-receipt"]) $(id).hidden = false;
-  renderHeader(); renderSteps(); renderDirective(); renderAltered(); renderGraph(); renderJournal(); renderRepeat();
+  for (const id of PANELS) $(id).hidden = false;
+  try {
+    renderHeader(); renderSteps(); renderDirective(); renderAltered(); renderGraph(); renderJournal(); renderRepeat();
+  } catch (e) { fail("a field has the wrong form: " + e.message); }
 }
-function fail(msg) { const n = $("load-error"); n.hidden = false; n.textContent = "Cannot show this file: " + msg; }
+// a report that cannot be shown leaves nothing of the previous one on the page: no old badge may stand next to this message
+function fail(msg) {
+  report = null;
+  for (const id of PANELS) $(id).hidden = true;
+  $("verdict").replaceChildren();
+  $("empty").hidden = false;
+  const n = $("load-error"); n.hidden = false; n.textContent = "Cannot show this file: " + msg;
+}
 
 function renderHeader() {
   const v = report.verify.journal;
