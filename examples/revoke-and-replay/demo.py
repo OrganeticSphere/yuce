@@ -21,6 +21,7 @@ usage: python demo.py [--bin path/to/sbgk] [--keep] [--report report.json] [--ht
 It exits 0 when every step behaves as described, 1 otherwise. Standard library only."""
 import argparse
 import json
+import os
 import pathlib
 import shutil
 import socket
@@ -42,8 +43,9 @@ TEAM = ("reader-1", "reader-2", "reader-3")
 def find_binary(given: str | None) -> pathlib.Path:
     if given:
         return pathlib.Path(given)
+    target = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or REPO / "target")  # where `cargo build` puts it
     for name in ("sbgk.exe", "sbgk"):
-        candidate = REPO / "target" / "release" / name
+        candidate = (target if target.is_absolute() else REPO / target) / "release" / name
         if candidate.is_file():
             return candidate
     found = shutil.which("sbgk") or shutil.which("yuce")

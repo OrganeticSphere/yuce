@@ -1,8 +1,7 @@
 name: Release build
 
-# Release binaries for Linux, macOS and Windows (the owner, 2026-11-03: binaries for the v0.1 release). Built on demand only:
-# a pushed tag `build-*` or `v*`, or a manual run. No GitHub Release is created here: publishing is the owner's decision.
-# Actions minutes are limited (the owner, 2026-10-30): macOS minutes bill at ten times Linux and Windows at twice, so one macOS
+# Release binaries for Linux, macOS and Windows. Built on demand only:
+# a pushed tag `build-*` or `v*`, or a manual run. No GitHub Release is created here. One macOS
 # job builds both Apple targets, and the jobs build and smoke-test the binaries without the full test suite (CI runs it).
 on:
   push:

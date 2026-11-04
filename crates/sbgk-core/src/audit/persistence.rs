@@ -12,7 +12,7 @@ use crate::jcs::to_jcs;
 use serde_json::{json, Value};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const FORMAT: &str = "sbgk-session-log/2";
 const DOMAIN: &[u8] = b"R2R-AUDIT-WAL/2";
@@ -23,6 +23,8 @@ const FRAME_KEYS: [&str; 6] = ["format", "wal_op", "seq", "previous", "payload",
 #[derive(Debug)]
 pub(crate) struct AuditJournal {
     file: File,
+    path: PathBuf,
+    dropped_tail: Option<(u64, PathBuf)>,
     seq: u64,
     head: Hash,
     complete_bytes: u64,
@@ -82,6 +84,8 @@ impl AuditJournal {
         lock(&file)?;
         let mut journal = Self {
             file,
+            path: path.to_path_buf(),
+            dropped_tail: None,
             seq: 0,
             head: ZERO_HASH,
             complete_bytes: 0,
@@ -104,6 +108,8 @@ impl AuditJournal {
         let scan = Self::scan(&mut file)?;
         let journal = Self {
             file,
+            path: path.to_path_buf(),
+            dropped_tail: None,
             seq: (scan.payloads.len() - 1) as u64,
             head: *scan.heads.last().expect("a genesis frame"),
             complete_bytes: scan.complete_bytes,
@@ -196,6 +202,9 @@ impl AuditJournal {
                 return Err(std::io::Error::other("audit WAL length changed during recovery"));
             }
             if self.opened_bytes != self.complete_bytes {
+                // the tail is what a crash left, or what a changed last byte left: this journal cannot tell which, so its bytes
+                // are kept beside it and the caller reports them; a tail that cannot be kept stops the recovery
+                self.dropped_tail = Some((self.opened_bytes - self.complete_bytes, self.keep_tail()?));
                 self.file.set_len(self.complete_bytes)?;
             }
             self.file.seek(SeekFrom::End(0))?;
@@ -208,6 +217,34 @@ impl AuditJournal {
         self.opened_bytes = self.complete_bytes;
         self.ready = true;
         Ok(())
+    }
+
+    /// Write the bytes after the last complete frame to a new file beside the journal; an existing file is never replaced.
+    fn keep_tail(&mut self) -> std::io::Result<PathBuf> {
+        self.file.seek(SeekFrom::Start(self.complete_bytes))?;
+        let mut tail = Vec::new();
+        (&self.file).read_to_end(&mut tail)?;
+        for n in 0..1000u32 {
+            let suffix = if n == 0 { format!(".torn-{}", self.complete_bytes) } else { format!(".torn-{}-{n}", self.complete_bytes) };
+            let mut name = self.path.clone().into_os_string();
+            name.push(suffix);
+            let path = PathBuf::from(name);
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    file.write_all(&tail)?;
+                    file.sync_all()?;
+                    return Ok(path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(std::io::Error::other("no free name for the torn tail file"))
+    }
+
+    /// The tail that recovery cut off the journal: its size and the file that keeps it.
+    pub(crate) fn dropped_tail(&self) -> Option<(u64, &Path)> {
+        self.dropped_tail.as_ref().map(|(n, p)| (*n, p.as_path()))
     }
 
     /// Append and synchronize a whole transaction before acknowledging it.
@@ -364,7 +401,11 @@ mod tests {
         let (mut recovered, _) = AuditJournal::open(&path.0).unwrap();
         recovered.finish_recovery().unwrap();
         assert_eq!(snapshot(&mut recovered), original);
+        let (dropped, kept) = recovered.dropped_tail().map(|(n, p)| (n, p.to_path_buf())).expect("the tail is reported");
+        assert_eq!(dropped as usize, torn.len() - original.len());
+        assert_eq!(std::fs::read(&kept).unwrap(), torn[original.len()..]);
         recovered.append(&json!({"after_recovery": true})).unwrap();
+        std::fs::remove_file(kept).unwrap();
     }
 
     #[test]

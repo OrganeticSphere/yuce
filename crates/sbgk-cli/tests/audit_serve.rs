@@ -873,6 +873,62 @@ fn without_flags_audit_serve_runs_the_measured_v01_profile() {
     let _ = child.wait();
 }
 
+/// A changed last byte makes the final entry a torn tail. Without a receipt that must not read as a clean pass, and a server that
+/// resumes on it must say so and keep the bytes: a crash and a change look the same from inside the file.
+#[test]
+fn a_journal_whose_last_entry_is_damaged_is_not_a_clean_pass_and_recovery_reports_and_keeps_the_tail() {
+    let fx = Fixture::new("torn");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    let t = w1.call("audit_acquire", json!({}));
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let end = own.call("audit_status", json!({}));
+    drop(server);
+
+    let wal = fx.p("run.wal");
+    let mut bytes = std::fs::read(&wal).unwrap();
+    let whole = bytes.clone();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&wal, &bytes).unwrap();
+    let verify = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-verify").args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap())
+    };
+    let (code, v) = verify(&["--wal", &wal]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("TORN_TAIL")), "{v}");
+    assert!(v["torn_tail_bytes"].as_u64().unwrap() > 0, "{v}");
+    let receipt = fx.p("end.json");
+    std::fs::write(&receipt, json!({"audit_root": end["audit_root"], "engine_root": end["engine_root"]}).to_string()).unwrap();
+    let (code, m) = verify(&["--wal", &wal, "--expect", &receipt]);
+    assert_eq!((code, m["status"].as_str()), (Some(1), Some("MISMATCH")), "{m}");
+
+    let resumed = Server::start(&fx.args(false));
+    let hello = resumed.hello.clone();
+    drop(resumed);
+    let dropped = hello["audit"]["torn_tail_bytes"].as_u64().expect("the hello line reports the cut");
+    let kept = hello["audit"]["torn_tail_kept_in"].as_str().expect("and names the file that keeps it");
+    assert_eq!(std::fs::read(kept).unwrap(), bytes[bytes.len() - dropped as usize..]);
+    assert_eq!(std::fs::read(&wal).unwrap().len(), whole.len() - dropped as usize, "the journal resumes before the tail");
+}
+
+#[test]
+fn a_port_that_is_taken_leaves_no_journal_behind() {
+    let fx = Fixture::new("port");
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = taken.local_addr().unwrap().to_string();
+    let out = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", &addr]).args(fx.args(true)).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!std::path::Path::new(&fx.p("run.wal")).exists(), "nothing durable before the socket is bound");
+}
+
+#[test]
+fn audit_verify_of_a_file_it_cannot_read_is_an_error_of_the_call_not_a_refused_journal() {
+    let out = Command::new(BIN).args(["audit-verify", "--wal", "no-such-file.wal"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty() && String::from_utf8_lossy(&out.stderr).contains("cannot read"));
+}
+
 #[test]
 fn audit_verify_replays_a_recorded_journal_without_writing_it_and_finds_the_states_its_receipts_name() {
     let fx = Fixture::new("verify");

@@ -88,6 +88,105 @@ const SWITCHES: &[&str] = &[
     "concept-functions",
 ];
 
+/// The flags each command reads. `parse_args` takes any `--name value`, so a typo such as `--expct` or `--allow-tool` would
+/// otherwise switch a check or a limit off in silence; a flag outside its command's list is refused before the command runs.
+/// `known_flags_cover_every_flag_the_code_reads` below keeps this table and the code together.
+const CDC_FLAGS: &[&str] = &["cdc-mode", "cdc-min", "cdc-avg", "cdc-max"];
+const SESSION_FLAGS: &[&str] = &["base", "docs", "ontology"];
+const AUDIT_SERVE_FLAGS: &[&str] = &[
+    "agent-attempts",
+    "agent-timeout-ms",
+    "allow-remote",
+    "answer-timeout-ms",
+    "auto-rereads",
+    "backpressure-per-task",
+    "backpressure-records",
+    "backpressure-stall-ms",
+    "base-ontology",
+    "build-backlog",
+    "build-scope",
+    "builder-max-candidates",
+    "builder-max-links",
+    "builder-max-neighbors",
+    "builder-max-ops",
+    "builder-max-records",
+    "builder-requests",
+    "candidate-match",
+    "change-summary-documents",
+    "circles",
+    "circles-refiner",
+    "concept-functions",
+    "dynamic-roles",
+    "evolution-cards",
+    "evolution-document-order",
+    "evolution-pairing",
+    "evolution-pairs-per-card",
+    "evolution-pairs-per-concept",
+    "evolution-pairs-per-function",
+    "jev-mode",
+    "known-concepts",
+    "link-both-sides",
+    "listen",
+    "manifest",
+    "max-connections",
+    "max-lines",
+    "max-message-bytes",
+    "ontology-catchall-mappings",
+    "ontology-catchall-reports",
+    "ontology-review",
+    "ontology-revisions",
+    "ontology-unmapped-circles",
+    "own-refs",
+    "profile",
+    "questions",
+    "refine-budget-ms",
+    "repo",
+    "ring-rotate",
+    "run-id",
+    "section-bytes",
+    "select",
+    "stale-suspect",
+    "subjects",
+    "summary-companions",
+    "summary-records",
+    "temporal-summary",
+    "term-hygiene",
+    "term-max-words",
+    "ttl-ms",
+    "unattested-at-end",
+    "version-lineage",
+    "wal",
+    "wave-sections",
+    "zones",
+];
+
+fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
+    let own: &[&str] = match cmd {
+        "apply" => &["continue-on-error", "oracle", "out", "pretty", "stream", "timings", "track-roots"],
+        "serve" => &["ack", "targets", "wal-path"],
+        "mcp-serve" => &["allow-remote", "listen", "max-connections", "max-message-bytes", "targets", "token", "wal-path"],
+        "mcp-bridge" => &["agent-id", "allow-shutdown", "allow-tools", "connect", "connect-timeout-ms", "tier", "token"],
+        "audit-serve" => AUDIT_SERVE_FLAGS,
+        "audit-verify" => &["expect", "wal"],
+        "update-doc" => &["doc-id", "file", "out", "pretty"],
+        "root" | "dump-claims" | "verify" => &["pretty"],
+        "dump-nodes" => &["ids-only", "pretty"],
+        "node-table" => &["out", "pretty"],
+        "diff" => &["reps", "pretty"],
+        "timetravel" => &["offset", "reps", "seq", "pretty"],
+        "timetravel-all" => &["roots", "pretty"],
+        "cone" => &["entity", "full-out", "out", "reps", "pretty"],
+        "tamper" => &["exhaustive", "region", "seed", "trials", "pretty"],
+        "emit-batch-directives" => &["k", "round", "seats", "state", "targets", "pretty"],
+        "emit-directive" => &["k", "round", "seat", "seats", "state", "targets", "pretty"],
+        "frontier" => &["state", "targets", "pretty"],
+        "view" => &[],
+        _ => return None,
+    };
+    let session: &[&[&str]] = if matches!(cmd, "apply" | "serve" | "mcp-serve") { &[SESSION_FLAGS, CDC_FLAGS] } else { &[] };
+    Some(own.iter().chain(session.iter().flat_map(|s| s.iter())).copied().collect())
+}
+
 #[derive(Clone)]
 struct Args {
     pos: Vec<String>,
@@ -478,6 +577,9 @@ fn cmd_update_doc(a: &Args) -> Value {
     if doc_id.len() > sbgk_core::session::MAX_STR {
         fail("--doc-id is too long");
     }
+    if s.arena.doc(&doc_id).is_none() {
+        fail(&format!("--doc-id {doc_id}: the container has no such document, and update-doc only replaces one"));
+    }
     let bytes = read(&a.req("file"));
     let t0 = Instant::now();
     let rep = s.put_document(&doc_id, &bytes);
@@ -488,7 +590,7 @@ fn cmd_update_doc(a: &Args) -> Value {
         write(out, &container);
     }
     json!({
-        "doc_id": doc_id, "chunks_before": rep.chunks_before, "chunks_total": rep.chunks_total, "chunks_new": rep.chunks_new, "chunks_reused": rep.chunks_reused,
+        "doc_id": doc_id, "saved_to": a.get("out"), "chunks_before": rep.chunks_before, "chunks_total": rep.chunks_total, "chunks_new": rep.chunks_new, "chunks_reused": rep.chunks_reused,
         "evidence_total_for_doc": rep.evidence_total, "evidence_stale": rep.evidence_stale,
         "rebound_ok": rep.rebound_ok, "rebind_failed": rep.rebind_failed,
         "claims_touched": rep.claims_touched, "claims_net_removed": rep.claims_net_removed,
@@ -799,13 +901,16 @@ Engine and container:
   timetravel    the state after a step: timetravel <container> --seq <n>
   root          the state root of a container: root <container>
   view          the full projection of a container: view <container>
-  update-doc    replace one document: update-doc <container> --doc-id <id> --file <file> [--out <container>]
+  update-doc    replace one document: update-doc <container> --doc-id <id> --file <file> [--out <container>];
+                without --out it reports the change and saves nothing
 
 Measurement commands used by the benchmark runners:
   serve, mcp-serve, timetravel-all, dump-nodes, dump-claims, node-table, tamper, emit-directive,
   emit-batch-directives, frontier
 
-Each command prints one JSON document on stdout; an error is one JSON line on stderr with exit code 2.
+Each command prints one JSON document on stdout. A usage or I/O error is one JSON line on stderr with exit code 2, an unknown
+flag included; verify and audit-verify exit 1 when the check itself fails, and apply when a step is refused, with their report
+on stdout (apply still writes the container of the steps it accepted).
   sbgk --help      this text
   sbgk --version   the version
 More: README.md, examples/ and crates/sbgk-core/src/audit/README.md in the repository.";
@@ -827,6 +932,13 @@ pub fn main() {
     }
     let cmd = raw[0].clone();
     let a = parse_args(raw[1..].to_vec());
+    if let Some(known) = known_flags(&cmd) {
+        let mut given: Vec<&str> = a.kv.keys().chain(a.sw.iter()).map(String::as_str).collect();
+        given.sort_unstable();
+        if let Some(unknown) = given.into_iter().find(|f| !known.contains(f)) {
+            fail(&format!("unknown flag --{unknown} for {cmd}: sbgk --help lists the commands"));
+        }
+    }
     let out = match cmd.as_str() {
         "apply" => cmd_apply(&a),
         "serve" => {
@@ -879,5 +991,77 @@ pub fn main() {
     // tampered container for a sound one (it printed "ok": false and exited 0 before)
     if cmd == "verify" && out.get("ok") == Some(&Value::Bool(false)) {
         std::process::exit(1);
+    }
+    // a refused step exits 1 too: `apply && verify` must not take a refused run for a sound one, as the container of the steps
+    // accepted before it is still written and verifies
+    if cmd == "apply" && out.get("errors").and_then(Value::as_array).is_some_and(|e| !e.is_empty()) {
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod flag_tests {
+    use super::*;
+
+    /// every flag read by a literal get, req, num or sw call in the code of the commands (the tests below them are left out)
+    fn flags_read(src: &str) -> Vec<String> {
+        let src = src.split("#[cfg(test)]").next().unwrap();
+        let mut out = Vec::new();
+        for call in ["a.get(\"", "a.req(\"", "a.num(\"", "a.sw(\""] {
+            for (at, _) in src.match_indices(call) {
+                let before = src[..at].chars().next_back().unwrap_or(' ');
+                if before.is_alphanumeric() || before == '_' || before == '.' {
+                    continue;
+                }
+                let rest = &src[at + call.len()..];
+                let name = &rest[..rest.find('"').unwrap()];
+                // a flag is spelled with hyphens; a name with an underscore is a JSON field of a variable also called `a`
+                if !name.contains('_') {
+                    out.push(name.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn known_flags_cover_every_flag_the_code_reads() {
+        let commands = [
+            "apply",
+            "serve",
+            "mcp-serve",
+            "mcp-bridge",
+            "audit-serve",
+            "audit-verify",
+            "update-doc",
+            "root",
+            "dump-claims",
+            "verify",
+            "dump-nodes",
+            "node-table",
+            "diff",
+            "timetravel",
+            "timetravel-all",
+            "cone",
+            "tamper",
+            "emit-batch-directives",
+            "emit-directive",
+            "frontier",
+            "view",
+        ];
+        let all: Vec<&str> = commands.iter().flat_map(|c| known_flags(c).unwrap()).collect();
+        let sources = [include_str!("main.rs"), include_str!("audit_mcp.rs"), include_str!("bridge.rs"), include_str!("mcp.rs")];
+        for flag in sources.iter().flat_map(|s| flags_read(s)) {
+            assert!(all.contains(&flag.as_str()), "--{flag} is read by the code but no command lists it");
+        }
+        // the switches and the flags read through a list rather than a literal call
+        for flag in SWITCHES.iter().chain(["candidate-match", "jev-mode", "known-concepts", "evolution-pairs-per-concept"].iter()) {
+            assert!(all.contains(flag), "--{flag} is known to the parser but no command lists it");
+        }
+    }
+
+    #[test]
+    fn an_unknown_command_has_no_list() {
+        assert!(known_flags("no-such-command").is_none());
     }
 }

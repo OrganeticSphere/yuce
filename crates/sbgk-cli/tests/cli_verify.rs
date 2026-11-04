@@ -6,6 +6,36 @@ use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_sbgk");
 
+/// A refused step is a failed `apply`: the report says which, and the exit code says so to a script.
+#[test]
+fn apply_exits_1_when_a_step_is_refused_and_reports_it() {
+    let dir = std::env::temp_dir().join(format!("sbgk_cli_apply_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let quickstart = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/quickstart");
+    let stream = std::fs::read_to_string(quickstart.join("stream.jsonl")).unwrap();
+    let bad = dir.join("bad.jsonl");
+    std::fs::write(&bad, stream.replace("shall call interface", "must call interface")).unwrap();
+    let (ontology, docs) = (quickstart.join("ontology.json"), quickstart.join("docs"));
+    let out = dir.join("bad.sbgk");
+    let (code, json) = run(&[
+        "apply",
+        "--ontology",
+        ontology.to_str().unwrap(),
+        "--docs",
+        docs.to_str().unwrap(),
+        "--stream",
+        bad.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "{json}");
+    assert!(json.contains("QUOTE_NOT_FOUND_IN_BYTES"), "{json}");
+    let good = quickstart.join("stream.jsonl");
+    let (code, json) = run(&["apply", "--ontology", ontology.to_str().unwrap(), "--docs", docs.to_str().unwrap(), "--stream", good.to_str().unwrap()]);
+    assert_eq!(code, 0, "{json}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn run(args: &[&str]) -> (i32, String) {
     let out = Command::new(BIN).args(args).output().expect("the binary starts");
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned())

@@ -8,7 +8,9 @@ hash-chained journal. When a source is revoked, the kernel itself finds the conc
 others standing: no model is asked what the revocation touches. A stopped run replays its journal to the same roots, and
 anyone can check a published journal against its receipt without a model.
 
-The kernel is written in Rust and calls no model. Agents of any model are its clients, over MCP.
+The kernel is written in Rust and calls no model. Agents of any model are its clients, over MCP. Deterministic here means that
+the kernel's answers follow from its inputs and a journal replays to the same roots; two runs of a team differ, in their
+timestamps and in what their models write.
 
 ## Source revoked: one minute, no model, no API key
 
@@ -37,22 +39,30 @@ The same team of agents with the kernel (K) and without it, on native [Temporal]
 [LangGraph](https://www.langchain.com/langgraph) (L), on 22 pages of the MCP specification across five revisions. Share of
 correct statements, graded blind; after reading (stage 1) and after each of two source withdrawals (2A, 2B):
 
-| Agents (grader) | Stage 1: K / T / L | 2A: K / T / L | 2B: K / T / L | Named by the rule |
-|---|---|---|---|---|
-| Claude Haiku 5.5 (Fable 5.1) | 89.9 / 79.3 / 84.9 | 90.5 / 86.6 / 88.8 | 88.7 / 86.7 / 85.8 | K better than T in stage 1; on par otherwise |
-| DeepSeek Flash, series 1 (Opus 5.5) | 91.8 / 83.3 / 83.0 | 91.8 / 74.6 / 81.4 | 91.7 / 91.9 / 86.7 | K better than T and L in stage 1 and 2A; on par in 2B |
-| DeepSeek Flash, series 2 (Opus 5.5) | 89.6 / 92.1 / 84.9 | 89.6 / 83.8 / 85.2 | 89.7 / 81.0 / 88.9 | on par; in 2B better than T, with the grader unstable there |
+| Agents (grader) | Stage 1: K / T / L | 2A: K / T / L | 2B: K / T / L |
+|---|---|---|---|
+| Claude Haiku 5.5 (Fable 5.1) | 89.9 / 79.3 / 84.9 | 90.5 / 86.6 / 88.8 | 88.7 / 86.7 / 85.8 |
+| DeepSeek Flash, series 1 (Opus 5.5) | 91.8 / 83.3 / 83.0 | 91.8 / 74.6 / 81.4 | 91.7 / 91.9 / 86.7 |
+| DeepSeek Flash, series 2 (Opus 5.5) | 89.6 / 92.1 / 84.9 | 89.6 / 83.8 / 85.2 | 89.7 / 81.0 / 88.9 |
 
-Over the 18 comparisons of the three runs the kernel's side was better in 6 and on par in 12, never more than 7 points
-below (the worst: 2.4 points). Every grading found that it kept both withdrawals; the sides without it kept them partly in
-some (T once of 8 gradings and L 4 of 8 on DeepSeek, T once on Haiku). In every run it answered again after the first
-withdrawal without a model call, finding that the withdrawal touched no answer; the sides without it made 6 (Haiku) and 40
-to 65 (DeepSeek) calls.
+**We claim no gain in answer quality.** The samples are small: one corpus, one or two runs per side, 45 to 121 graded statements
+each. The 95% interval of a difference is about 10 to 12 points either way; one difference of the 18 clears it (DeepSeek series 1,
+2A, against T: +17.2), none after correcting for 18 comparisons, and they are not independent: the kernel's answers of stage 1
+and 2A are the same text. The advantage of DeepSeek series 1 did not repeat in series 2. The kernel's side was at worst 2.4 points
+below another side.
 
-The kernel costs time: 2.3 to 2.5 times the wall time and 1.4 times the cost of the same team without it on Haiku, 1.2 to
-1.3 times and 1.5 to 1.6 times on DeepSeek. It checks bytes and registered dependencies, not meaning: on correct quotes its
-side once gave a current rule as replaced (Haiku) and once an outdated one as current (DeepSeek, series 2). One corpus;
-one run per side on Haiku, two on DeepSeek: see [BENCHMARKS.md](BENCHMARKS.md) and [LIMITATIONS.md](LIMITATIONS.md).
+**What the kernel adds is the record, not the score.** Every accepted quote is byte-exact and every claim names what it rests on,
+so what a withdrawal touches is read from those links rather than asked of a model, and a journal can be checked against its
+receipt by anyone. Every grading found that the kernel's side kept both withdrawals. The sides without it kept them fully in
+10 (T) and 8 (L) of 12 gradings and partly in the rest. A withdrawal touched an answer of the kernel's side three times in all,
+once per run, on this one corpus.
+
+**The price.** 2.3 to 2.5 times the wall time and 1.4 times the cost on Haiku; 1.2 to 1.3 and 1.5 to 1.6 on DeepSeek. Its side also
+makes 1.8 to 2.6 times the model calls in stage 1, and no side with an equal budget of calls was run, so what the kernel adds to
+the answers cannot be told from the extra reading. On DeepSeek it named fewer version transitions than T (9 and 7 to 8 of 13,
+against 13 and 12). It checks bytes and registered dependencies, not meaning: on correct quotes its side once gave a current rule
+as replaced (Haiku) and once an outdated one as current (DeepSeek, series 2). See [BENCHMARKS.md](BENCHMARKS.md) and
+[LIMITATIONS.md](LIMITATIONS.md).
 
 ## What the kernel does
 
@@ -105,9 +115,12 @@ see [LIMITATIONS.md](LIMITATIONS.md).
   through, and the server's role check is the only filter. The agent id and the token come from the bridge's
   configuration. Give each agent a restricted profile: `--allow-tools`, `--agent-id` and its own token. The servers have
   no TLS; a non-loopback `--listen` address needs `--allow-remote` (and, for `mcp-serve`, `--token`).
+* **A closed run opens again on a restart.** `audit_close` is held in memory, not in the journal: a server started on the same
+  journal is open again.
 * **Verification costs model calls.** Link checks and re-reads after a withdrawal are extra work for the agents.
-* **Size.** Up to 10,000 records in one run and 8 agents at once are recommended for 0.1: the cost of a commit and of
-  reopening the journal grows with it (about 41 ms and 13 s at 10,000 records).
+* **Size.** Up to 8 agents at once are recommended for 0.1, and runs of a few thousand records: the cost of a commit and of
+  reopening the journal grows with it. A journal of quotes alone reopens in 13 s at 10,000 records; the journals of real runs are
+  slower, 14 to 19 s at about 3,000 records.
 
 All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -133,7 +146,8 @@ cargo test --workspace --release
 ```
 
 The build produces `sbgk` and its alias `yuce` (the same commands) in `target/release/`; `sbgk --help` lists them. Release
-binaries for Linux, macOS and Windows, with SHA-256 sums, are on the releases page.
+binaries for Linux, macOS and Windows, with SHA-256 sums, are on the releases page; the examples below are in this repository,
+not in the release archives.
 
 ### A minimal example
 

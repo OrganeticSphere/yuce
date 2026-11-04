@@ -14,10 +14,22 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   records. A conclusion that rests on a source without naming it is not tracked.
 * **`LATEST_KNOWN` is not proof of being current.** It says that no later state is known to the kernel's records.
 
+## What a command checks
+
+* Only `verify` checks a container. `root`, `diff`, `cone`, `view`, `timetravel` and the `dump-*` commands read it as it is and
+  exit 0 on a damaged one: on a file you do not trust, run `verify` first and stop if it exits non-zero. `cone` on an entity the
+  graph does not hold returns an empty cone, not an error.
+
 ## What the journal proves, and what it does not
 
-* The journal is hash-chained and replays to the same audit and engine roots, and a journal with a changed byte is refused.
-  A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
+* The journal is hash-chained and replays to the same audit and engine roots, and a changed byte in a complete entry is refused.
+  A damaged last entry cannot be told from a crash in the middle of a write: without a receipt `sbgk audit-verify` reports
+  `TORN_TAIL` (exit 1), and a server that resumes on it recovers to the entry before, reports it in its first line and on stderr
+  and keeps the bytes beside the journal. That can undo the last transaction, so check against a receipt after any such report.
+* `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
+  `at_end` in the report says whether the state is the journal's end.
+* `audit_close` is not journaled: a server restarted on the same journal is open again, and agents get tasks.
+* A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
   `engine_root`, `wal_head`) where the journal's writer cannot change it, such as a protected commit or a CI artifact, and
   check the journal against it with `sbgk audit-verify --expect`. There is no external witness service in 0.1.
 
@@ -32,9 +44,13 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Size
 
-* Up to 10,000 records in one run and up to 8 agents at once are recommended for 0.1. At 10,000 records one commit takes
-  about 41 ms (p50) and reopening the journal 13 s, both growing with the journal; more than 16 agents add little
-  throughput ([BENCHMARKS.md](BENCHMARKS.md), section 4).
+* Up to 8 agents at once and runs of a few thousand records are recommended for 0.1. On a journal of quotes alone one commit
+  takes about 41 ms (p50) at 10,000 records and reopening the journal 13 s, both growing with the journal; the journals of real
+  runs reopen more slowly, 14 to 19 s at about 3,000 records. More than 16 agents add little throughput
+  ([BENCHMARKS.md](BENCHMARKS.md), section 4).
+* One process, one writer. There is no compaction of the journal, no rotation of tokens and no format migration in 0.1.
+* The connection limit is shared: connections that send nothing hold a place until the 5 s admission timeout, and there is no
+  limit per address. This matters with `--allow-remote`.
 
 ## Off by default, experimental
 
@@ -46,7 +62,7 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Not in 0.1
 
-* A Python client library (`pip install yuce`) is planned for 0.1.3; until then agents talk to the server over MCP JSON-RPC
+* A Python client library (`pip install yuce`) is planned for 0.1.4; until then agents talk to the server over MCP JSON-RPC
   or through `sbgk mcp-bridge`.
 * Settings as a file and a page to edit them, and agents of any model joining and leaving with their own profile, are planned
   for 0.2.
@@ -54,6 +70,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Platforms
 
-* CI builds and tests on Linux and Windows. Release binaries are built for Linux x86_64, Windows x86_64 and macOS (arm64,
+* CI builds and tests on Linux at every push and on Windows on a manual run, done before each release. Release binaries are built for Linux x86_64, Windows x86_64 and macOS (arm64,
   x86_64); the Linux, Windows and macOS arm64 binaries are started once in the build, the macOS x86_64 one is not.
 * The published runs were made on Windows x86_64.
+* The Linux binary needs glibc 2.34 or later (Ubuntu 22.04, Debian 12, RHEL 9). Binaries and tags are not signed; the SHA-256 sums
+  sit in the same release as the files.

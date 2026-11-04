@@ -634,15 +634,13 @@ impl Drop for Slot {
     }
 }
 
-/// Refuse a non-loopback listen address unless the operator opted in with `--allow-remote` and a token.
-pub(crate) fn check_listen(addr: &str, allow_remote: bool, has_token: bool) {
+/// Refuse a non-loopback listen address unless the operator opted in with `--allow-remote` and, where the server takes one, a
+/// token (`needs`: what the message names, as the commands differ).
+pub(crate) fn check_listen(addr: &str, allow_remote: bool, has_token: bool, needs: &str) {
     let addrs: Vec<_> = addr.to_socket_addrs().unwrap_or_else(|e| fail(&format!("cannot resolve --listen {addr}: {e}"))).collect();
     let remote: Vec<String> = addrs.iter().filter(|a| !a.ip().is_loopback()).map(|a| a.ip().to_string()).collect();
     if !remote.is_empty() && !(allow_remote && has_token) {
-        fail(&format!(
-            "--listen {addr} is not a loopback address ({}): the server has no TLS, so exposing it needs both --allow-remote and --token <SECRET>",
-            remote.join(", ")
-        ));
+        fail(&format!("--listen {addr} is not a loopback address ({}): the server has no TLS, so exposing it needs {needs}", remote.join(", ")));
     }
 }
 
@@ -652,7 +650,7 @@ pub fn cmd_mcp_serve(a: &Args) {
         fail("--token must not be empty");
     }
     if let Some(addr) = a.get("listen") {
-        check_listen(addr, a.sw("allow-remote"), token.is_some());
+        check_listen(addr, a.sw("allow-remote"), token.is_some(), "both --allow-remote and --token <SECRET>");
     }
     let max_message_bytes: usize = a.num("max-message-bytes", DEFAULT_MAX_MESSAGE_BYTES).max(1);
     let max_connections: usize = a.num("max-connections", DEFAULT_MAX_CONNECTIONS).max(1);
@@ -687,13 +685,22 @@ pub fn cmd_mcp_serve(a: &Args) {
 /// `{"status":"listening","addr":..,"port":..}` plus the fields of `hello`; then one thread per connection, at most
 /// `max_connections` at a time (a connection over the cap gets one error line and is closed).
 pub(crate) fn run<S: LineServer>(server: Arc<S>, listen: Option<&str>, max_connections: usize, note: Option<Value>, hello: Value) {
-    let Some(addr) = listen else {
+    run_bound(server, listen.map(bind), max_connections, note, hello)
+}
+
+/// The listening socket of `--listen`. A server that creates durable state binds it first, so a taken port leaves nothing behind.
+pub(crate) fn bind(addr: &str) -> TcpListener {
+    TcpListener::bind(addr).unwrap_or_else(|e| fail(&format!("cannot listen on {addr}: {e}")))
+}
+
+/// `run` on a socket already bound (`None`: stdio).
+pub(crate) fn run_bound<S: LineServer>(server: Arc<S>, listener: Option<TcpListener>, max_connections: usize, note: Option<Value>, hello: Value) {
+    let Some(listener) = listener else {
         if let Some(n) = note {
             eprintln!("{n}");
         }
         return serve_stream(&*server, std::io::stdin().lock(), std::io::stdout().lock());
     };
-    let listener = TcpListener::bind(addr).unwrap_or_else(|e| fail(&format!("cannot listen on {addr}: {e}")));
     let local = listener.local_addr().expect("bound socket has an address");
     let mut first = json!({"status": "listening", "addr": local.to_string(), "port": local.port()});
     if let (Some(f), Some(h)) = (first.as_object_mut(), hello.as_object()) {

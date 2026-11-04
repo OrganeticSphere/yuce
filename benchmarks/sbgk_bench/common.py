@@ -58,9 +58,10 @@ def workdir(name: str) -> pathlib.Path:
 
 
 def verdict_exit(args: tuple, returncode: int, stdout: str) -> bool:
-    """True when a non-zero exit is the command's answer, not a failure: since 0.1.1 `sbgk verify` exits 1 when a check
-    fails and prints its verdict (`"ok": false`) on stdout. Callers read that verdict, as they did when it exited 0."""
-    return returncode == 1 and bool(args) and str(args[0]) == "verify" and bool(stdout.strip())
+    """True when a non-zero exit is the command's answer, not a failure: `sbgk verify` exits 1 when a check fails (since 0.1.1)
+    and `sbgk apply` when a step is refused (since 0.1.3), with their report on stdout. Callers read that report, as they did
+    when these commands exited 0."""
+    return returncode == 1 and bool(args) and str(args[0]) in ("verify", "apply") and bool(stdout.strip())
 
 
 def cli(*args: Any, stdin: str | None = None) -> dict | list:
