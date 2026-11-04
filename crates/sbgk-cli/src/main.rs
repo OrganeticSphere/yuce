@@ -792,7 +792,8 @@ Audit server for a team of agents:
 
 Engine and container:
   apply         apply a JSONL stream: --ontology <file> --docs <dir> --stream <file> --out <container>
-  verify        check a container (header, chunks, node table, hash chain, quote anchors): verify <container>
+  verify        check a container (header, chunks, node table, hash chain, quote anchors): verify <container>;
+                exit 1 if a check fails
   cone          the support cone of one entity: cone <container> --entity <id> [--out <file>]
   diff          what differs between two containers: diff <a> <b>
   timetravel    the state after a step: timetravel <container> --seq <n>
@@ -873,5 +874,10 @@ pub fn main() {
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         println!("{out}");
+    }
+    // a failed check exits 1, as audit-verify does, so a script or a CI step that reads the exit code cannot take a
+    // tampered container for a sound one (it printed "ok": false and exited 0 before)
+    if cmd == "verify" && out.get("ok") == Some(&Value::Bool(false)) {
+        std::process::exit(1);
     }
 }
