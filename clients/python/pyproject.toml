@@ -8,6 +8,7 @@ version = "0.1.5"
 description = "A thin Python client of the YuCe audit server"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Aset Uisin", email = "support@organetic.ai" }]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = []
