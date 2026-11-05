@@ -151,7 +151,7 @@ kernel is for. A comparison of answers comes back with the graph work of a later
 
 ## 4. The kernel's limits, without a model
 
-One campaign with `benchmarks/run_limits.py` on the kernel code of v0.1.4 (`crates/` tree `45ec5f0c`), on a Windows laptop with
+One campaign with `benchmarks/run_limits.py` on the kernel code of v0.1.4 (`crates/` tree `5ee0f927`), on a Windows laptop with
 nothing else building, the machine 13 to 18% busy. Each point starts from an empty journal in a new process; clients are the
 stock audit server over TCP with real tokens, the default profile, no artificial pauses; every journal is closed, reopened in a
 new process and checked to reach the same roots. Memory is the peak resident size of the whole process.
