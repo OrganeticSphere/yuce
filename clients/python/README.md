@@ -8,16 +8,11 @@ It talks to a running server. The kernel, its checks and its journal stay in the
 
 ## Install
 
-From a clone of the repository:
-
 ```bash
-pip install ./clients/python
+pip install organetic-yuce
 ```
 
-Or from the wheel attached to a [release](https://github.com/OrganeticSphere/yuce/releases). The distribution is `organetic-yuce`, and you
-import it as `yuce`.
-
-It is not on PyPI yet. Do not run `pip install yuce`: that name belongs to an unrelated project.
+You import it as `yuce`. Do not run `pip install yuce`: that name on PyPI belongs to an unrelated project.
 
 ## A reader
 
@@ -36,7 +31,7 @@ with yuce.Client("127.0.0.1:8787", token="replace-with-a-secret-1") as agent:
 ```
 
 `task["prompt"]` is the directive to give a model: it holds the section to read and the form of the lines to send back.
-[examples/reader.py](examples/reader.py) is the whole loop with your model in one function.
+[examples/reader.py](https://github.com/OrganeticSphere/yuce/blob/main/clients/python/examples/reader.py) is the whole loop with your model in one function.
 
 ## The owner
 

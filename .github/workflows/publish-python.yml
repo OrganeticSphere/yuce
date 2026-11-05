@@ -1,0 +1,36 @@
+name: Publish the Python client
+
+# On a release tag the wheel of clients/python goes to PyPI as organetic-yuce. PyPI trusts this workflow by its name and its
+# environment, so no password or token is kept here. A version on PyPI cannot be replaced: the tag must match the package.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'OrganeticSphere/yuce'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: The package has the version of the tag
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('clients/python/pyproject.toml', 'rb'))['project']['version'])")
+          test "v$version" = "$GITHUB_REF_NAME"
+
+      - name: Build the wheel
+        run: python -m pip wheel ./clients/python --no-deps -w dist
+
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
