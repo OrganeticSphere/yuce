@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.4 (2026-11-05)
+
+Answers to the outside reviews of 0.1.3: a faster check of a journal, the campaign of the limits in the open, and the runner ready
+for a run from this tag. What that run will measure is fixed in `benchmarks/PREREGISTRATION_0.1.4.md`.
+
+* **A journal replays about five times faster.** On the recorded runs of about 3,000 records, `audit-verify` went from about 11 s to
+  2 s, and reopening a journal gains the same. Every entry copied the whole state, built its text again and hashed it. An entry that
+  reports no failure now runs on the state itself; its outcome and roots are still computed and compared on every entry, so a journal
+  that misreports one is refused as before. Roots, journal format and checks are unchanged, and old journals verify as they did. The
+  whole state is still hashed at every entry, so the time grows close to the square of the length.
+* **Tables of records take a key per process.** An agent writes what a record id hashes, and could otherwise search for ids that fall
+  in one bucket and slow every pass. Nothing depends on the order of these tables, and they can no longer be walked.
+* **The limits campaign is in the open.** `benchmarks/run_limits.py` with the example `limits` repeats section 4 of BENCHMARKS.md, and
+  says how busy the machine was. The section is taken again on this code, and its memory column is now the peak of the whole process.
+* **A refused start of `audit-serve` no longer writes to a journal or leaves a new one.** Every flag that needs no journal is now
+  checked before the journal is opened, so a mistyped one does not cost a recovery. What is checked against the journal is only
+  read: `--build-scope versions` on a run of another scope grew the journal and was then refused. A new run whose start fails
+  after it was created is taken away again, so the same command can be given twice; before, only a taken port did that. One thing
+  stays: opening a journal cuts a torn tail, so a start refused by a check against that journal has already cut it. It says so at
+  once and keeps the bytes. A one-entry journal also resumes with `--build-scope versions` now.
+* **`audit-verify --at-end`.** With `--expect`, the receipt's state must be the journal's last: a journal that went on after a
+  terminal receipt is a mismatch, and so are bytes after the last complete entry. `at_end` in the report counts them too.
+* **BENCHMARKS section 3 keeps the check of quotes alone.** The comparison of answers with knowledge-graph systems is out until the
+  graph work of a later version: those systems have another purpose. It stays in the texts of 0.1.0 to 0.1.3.
+* **The runner.** On the sides without the kernel, a closing line over its length limit is cut with a visible mark and counted, no longer
+  refused: refused, it marked an answer incomplete and the page was done again after a withdrawal. A run's provenance names the tag, the
+  trees of `crates` and `benchmarks`, the binary's version and the hash of every runner source, and a run refuses a binary of another
+  version than its tag. `benchmarks/revision_outcomes.py` counts what a withdrawal cost and what it took with it, on every side.
+* **`cone` refuses an entity no claim names** (exit 2), and a container it cannot read. It printed an empty cone and exited 0.
+  With `--full-out` the entity is not checked: that output does not depend on it.
+
 ## 0.1.3 (2026-11-05)
 
 Fixes from an outside review of 0.1.2.

@@ -6,7 +6,7 @@
 //! first comparing 256 bucket hashes and only then walking the differing buckets.
 
 use crate::hash::{sha256, Hash, ZERO_HASH};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
 
 pub const BUCKETS: usize = 256;
 
@@ -60,6 +60,44 @@ impl Hasher for IdHasher {
 }
 
 pub type IdBuild = BuildHasherDefault<IdHasher>;
+
+/// `IdHasher` under a key drawn once per process, for tables of ids whose content an agent writes. A digest is uniform only until
+/// someone searches: an agent can look for texts whose ids share their first bits, and in an unkeyed table those would all fall in
+/// one bucket and slow every pass. Roots do not depend on it, as nothing reads such a table in order.
+#[derive(Clone, Copy)]
+pub struct KeyedIdBuild(u64);
+
+impl Default for KeyedIdBuild {
+    fn default() -> Self {
+        static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        Self(*KEY.get_or_init(|| std::collections::hash_map::RandomState::new().hash_one(0u64) | 1))
+    }
+}
+
+impl BuildHasher for KeyedIdBuild {
+    type Hasher = KeyedIdHasher;
+
+    fn build_hasher(&self) -> KeyedIdHasher {
+        KeyedIdHasher { key: self.0, id: IdHasher::default() }
+    }
+}
+
+pub struct KeyedIdHasher {
+    key: u64,
+    id: IdHasher,
+}
+
+impl Hasher for KeyedIdHasher {
+    fn finish(&self) -> u64 {
+        let mixed = self.id.finish().wrapping_mul(self.key);
+        mixed ^ (mixed >> 32)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.id.write(bytes);
+    }
+}
+
 pub type IdMap<V> = std::collections::HashMap<Hash, V, IdBuild>;
 pub type IdSet = std::collections::HashSet<Hash, IdBuild>;
 
@@ -112,3 +150,24 @@ impl Hasher for FxHasher {
 pub type FxBuild = BuildHasherDefault<FxHasher>;
 pub type FxMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
 pub type FxSet<K> = std::collections::HashSet<K, FxBuild>;
+
+#[cfg(test)]
+mod keyed_tests {
+    use super::*;
+
+    /// Ids that an agent searched for so that their first bits agree: unkeyed they share one bucket, keyed they spread.
+    #[test]
+    fn ids_that_share_their_first_bits_spread_under_the_key() {
+        let ids: Vec<[u8; 32]> = (0..1024u64)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                id[..8].copy_from_slice(&(i << 24).to_le_bytes());
+                id
+            })
+            .collect();
+        let buckets = |hash: &dyn Fn(&[u8; 32]) -> u64| ids.iter().map(|id| hash(id) & 0xFFFF).collect::<std::collections::BTreeSet<_>>().len();
+        let (plain, keyed) = (IdBuild::default(), KeyedIdBuild::default());
+        assert_eq!(buckets(&|id| plain.hash_one(id)), 1, "the case this table is for");
+        assert!(buckets(&|id| keyed.hash_one(id)) > 512);
+    }
+}

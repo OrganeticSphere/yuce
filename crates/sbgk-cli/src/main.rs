@@ -63,6 +63,7 @@ static GLOBAL: Counting = Counting;
 // ------------------------------------------------------------------ argument parsing
 
 const SWITCHES: &[&str] = &[
+    "at-end",
     "timings",
     "oracle",
     "track-roots",
@@ -176,7 +177,7 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "mcp-serve" => &["allow-remote", "listen", "max-connections", "max-message-bytes", "targets", "token", "wal-path"],
         "mcp-bridge" => &["agent-id", "allow-shutdown", "allow-tools", "connect", "connect-timeout-ms", "tier", "token"],
         "audit-serve" => AUDIT_SERVE_FLAGS,
-        "audit-verify" => &["expect", "wal"],
+        "audit-verify" => &["at-end", "expect", "wal"],
         "update-doc" => &["doc-id", "file", "out", "pretty"],
         "root" | "dump-claims" | "verify" => &["pretty"],
         "dump-nodes" => &["ids-only", "pretty"],
@@ -253,6 +254,7 @@ impl Args {
 }
 
 fn fail(msg: &str) -> ! {
+    audit_mcp::drop_new_journal();
     eprintln!("{}", json!({"status": "fatal", "message": msg}));
     std::process::exit(2);
 }
@@ -741,6 +743,14 @@ fn cmd_cone(a: &Args) -> Value {
     let b = read(&a.pos(0, "container"));
     let entity = a.req("entity");
     let reps = a.num("reps", 30usize);
+    // with --full-out the benchmarks ask for the whole projection and the entity only names a start
+    if a.get("full-out").is_none() {
+        match sbgk_core::cone::entity_known(&b, &entity) {
+            Ok(true) => {}
+            Ok(false) => fail(&format!("no claim of this container names the entity '{entity}'")),
+            Err(e) => fail(&format!("cannot read the container: {e}")),
+        }
+    }
     let (cone, t_cone) = timed(reps, || project_minimal_cone(&b, &entity));
     let (full_all, t_full) = timed(reps.clamp(3, 10), || project_full(&b, false));
     let (full_act, t_act) = timed(reps.clamp(3, 10), || project_full(&b, true));
@@ -898,7 +908,7 @@ Audit server for a team of agents:
                 Started again on an existing --wal without --manifest, it resumes that run
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
-  audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json>]; prints the
+  audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the
                 audit, engine and session roots, exit 1 if the journal is refused or the receipt names no state of it
 
 Engine and container:
@@ -1071,6 +1081,47 @@ mod flag_tests {
         // the switches and the flags read through a list rather than a literal call
         for flag in SWITCHES.iter().chain(["candidate-match", "known-concepts", "evolution-pairs-per-concept"].iter()) {
             assert!(all.contains(flag), "--{flag} is known to the parser but no command lists it");
+        }
+    }
+
+    /// The body of `fn name` in a source: from its line to the first line that closes it.
+    fn body<'a>(src: &'a str, name: &str) -> &'a str {
+        let start = src.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("no fn {name}"));
+        let rest = &src[start..];
+        &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
+    }
+
+    /// Per command, not only over all of them: a flag taken off one command's list must fail here though another command lists it.
+    #[test]
+    fn each_command_lists_the_flags_of_its_own_function() {
+        let main = include_str!("main.rs");
+        let audit = include_str!("audit_mcp.rs");
+        for (command, src, function) in [
+            ("audit-serve", audit, "graph_quality_args"),
+            ("audit-serve", audit, "create_run"),
+            ("audit-serve", audit, "with_profile"),
+            ("apply", main, "cmd_apply"),
+            ("update-doc", main, "cmd_update_doc"),
+            ("root", main, "cmd_root"),
+            ("dump-nodes", main, "cmd_dump_nodes"),
+            ("dump-claims", main, "cmd_dump_claims"),
+            ("node-table", main, "cmd_node_table"),
+            ("diff", main, "cmd_diff"),
+            ("timetravel", main, "cmd_timetravel"),
+            ("timetravel-all", main, "cmd_timetravel_all"),
+            ("cone", main, "cmd_cone"),
+            ("verify", main, "cmd_verify"),
+            ("tamper", main, "cmd_tamper"),
+            ("emit-directive", main, "cmd_emit_directive"),
+            ("emit-batch-directives", main, "cmd_emit_batch"),
+            ("frontier", main, "cmd_frontier"),
+            ("audit-verify", audit, "cmd_audit_verify"),
+            ("audit-serve", audit, "cmd_audit_serve"),
+        ] {
+            let known = known_flags(command).unwrap();
+            for flag in flags_read(body(src, function)) {
+                assert!(known.contains(&flag.as_str()), "{command} reads --{flag} but does not list it");
+            }
         }
     }
 

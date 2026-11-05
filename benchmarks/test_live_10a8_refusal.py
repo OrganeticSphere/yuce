@@ -140,8 +140,18 @@ class Provenance(unittest.TestCase):
         self.assertIn("changed_tracked_files", p)
         # the closed layer's sources join the runner's when the package is installed
         closed = {name for name in p["runner_sha256"] if name.startswith("sbgk_bench/closed/")}
-        self.assertEqual(set(p["runner_sha256"]) - closed, {"run_pilot_ac.py", "sbgk_bench/pilot_ac.py"})
+        self.assertLessEqual({"run_pilot_ac.py", "sbgk_bench/pilot_ac.py", "sbgk_bench/common.py"}, set(p["runner_sha256"]))
         self.assertEqual(bool(closed), P.closed_layer() is not None)
+        # a binary is named, not its path: a run's archive holds no folder of the machine it ran on
+        self.assertEqual(p["sbgk_bin"], pathlib.Path(R.C.BIN).name)
+        self.assertLessEqual({"git_tag", "crates_tree", "benchmarks_tree", "sbgk_version"}, set(p))
+        self.assertFalse(any(pathlib.PurePosixPath(n).name.startswith("test_") for n in p["runner_sha256"]))
+        self.assertEqual(p["closed_layer"], P.closed_layer() is not None)
+
+    def test_a_binary_of_another_version_does_not_fit_a_tag(self):
+        self.assertTrue(R.binary_fits_tag({"git_tag": "v0.1.4", "sbgk_version": "sbgk 0.1.4"}))
+        self.assertFalse(R.binary_fits_tag({"git_tag": "v0.1.4", "sbgk_version": "sbgk 0.1.3"}))
+        self.assertTrue(R.binary_fits_tag({"git_tag": None, "sbgk_version": "sbgk 0.1.3"}))
 
 
 if __name__ == "__main__":

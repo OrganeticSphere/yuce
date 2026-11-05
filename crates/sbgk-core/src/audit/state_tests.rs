@@ -17,6 +17,13 @@ impl TempPath {
 impl Drop for TempPath {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+        // and the tails a recovery kept beside the journal
+        let name = format!("{}.torn-", self.0.file_name().unwrap().to_string_lossy());
+        for kept in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+            if kept.file_name().to_string_lossy().starts_with(&name) {
+                let _ = std::fs::remove_file(kept.path());
+            }
+        }
     }
 }
 
@@ -383,4 +390,318 @@ fn verify_replays_like_open_but_leaves_every_byte_of_the_journal_including_a_tor
 
     drop(AuditState::open(&path.0).unwrap());
     assert!(std::fs::read(&path.0).unwrap().len() < bytes.len(), "open readies the journal for writing and cuts the torn tail");
+}
+
+/// What a resumed server goes on from, roots aside: the preimage of the state, the session's engine log and sequence, the telemetry.
+fn replayed(s: &AuditState) -> (String, Vec<u8>, u64, Hash, Vec<Value>) {
+    let session = &s.core.session;
+    (s.core.legacy_preimage(), session.wal.bytes.clone(), session.last_seq, session.engine.clone().root(), s.telemetry_frames.clone())
+}
+
+/// `AuditState::verify` of the journal at `path`, on copies of the state or on the state itself: the states it visited, then what it
+/// reached or how it refused the journal.
+#[allow(clippy::type_complexity)]
+fn verified(path: &Path, copies: bool) -> (Vec<(usize, Hash, Hash, Hash)>, Result<(String, Vec<u8>, u64, Hash, Vec<Value>), Value>) {
+    COPY_REPLAY.with(|c| c.set(copies));
+    let mut seen = Vec::new();
+    let result = AuditState::verify(path, &mut |n, audit, engine, head| seen.push((n, audit, engine, head)));
+    COPY_REPLAY.with(|c| c.set(false));
+    (seen, result.map(|(state, _)| replayed(&state)).map_err(|e| e.to_json()))
+}
+
+/// Writes `frames` with a valid hash chain: only the replay can tell what is wrong with them.
+fn chained(path: &Path, mut frames: Vec<Value>) {
+    let mut previous = ZERO_HASH;
+    let mut bytes = String::new();
+    for frame in &mut frames {
+        frame["previous"] = json!(to_hex(&previous));
+        frame.as_object_mut().unwrap().remove("hash");
+        previous = sha256_parts(&[b"R2R-AUDIT-WAL/2", to_jcs(frame).as_bytes()]);
+        frame["hash"] = json!(to_hex(&previous));
+        bytes.push_str(&to_jcs(frame));
+        bytes.push('\n');
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn a_replay_on_the_state_itself_reaches_what_a_replay_on_copies_reaches_and_goes_on_alike() {
+    let path = TempPath::new();
+    fork_scenario(&path.0);
+    let (on_copies, in_place) = (verified(&path.0, true), verified(&path.0, false));
+    assert!(on_copies.1.is_ok(), "{:?}", on_copies.1.err());
+    assert_eq!(in_place.0, on_copies.0, "the same roots and chain head after every entry");
+    assert_eq!(in_place.1, on_copies.1, "the same state, engine log and telemetry");
+
+    // a resumed server: the same commands after each recovery journal the same bytes
+    let mut resumes = Vec::new();
+    for copies in [true, false] {
+        let resumed = TempPath::new();
+        std::fs::copy(&path.0, &resumed.0).unwrap();
+        COPY_REPLAY.with(|c| c.set(copies));
+        let mut s = AuditState::open(&resumed.0).unwrap();
+        COPY_REPLAY.with(|c| c.set(false));
+        let scope = Scope { docs: vec!["a".into()], topic: None, ranges: Vec::new() };
+        let lines = [
+            json!({"kind":"observe","local_id":"o8","doc_id":"a","exact_quote":"Alpha one.","terms":["alpha"]}),
+            json!({"kind":"claim","local_id":"c8","text":"Claim c8.","subject":"alpha","stance":"reported","based_on":["o8"]}),
+        ];
+        let r = s.submit_records_id("after-1", "w4", "t5", &scope, &lines);
+        assert_eq!(r.accepted.len(), 2, "{:?}", r.error);
+        let v = s.submit_operations_id("after-2", "kernel", &[], Some(json!({"key":"after:resume","from":0,"to":0,"context":{"n":1}}))).unwrap();
+        assert_eq!(v["checkpointed"], true, "{v}");
+        s.revoke_observation("owner", &r.accepted[0]).unwrap();
+        let v = s.submit_operations_id("after-3", "builder", &[json!({"kind":"no-such-operation"})], None).unwrap();
+        assert_eq!(v["failed_index"], 0, "{v}");
+        let reached = (replayed(&s), s.audit_root(), s.engine_root(), s.wal_head());
+        drop(s);
+        resumes.push((reached, std::fs::read(&resumed.0).unwrap()));
+    }
+    assert_eq!(resumes[1].0, resumes[0].0, "the same state after the same commands");
+    assert_eq!(resumes[1].1, resumes[0].1, "the same journal, byte for byte");
+}
+
+#[test]
+fn an_entry_that_reports_no_failure_replays_without_a_copy_of_the_state() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let lines = [observation("o1", "Prior witness.")];
+    assert!(s.submit_records_id("first", "worker", "task", &scope(), &lines).error.is_none());
+    assert!(s.submit_records_id("second", "worker", "task-2", &scope(), &[observation("o2", "New witness.")]).error.is_none());
+    let v = s.submit_operations_id("third", "kernel", &[], Some(json!({"key":"k","from":0,"to":0,"context":{}}))).unwrap();
+    assert_eq!(v["checkpointed"], true, "{v}");
+    let refused = s.submit_records_id("fourth", "worker", "task-3", &scope(), &[observation("o3", "No such quote.")]);
+    assert_eq!(refused.failed_index, Some(0));
+    drop(s);
+    let before = FORKS.with(std::cell::Cell::get);
+    drop(AuditState::open(&path.0).unwrap());
+    assert_eq!(FORKS.with(std::cell::Cell::get) - before, 2, "one for the first entry, which may install a version map, one for the refused line");
+}
+
+#[test]
+fn a_journal_that_misreports_an_entry_is_refused_as_a_replay_on_copies_refuses_it() {
+    let path = TempPath::new();
+    fork_scenario(&path.0);
+    let frames: Vec<Value> = std::fs::read_to_string(&path.0).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let mut clean = 0;
+    let mut refused = 0;
+    for n in 1..frames.len() {
+        let original = &frames[n]["payload"];
+        let failed = original["outcome"]["kind"] == "error" || !original["outcome"]["result"]["error"].is_null();
+        (clean, refused) = if failed { (clean, refused + 1) } else { (clean + 1, refused) };
+        let mut forgeries = vec![
+            ("audit_root", json!(to_hex(&ZERO_HASH))),
+            ("engine_root", json!(to_hex(&ZERO_HASH))),
+            ("outcome", json!({"kind":"error","error":KernelError::new(Code::BadField, "never happened").to_json()})),
+        ];
+        if failed {
+            // the entry of a failed command, written as a success: the replay on the state itself runs it with no way back
+            let mut success = original["outcome"].clone();
+            if success["kind"] == "error" {
+                success = json!({"kind":"value","result":{}});
+            } else {
+                success["result"]["error"] = Value::Null;
+                success["result"]["failed_index"] = Value::Null;
+            }
+            forgeries.push(("outcome", success));
+        }
+        for (field, forged) in forgeries {
+            let mut changed = frames.clone();
+            changed[n]["payload"][field] = forged;
+            chained(&path.0, changed);
+            let (on_copies, in_place) = (verified(&path.0, true), verified(&path.0, false));
+            assert_eq!(in_place.0, on_copies.0, "entry {n}, {field}: the same states before the refusal");
+            let refusal = on_copies.1.err().unwrap_or_else(|| panic!("entry {n}, {field}: a forged entry was accepted"));
+            assert_eq!(in_place.1.err(), Some(refusal.clone()), "entry {n}, {field}: the same refusal");
+            assert!(refusal["message"].as_str().unwrap().contains("semantic replay diverged"), "entry {n}, {field}: {refusal}");
+        }
+    }
+    assert!(clean > 8 && refused > 4, "the scenario keeps both kinds of entry: {clean} clean, {refused} refused");
+}
+
+fn frames_of(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+}
+
+/// An attacker who knows the replay runs on the state: the entry carries the roots that very path computes, not those of a copy.
+#[test]
+fn forged_entries_with_the_roots_of_the_run_on_the_state_are_judged_as_on_copies() {
+    let path = TempPath::new();
+    fork_scenario(&path.0);
+    let frames = frames_of(&path.0);
+    let work = TempPath::new();
+    let bad_claim = json!({"kind":"claim","local_id":"zz","text":"Claim zz.","subject":"alpha","stance":"reported","based_on":["missing"]});
+    let good_obs = json!({"kind":"observe","local_id":"zo","doc_id":"a","exact_quote":"Alpha three.","terms":["alpha"]});
+    let ok_ck = |key: &str| json!({"kind":"checkpoint","key":key,"from":0,"to":0,"context":{"n":1}});
+    let (mut accepted_in_place, mut accepted_copies, mut tried) = (0, 0, 0);
+    for n in 2..frames.len() {
+        chained(&work.0, frames[..n].to_vec());
+        let observes: Vec<String> = {
+            let (s, _) = AuditState::verify(&work.0, &mut |_, _, _, _| {}).unwrap();
+            s.records_since(0).iter().filter(|r| r.kind == RecordKind::Observe).map(|r| to_hex(&r.id.0)).collect()
+        };
+        let revoke = observes.first().map(|r| json!({"kind":"revoke","record":r})).unwrap_or(json!({"kind":"no-such"}));
+        let submit = |lines: Vec<Value>| json!({"kind":"submit","directive":format!("zd{n}"),"scope":{"docs":["a"],"topic":null,"ranges":[]},"lines":lines});
+        let commands = vec![
+            ("kernel", json!({"kind":"batch","operations":[ok_ck("za"),{"kind":"no-such"}],"checkpoint":null})),
+            ("kernel", json!({"kind":"batch","operations":[revoke.clone(),{"kind":"no-such"}],"checkpoint":null})),
+            ("kernel", json!({"kind":"batch","operations":[revoke.clone(),ok_ck("zb")],"checkpoint":{"key":"zc","from":5,"to":5,"context":{}}})),
+            ("zw", submit(vec![good_obs.clone(), bad_claim.clone()])),
+            ("kernel", json!({"kind":"batch","operations":[submit(vec![good_obs.clone(), bad_claim.clone()]),ok_ck("zd")],"checkpoint":null})),
+            ("zw", submit(vec![json!({"kind":"observe","local_id":"zq","doc_id":"a","exact_quote":"Not there.","terms":["alpha"]})])),
+            ("kernel", json!({"kind":"checkpoint","key":crate::audit::versions::KEY,"from":0,"to":0,"context":{}})),
+            ("kernel", json!({"kind":"checkpoint","key":"version:lease:zt","from":0,"to":0,"context":{"agent":"zw","card":"x"}})),
+            ("kernel", json!({"kind":"batch","operations":[{"kind":"batch","operations":[],"checkpoint":null}],"checkpoint":null})),
+            ("kernel", frames[n]["payload"]["command"].clone()),
+        ];
+        for (k, (actor, command)) in commands.into_iter().enumerate() {
+            let (mut s, _) = AuditState::verify(&work.0, &mut |_, _, _, _| {}).unwrap();
+            let id = format!("forged-{n}-{k}");
+            let outcome = s.core.replay_in_place(actor, &id, &command).value();
+            let (audit, engine) = (s.audit_root(), s.engine_root());
+            drop(s);
+            let mut said_success = outcome.clone();
+            if said_success["kind"] == "error" {
+                said_success = json!({"kind":"value","result":{}});
+            } else {
+                said_success["result"]["error"] = Value::Null;
+                said_success["result"]["failed_index"] = Value::Null;
+            }
+            for told in [outcome, said_success] {
+                let mut forged = frames[..=n].to_vec();
+                let payload = &mut forged[n]["payload"];
+                payload["actor"] = json!(actor);
+                payload["submission_id"] = json!(id);
+                payload["command"] = command.clone();
+                payload["request_hash"] = json!(to_hex(&request_hash(actor, &command)));
+                payload["outcome"] = told;
+                payload["audit_root"] = json!(to_hex(&audit));
+                payload["engine_root"] = json!(to_hex(&engine));
+                let journal = TempPath::new();
+                chained(&journal.0, forged);
+                let (copies, in_place) = (verified(&journal.0, true), verified(&journal.0, false));
+                tried += 1;
+                accepted_in_place += usize::from(in_place.1.is_ok());
+                accepted_copies += usize::from(copies.1.is_ok());
+                assert_eq!(in_place.0, copies.0, "entry {n} command {k}: states seen");
+                assert_eq!(in_place.1, copies.1, "entry {n} command {k}: verdict and state");
+            }
+        }
+    }
+    assert_eq!(accepted_in_place, accepted_copies, "the two ways accept the same entries");
+    assert!(tried > 100, "{tried} forgeries");
+}
+
+/// Random honest runs with every kind of failure in them: after each command the kept flags equal fresh ones, and the two replays,
+/// a torn tail and a resumed server end alike.
+#[test]
+fn random_runs_replay_alike_on_the_state_and_on_copies() {
+    let keys = ["a", "b", "\u{ffff}", "\u{10000}", "\u{e000}", "\u{10ffff}", "k\"q", "k\\b", "k\u{1}", "\u{2028}", ""];
+    let quotes = ["Alpha one.", "Alpha two.", "Alpha three.", "Beta one.", "Beta two.", "Not there."];
+    let (mut ok_commands, mut failed_commands, mut concepts) = (0, 0, 0);
+    for seed in 0..12u64 {
+        let mut rng = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut next = move |n: u64| {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) % n
+        };
+        let path = TempPath::new();
+        let docs = [("a".to_string(), b"Alpha one.\nAlpha two.\nAlpha three.\n".to_vec()), ("b".to_string(), b"Beta one.\nBeta two.\n".to_vec())];
+        let mut s = AuditState::create(&path.0, &AuditOntology::base(), &docs, "review", sha256(b"review")).unwrap();
+        let mut cursors: BTreeMap<String, u64> = BTreeMap::new();
+        for step in 0..36u64 {
+            let id = format!("c{step}");
+            let observes: Vec<RecordId> = s.records_since(0).iter().filter(|r| r.kind == RecordKind::Observe).map(|r| r.id).collect();
+            let head = s.head();
+            let mut checkpoint = || {
+                let key = keys[next(keys.len() as u64) as usize].to_string();
+                let from = cursors.get(&key).copied().unwrap_or(0);
+                json!({"kind":"checkpoint","key":key,"from":from,"to":head.max(from),"context":{"step":step}})
+            };
+            let (a, b, c) = (checkpoint(), checkpoint(), checkpoint());
+            let pick = next(9);
+            let doc = if next(2) == 0 { "a" } else { "b" };
+            let quote = match (doc, next(8)) {
+                (_, 0) => "Not there.",
+                ("a", n) => quotes[(n % 3) as usize],
+                (_, n) => quotes[3 + (n % 2) as usize],
+            };
+            let scope = Scope { docs: vec![doc.into()], topic: None, ranges: Vec::new() };
+            let observe = json!({"kind":"observe","local_id":"o","doc_id":doc,"exact_quote":quote,"terms":["alpha"]});
+            let claim = json!({"kind":"claim","local_id":"c","text":format!("Claim {step}."),"subject":"alpha","stance":"reported","based_on":["o"]});
+            let other = json!({"kind":"claim","local_id":"d","text":format!("Other {step}."),"subject":"alpha","stance":"reported","based_on":["o"]});
+            let relation = json!({"kind":"relation","local_id":"r","from":"d","rel":"supports","to":"c","based_on":["o"]});
+            let broken = json!({"kind":"claim","local_id":"x","text":"Broken.","subject":"alpha","stance":"reported","based_on":["missing"]});
+            let any = observes.get(next(observes.len().max(1) as u64) as usize).map(|r| to_hex(&r.0));
+            let revoke = any.as_ref().map(|r| json!({"kind":"revoke","record":r})).unwrap_or(json!({"kind":"no-such"}));
+            let concept = any
+                .as_ref()
+                .map(|r| json!({"kind":"propose_concept","type":"Component","name":format!("name {seed} {step}"),"aliases":[],"basis":[r]}))
+                .unwrap_or(json!({"kind":"no-such"}));
+            let failed = match pick {
+                0 => s.submit_records_id(&id, "w1", &format!("t{step}"), &scope, &[observe, claim]).error.is_some(),
+                1 => s.submit_records_id(&id, "w2", &format!("t{step}"), &scope, &[observe, claim, other, relation]).error.is_some(),
+                2 => s.submit_records_id(&id, "w3", &format!("t{step}"), &scope, &[observe, claim, broken]).error.is_some(),
+                3 => !s.submit_operations_id(&id, "kernel", &[], Some(a)).unwrap()["error"].is_null(),
+                4 => !s.submit_operations_id(&id, "kernel", &[a, b], Some(c)).unwrap()["error"].is_null(),
+                5 => !s.submit_operations_id(&id, "kernel", &[a, json!({"kind":"no-such"}), b], None).unwrap()["error"].is_null(),
+                6 => !s.submit_operations_id(&id, "kernel", &[revoke, a], None).unwrap()["error"].is_null(),
+                7 => {
+                    let v = s.submit_operations_id(&id, "kernel", &[concept], None).unwrap();
+                    concepts += usize::from(v["error"].is_null());
+                    !v["error"].is_null()
+                }
+                _ => match observes.first() {
+                    Some(r) => s.revoke_observation("owner", r).is_err(),
+                    None => true,
+                },
+            };
+            if failed {
+                failed_commands += 1;
+            } else {
+                ok_commands += 1;
+            }
+            for (key, value) in s.core.data.checkpoints.iter() {
+                cursors.insert(key.clone(), value["to"].as_u64().unwrap_or(0));
+            }
+            assert_eq!(*s.core.support_flags(), s.core.support_flags_fresh(), "seed {seed} step {step}: kept flags");
+            let _ = s.audit_root();
+        }
+        drop(s);
+        let (copies, in_place) = (verified(&path.0, true), verified(&path.0, false));
+        assert!(copies.1.is_ok(), "seed {seed}: {:?}", copies.1.err());
+        assert_eq!(in_place, copies, "seed {seed}");
+        // a torn tail, then a resumed server
+        let mut bytes = std::fs::read(&path.0).unwrap();
+        bytes.extend_from_slice(b"{\"format\":\"torn");
+        let mut after = Vec::new();
+        for copy in [true, false] {
+            let resumed = TempPath::new();
+            std::fs::write(&resumed.0, &bytes).unwrap();
+            COPY_REPLAY.with(|c| c.set(copy));
+            let mut r = AuditState::open(&resumed.0).unwrap();
+            COPY_REPLAY.with(|c| c.set(false));
+            assert_eq!(*r.core.support_flags(), r.core.support_flags_fresh(), "seed {seed}: flags after recovery");
+            let scope = Scope { docs: vec!["a".into()], topic: None, ranges: Vec::new() };
+            r.submit_records_id(
+                "after-1",
+                "w9",
+                "t9",
+                &scope,
+                &[json!({"kind":"observe","local_id":"o","doc_id":"a","exact_quote":"Alpha one.","terms":["alpha"]})],
+            );
+            let v = r.submit_operations_id("after-2", "kernel", &[], Some(json!({"key":"after","from":0,"to":0,"context":{}}))).unwrap();
+            assert!(v["error"].is_null());
+            let reached = (replayed(&r), r.audit_root(), r.engine_root(), r.wal_head());
+            drop(r);
+            after.push((reached, std::fs::read(&resumed.0).unwrap()));
+            for kept in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+                if kept.file_name().to_string_lossy().starts_with(&format!("{}.torn-", resumed.0.file_name().unwrap().to_string_lossy())) {
+                    let _ = std::fs::remove_file(kept.path());
+                }
+            }
+        }
+        assert_eq!(after[0], after[1], "seed {seed}: resumed alike");
+    }
+    assert!(ok_commands > 80 && failed_commands > 100 && concepts > 0, "{ok_commands} clean, {failed_commands} failed, {concepts} concepts");
 }

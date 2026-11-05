@@ -127,6 +127,21 @@ class AnswerBounds(unittest.TestCase):
         self.assertEqual(out["claims"], [])
         self.assertTrue(out["complete"])
 
+    def test_an_over_long_closing_line_is_cut_and_the_answer_stays_complete(self):
+        long = {"kind": "done", "text": "y" * 300}
+        new, refused, done = P.check_single([claim(), long], DOCS, [], {})
+        self.assertEqual((len(new), refused), (1, []))
+        self.assertEqual(done, {"text": "y" * 234 + " [cut]", "cut_from_chars": 300})
+        self.assertEqual(len(done["text"]), 240)
+        self.assertEqual(P.check_single([{"kind": "done", "text": "y" * 240}], DOCS, [], {})[2], {"text": "y" * 240})
+
+    def test_a_cut_closing_line_is_kept_in_the_answer_record_and_logged(self):
+        out, log = self.answer(Sequence(lines(claim(), {"kind": "done", "text": "y" * 300})))
+        self.assertEqual(out["unsettled_cut_from_chars"], 300)
+        self.assertTrue(out["unsettled"].endswith(" [cut]"))
+        self.assertTrue(out["complete"])
+        self.assertEqual(sum(e.get("kind") == "CLOSING_LINE_CUT" for e in log.events), 1)
+
     def test_claim_text_validator_remains_240_while_common_target_is_200(self):
         new, refused, _ = P.check_single([claim(text="x" * 240), claim("a2", text="x" * 241)], DOCS, [], {})
         self.assertEqual((len(new), len(refused)), (1, 1))

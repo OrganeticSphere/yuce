@@ -74,14 +74,15 @@ The environment for agent teams is the audit server, `sbgk audit-serve`:
   `done`. An `observe` must quote its source byte for byte, inside the document range issued with the task; otherwise it
   is rejected. Each source document is pinned by repository, commit, path and SHA-256 of its raw bytes, as listed in a
   manifest.
-* **Grounds.** A claim names the records it is based on (`based_on`), and every one of them is required. The kernel
-  tracks whether each record is still grounded: all its grounds must be grounded in turn, down to quotes that have not
-  been withdrawn.
+* **Grounds.** A claim names the quotes it is based on (`based_on`), and every one of them is required. The kernel
+  tracks whether each claim is still grounded: all its quotes must stand. A claim cannot rest on another claim here;
+  chains of derivations belong to the engine below.
 * **Withdrawal with cascade.** The owner can withdraw an `observe` record (`audit_revoke`). Every record whose required
   grounds include it loses its support at once; since all entries of `based_on` are required, one withdrawn quote is
   enough. Records grounded independently of it stay available, and history is not rewritten. A claim in an answer also
-  carries a time label for its reader: `CURRENT_UNCERTAIN` (after a withdrawal, the kernel suspects a stale state under it)
-  or `LATEST_KNOWN` (no later state is known to the kernel, which is not proof that the state is current). With the
+  carries a time label for its reader: `CURRENT_UNCERTAIN` (a claim that rested on an earlier and a later report lost the
+  later quote; the kernel opens a task on that report and warns the next summary) or `LATEST_KNOWN` (no later state is known
+  to the kernel, which is not proof that the state is current). With the
   experimental graph, accepted `supersedes` links add `CITES_REPLACED` (its quotes include an earlier state that was
   replaced, and none of the replacing one) and `CITES_EARLIER_AND_LATER` (quotes of both).
 * **Hash-chained journal.** Each accepted transaction is one frame of an append-only journal (`sbgk-session-log/2`):
@@ -121,8 +122,8 @@ see [LIMITATIONS.md](LIMITATIONS.md).
   journal is open again.
 * **Verification costs model calls.** Link checks and re-reads after a withdrawal are extra work for the agents.
 * **Size.** Up to 8 agents at once are recommended for 0.1, and runs of a few thousand records: the cost of a commit and of
-  reopening the journal grows with it. A journal of quotes alone reopens in 13 s at 10,000 records; the journals of real runs are
-  slower, 14 to 19 s at about 3,000 records.
+  reopening the journal grows with it. A real run's journal of about 3,000 records reopens in about 2 s, as does a journal of
+  10,000 records of quotes and claims alone.
 
 All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -213,7 +214,7 @@ journal as a resumed server would (frame hashes, source identities, every entry 
 reading the file once and read-only, and prints the record count, the audit, engine and session roots and the chain head.
 With `--expect receipt.json`, the receipt's roots must name a state the journal passed through (a phase receipt or the
 final one), and its `wal_head`, if it has one, the chain up to that state; a refused journal or a receipt that names no
-state of it exits 1. Keep the receipt where the journal's writer cannot change it, for example in a
+state of it exits 1. With `--at-end` that state must also be the journal's last. Keep the receipt where the journal's writer cannot change it, for example in a
 protected git commit or a CI artifact: a party that can rewrite the whole journal can also rewrite its hash chain.
 
 An MCP client joins as one agent through the bridge, for example with this `.mcp.json` entry:

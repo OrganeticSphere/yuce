@@ -173,6 +173,17 @@ impl Session {
         }
     }
 
+    /// What `from_parts` resets, on this session itself: for a caller that goes on with it where it would otherwise rebuild it from
+    /// copies of its parts.
+    pub(crate) fn reset_transients(&mut self) {
+        self.locals.clear();
+        self.locals_rev.clear();
+        self.last_seq = self.wal.last_seq;
+        self.track_roots = false;
+        self.seq_roots.clear();
+        self.journal = None;
+    }
+
     fn commit_with_seq(&mut self, seq: u64, op: &CanonOp) -> Result<(Applied, usize), KernelError> {
         self.commit_flagged(seq, op, false)
     }

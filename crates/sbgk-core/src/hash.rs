@@ -20,6 +20,13 @@ pub fn sha256_parts(parts: &[&[u8]]) -> Hash {
     h.finalize().into()
 }
 
+/// `sha256_parts` of parts that `write` hands over one by one, so that a long input never has to be put together first.
+pub fn sha256_stream(write: impl FnOnce(&mut dyn FnMut(&[u8]))) -> Hash {
+    let mut h = Sha256::new();
+    write(&mut |part| h.update(part));
+    h.finalize().into()
+}
+
 pub fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);

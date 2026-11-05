@@ -77,8 +77,8 @@ answer of L, its stage 1 RQ2 summary, at 8,192; series 2 cut none).
 
 The advantage of series 1 in stage 1 and 2A did not repeat in series 2; the kernel's side kept every withdrawal in both.
 It took 1.2 to 1.3 times the wall time and 1.5 to 1.6 times the cost of the sides without it. The sides without the kernel
-often wrote a closing line over its length limit, which the runner refuses (their pages are then marked incomplete); their
-claims were kept (in series 1, 6 of about 2,000 were refused).
+often wrote a closing line over its length limit, which the runner then refused (their pages were marked incomplete; since 0.1.4
+such a line is cut, with a mark); their claims were kept (in series 1, 6 of about 2,000 were refused).
 
 ### How far these numbers go
 
@@ -135,53 +135,51 @@ Both without a graph. Circles is the default of the v0.1 profile: readers work i
 Why circles answer better is not established; two hypotheses (more of the others' records in a reader's view, different
 answer windows) were tested and not confirmed.
 
-## 3. Against knowledge-graph systems (grader Gemini 4 Argon, stage 1)
+## 3. Quotes that can be found in their source
 
-The kernel without a graph (the v0.1 default), the kernel with its experimental graph builder, and three graph systems
-built on the same corpus, all with Claude Haiku 5.5.
+The share of an answer's quotes found byte for byte in the page it names, on the same corpus, with Claude Haiku 5.5.
 
-| System | Share of correct statements | Correct of graded | Quotes byte for byte in the named page | An outdated rule as current | Time, cost |
-|---|---|---|---|---|---|
-| YuCe, no graph (default) | 80.3% | 61 of 76 | 232 of 234 | 0 | 54 min, $1.40 |
-| YuCe, with the graph (experimental) | 82.6% | 54.5 of 66 | 182 of 183 | 2–3 | 143 min, $4.36 |
-| GraphRAG, local search | 86.7% | 13 of 15 | 0 of 24 (names no pages) | 0 | build 24 min, $0.72 |
-| Graphiti, 10 facts | 81.1% | 17 of 21 | 1 of 7 (6 retold outside the corpus) | 2 | build 42 min, $1.09 |
-| LightRAG, hybrid | 69.6% | 19.5 of 28 | 10 of 30 (26 with whitespace normalized) | 1 | build 51 min, $1.26 |
+| System | Quotes byte for byte in the named page |
+|---|---|
+| YuCe, default | 232 of 234 |
+| GraphRAG, local search | 0 of 24 (names no pages) |
+| Graphiti, 10 facts | 1 of 7 (6 retold outside the corpus) |
+| LightRAG, hybrid | 10 of 30 (26 with whitespace normalized) |
 
-The graph systems give fewer statements, and most of their quotes are not found byte for byte in the page they name
-(GraphRAG names none). The kernel's graph is off by default: its share is within the noise of the no-graph mode, but it knew fewer version transitions
-than Graphiti (8 against 15 of the 25 version-knowledge items this comparison checked) and cost three times as much.
+These systems are built for another purpose and do not promise a byte-exact quote, so this is no verdict on them: it shows what the
+kernel is for. A comparison of answers comes back with the graph work of a later version.
 
 ## 4. The kernel's limits, without a model
 
-One campaign on the release's kernel code (commit `599ad4eb`; v0.1.0 differs only in its version number and documents), on
-the Windows laptop of the published runs with other applications open (89% of its memory in use at the start). Each
-point starts from an empty journal in a new process; clients are the stock audit server over TCP with real tokens, the
-v0.1 profile, no artificial pauses; every journal is closed, reopened in a new process and checked to reach the same roots.
+One campaign with `benchmarks/run_limits.py` on the kernel code of v0.1.4 (`crates/` tree `45ec5f0c`), on a Windows laptop with
+nothing else building, the machine 13 to 18% busy. Each point starts from an empty journal in a new process; clients are the
+stock audit server over TCP with real tokens, the default profile, no artificial pauses; every journal is closed, reopened in a
+new process and checked to reach the same roots. Memory is the peak resident size of the whole process.
 
-| Records in the journal | Committing one quote, p50 / p95 | Reopening the journal (replay) | Writer memory |
+| Records in the journal | Committing one quote, p50 / p95 | Reopening the journal (replay) | Peak memory |
 |---|---|---|---|
-| 1,000 | 4.6 / 4.9 ms | 0.14 s | 8.5 MiB |
-| 5,000 | 20.2 / 26.1 ms | 3.2 s | 39.5 MiB |
-| 10,000 | 40.9 / 69.9 ms | 13.0 s | 64 MiB |
+| 1,000 | 3.4 / 3.9 ms | 0.05 s | 15 MiB |
+| 5,000 | 12.7 / 15.2 ms | 0.63 s | 44 MiB |
+| 10,000 | 25.3 / 39.7 ms | 2.2 s | 76 MiB |
 
-The scripts of this campaign are not published, so these numbers cannot be repeated from this repository. These journals hold
-quotes alone. The journals of real runs are heavier per record: `audit-verify` takes 14 to 19 s on the
-recorded runs of about 3,000 records, more than this table gives for 10,000.
+These journals hold quotes and claims on them, in transactions of 32 records. Real journals have many more entries per record:
+`audit-verify` takes 2.0 to 2.2 s on the recorded runs of about 3,000 records. The whole state is hashed at every entry, so the
+time of a replay grows close to the square of its length.
 
 | Agents at once, on a journal of 5,000 records | 3 | 8 | 16 | 32 |
 |---|---|---|---|---|
-| Tasks per second | 9.5 | 13.4 | 15.5 | 16.0 |
+| Tasks per second | 12.0 | 14.2 | 19.0 | 19.2 |
 
-Recommended for 0.1: runs of **a few thousand records** and up to **8 agents** at once. The published runs hold about
+This is one run on one machine: tasks per second moved by about a quarter between runs here, and a build beside the campaign
+halves them. To repeat it: `python benchmarks/run_limits.py --out <folder>`, which prints what it ran on and how busy the machine
+was. Recommended for 0.1: runs of **a few thousand records** and up to **8 agents** at once. The published runs hold about
 3,000 records. The cost of a commit and of a replay grows with the journal; more than 16 agents add little.
 
 ## Caveats
 
 * One corpus, one or two runs per side and model, and graders that differ between comparisons (so the shares of section 1's two
-  models and of sections 2 and 3 are not comparable with each other; the differences within one comparison are).
-* The side without the kernel is built by us. It is a careful substitute, not every possible one; a substitute with the
-  same dependencies, cascade and journal on a database was not built.
+  models and of section 2 are not comparable with each other; the differences within one comparison are).
+* The side without the kernel is built by us. It is a careful substitute, not every possible one.
 * The kernel checks bytes and registered dependencies, not meaning: its side once gave a current rule as replaced, on
   correct quotes, in every stage of the Haiku pair. See [LIMITATIONS.md](LIMITATIONS.md).
 * Model outputs differ between runs; a new run will not repeat the answers byte for byte. The recorded journals do repeat:

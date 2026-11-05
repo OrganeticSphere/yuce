@@ -40,7 +40,7 @@ use sbgk_core::audit::{AuditStore, ConceptId, LinkId, LinkStatus, RecordId};
 use sbgk_core::hash::{from_hex, sha256, to_hex, Hash};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -1172,6 +1172,35 @@ fn read_json(path: &str, what: &str) -> Value {
     serde_json::from_str(&text).unwrap_or_else(|e| fail(&format!("{what} {path} is not JSON: {e}")))
 }
 
+/// The journal this start has just created, until the run is up. A start that fails after that takes it away again, so the same
+/// command can be given again: it holds the corpus and nothing anyone did. A journal that existed before this start is never named.
+static NEW_JOURNAL: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn remember_new_journal(wal: &Path) {
+    *NEW_JOURNAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(wal.to_path_buf());
+}
+
+fn keep_new_journal() {
+    *NEW_JOURNAL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Called on the way out of a failed command.
+pub fn drop_new_journal() {
+    let Some(wal) = NEW_JOURNAL.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    let mut failure = None;
+    // on Windows an indexer or a sync client may hold a new file for a moment
+    for pause in [0, 100, 400] {
+        std::thread::sleep(Duration::from_millis(pause));
+        match std::fs::remove_file(&wal) {
+            Ok(()) => return,
+            Err(e) => failure = Some(e),
+        }
+    }
+    let message =
+        format!("the new journal of this failed start stays behind: {}; remove it before giving the command again", failure.expect("a failed attempt"));
+    eprintln!("{}", json!({"status": "warning", "message": message, "journal": wal.display().to_string()}));
+}
+
 /// A new durable run from the corpus manifest and the selected report paths.
 fn create_run(a: &Args, wal: &Path) -> AuditState {
     let manifest = a.req("manifest");
@@ -1299,23 +1328,21 @@ fn graph_quality_args(a: &Args) -> Value {
 struct CoverageMode {
     graph_quality: Value,
     circle_refiner: Option<String>,
-    resumed: bool,
     agent_attempts: Option<u32>,
     unattested_at_end: bool,
     ontology_review: bool,
     answer_timeout_ms: Option<u64>,
     build_scope: &'static str,
 }
-fn bind_coverage(
-    state: &mut AuditState,
+fn coverage_context(
     section_bytes: usize,
     zones: &[Vec<String>],
     own_refs: bool,
     build_backlog: Option<usize>,
     circles: Option<&sbgk_core::audit::directives::circles::CircleConfig>,
     mode: CoverageMode,
-) -> Result<(), String> {
-    let CoverageMode { resumed, ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope } = mode;
+) -> Value {
+    let CoverageMode { ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope } = mode;
     let mut context = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": section_bytes});
     // durable: a control run's WAL says what was left out, and it cannot be resumed as another kind of run
     if build_scope != "full" {
@@ -1355,8 +1382,13 @@ fn bind_coverage(
     if let Some(id) = circle_refiner {
         context["circle_refiner"] = json!(id);
     }
+    context
+}
+
+/// Whether a journal can go on under these settings: read only, so a refused start leaves the journal as it was.
+fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, resumed: bool) -> Result<(), String> {
     if let Some(checkpoint) = state.checkpoint(COVERAGE_CHECKPOINT) {
-        return if checkpoint["context"] == context {
+        return if checkpoint["context"] == *context {
             Ok(())
         } else {
             // name what differs: a run started with another --profile differs in its switches, not only in --section-bytes
@@ -1372,6 +1404,14 @@ fn bind_coverage(
     }
     if resumed && state.transaction_sequence().unwrap_or(0) != 0 {
         return Err("cannot resume --section-bytes safely: this progressed WAL has no audit-serve section configuration; start a new WAL".into());
+    }
+    Ok(())
+}
+
+/// Pins the settings of a new run; a run that has them stays as it is.
+fn bind_coverage(state: &mut AuditState, context: Value) -> Result<(), String> {
+    if state.checkpoint(COVERAGE_CHECKPOINT).is_some() {
+        return Ok(());
     }
     let checkpoint = json!({"key": COVERAGE_CHECKPOINT, "from": 0, "to": 0, "context": context});
     match state.submit_operations_id("audit-mcp-coverage-config", "kernel", &[], Some(checkpoint)) {
@@ -1401,12 +1441,12 @@ fn with_profile(a: &Args) -> Args {
     a
 }
 
-/// `sbgk audit-verify --wal <run.wal> [--expect <receipt.json>]`: replays a recorded audit journal without a model, as a resumed
+/// `sbgk audit-verify --wal <run.wal> [--expect <receipt.json> [--at-end]]`: replays a recorded audit journal without a model, as a resumed
 /// server would (frame hashes, source identities, every entry to its committed outcome and roots), and prints the roots and the
 /// chain head it reaches. The kernel reads the file once, bounded and read-only: it is never locked, copied or written. With
 /// `--expect`, the receipt's `audit_root` (with its `engine_root`, `session_root` and `wal_head` where it has them; a close stamp
 /// has no engine root) must name a state the journal passed through, such as a phase receipt or the final one; a `wal_head`
-/// binds the chain up to that state, not only the state. Exit 0 when verified, 1 when the journal is refused, the receipt names
+/// binds the chain up to that state, not only the state; `--at-end` also asks that nothing follows it. Exit 0 when verified, 1 when the journal is refused, the receipt names
 /// no state of it, or (without a receipt) bytes after the last complete entry were left unverified: status TORN_TAIL, usually a
 /// crash. Exit 2 when the file cannot be read: that says nothing about the journal. A journal cut back to a complete entry is a
 /// shorter sound journal: only a receipt shows that anything is missing.
@@ -1414,6 +1454,9 @@ pub fn cmd_audit_verify(a: &Args) {
     let wal = a.req("wal");
     if let Err(e) = std::fs::File::open(&wal).and_then(|mut f| std::io::Read::read(&mut f, &mut [0u8; 1])) {
         fail(&format!("cannot read {wal}: {e}"));
+    }
+    if a.sw("at-end") && a.get("expect").is_none() {
+        fail("--at-end needs --expect: it asks that the receipt's state is the journal's last");
     }
     let expect = a.get("expect").map(|p| {
         let v: Value = serde_json::from_slice(&std::fs::read(p).unwrap_or_else(|e| fail(&format!("cannot read {p}: {e}"))))
@@ -1452,11 +1495,13 @@ pub fn cmd_audit_verify(a: &Args) {
     if let Some((audit, engine, session, head)) = expect {
         let found = states.iter().find(|s| s.1 == audit && engine.is_none_or(|e| s.2 == e) && head.is_none_or(|h| s.3 == h));
         let at = found.map(|s| s.0);
+        // bytes after the last complete entry may be the entry that followed the receipt: the state is the end only with none
+        let at_end = at == Some(entries) && read.bytes == read.complete_bytes;
         let session_ok = found.is_some_and(|s| session.is_none_or(|x| x == session_root_of(&s.2, &audit)));
         out["expected"] = json!({"audit_root": to_hex(&audit), "engine_root": engine.map(|e| to_hex(&e)),
-                                 "wal_head": head.map(|h| to_hex(&h)), "found_after_entries": at, "at_end": at == Some(entries),
+                                 "wal_head": head.map(|h| to_hex(&h)), "found_after_entries": at, "at_end": at_end,
                                  "session_root_matches": session.map(|_| session_ok)});
-        if at.is_none() || !session_ok {
+        if at.is_none() || !session_ok || (a.sw("at-end") && !at_end) {
             out["status"] = json!("MISMATCH");
             println!("{out}");
             std::process::exit(1);
@@ -1623,6 +1668,37 @@ pub fn cmd_audit_serve(a: &Args) {
         None
     };
     let questions = parse_questions(&read_json(&a.req("questions"), "--questions")).unwrap_or_else(|e| fail(&format!("--questions: {e}")));
+    // every flag that needs no journal is settled here: opening a journal cuts a torn tail, and a mistyped flag must not come after that
+    if a.sw("ontology-revisions") && !circle_mode {
+        fail("--ontology-revisions needs --circles and its authenticated roster");
+    }
+    let agent_attempts = a.get("agent-attempts").map(|_| a.num("agent-attempts", 3u32));
+    if agent_attempts.is_some_and(|n| n == 0 || n > 1000) {
+        fail("--agent-attempts must be 1..1000");
+    }
+    let ontology_review = a.sw("ontology-review");
+    if ontology_review && (!circle_mode || !a.sw("ontology-revisions")) {
+        fail("--ontology-review requires --circles --ontology-revisions");
+    }
+    let answer_timeout_ms = a.get("answer-timeout-ms").map(|_| a.num("answer-timeout-ms", 900000u64));
+    if answer_timeout_ms == Some(0) {
+        fail("--answer-timeout-ms must be positive");
+    }
+    let graph_quality = graph_quality_args(a);
+    let ontology_policy = json!({"rule":"next_nonproposer/1","unmapped_circles":a.num("ontology-unmapped-circles",3usize),"catchall_mappings":a.num("ontology-catchall-mappings",8usize),"catchall_reports":a.num("ontology-catchall-reports",2usize)});
+    // the graph builder's typed requests (U1): off unless the run gives a positive bound
+    let max_requests: usize = a.num("builder-requests", 0);
+    let auto_reread_limit: usize = a.num("auto-rereads", 20);
+    // backpressure (run 10A-17): first readings wait for the graph builder's backlog; 0 keeps it off
+    let backpressure_records: usize = a.num("backpressure-records", 0);
+    let backpressure_per_task: usize = a.num("backpressure-per-task", DispatchConfig::default().backpressure_per_task);
+    let stall = Duration::from_millis(a.num("backpressure-stall-ms", 120_000));
+    // the lines one answer may hold: a strong reader of a whole report writes more than the swarm's 32
+    let max_lines: usize = a.num("max-lines", DispatchConfig::default().max_lines);
+    // the records a summary is shown (run S1.2: 0, the summary cites its agent's own records only, with --own-refs)
+    let summary_records: usize = a.num("summary-records", DispatchConfig::default().summary_records);
+    let zones_file = a.get("zones").map(|p| read_json(p, "--zones"));
+    let lineage_file = a.get("version-lineage").map(|p| read_json(p, "--version-lineage"));
     if let Some(addr) = a.get("listen") {
         // every request carries a subject token, so a remote listener only needs the operator's opt-in
         mcp::check_listen(addr, a.sw("allow-remote"), true, "--allow-remote");
@@ -1640,7 +1716,9 @@ pub fn cmd_audit_serve(a: &Args) {
         }
         AuditState::open(Path::new(&wal)).unwrap_or_else(|e| fail(&format!("cannot resume {wal}: {}", e.to_json())))
     } else {
-        create_run(a, Path::new(&wal))
+        let state = create_run(a, Path::new(&wal));
+        remember_new_journal(Path::new(&wal));
+        state
     };
     // said here, before any check below can stop the start: the cut has happened, and a later message would be lost with it
     if let Some((bytes, kept)) = state.dropped_tail() {
@@ -1648,62 +1726,39 @@ pub fn cmd_audit_serve(a: &Args) {
             format!("the journal ended in {bytes} bytes that are no complete entry; the run resumes before them, which can undo what they held; check it against the latest receipt");
         eprintln!("{}", json!({"status": "warning", "message": message, "kept_in": kept.display().to_string()}));
     }
-    if build_scope == "versions" {
-        let lineage = a
-            .get("version-lineage")
-            .map(|p| read_json(p, "--version-lineage"))
-            .or_else(|| state.checkpoint(sbgk_core::audit::versions::KEY).map(|c| c["context"]["lineage"].clone()))
-            .unwrap_or_else(|| json!({"lineages":[]}));
-        state.enable_versions(&lineage).unwrap_or_else(|e| fail(&format!("--version-lineage: {e}")));
-    } else if a.get("version-lineage").is_some() || state.checkpoint(sbgk_core::audit::versions::KEY).is_some() {
+    // what is checked against the journal is only read here: no flag is refused after the first write. A tail cut on opening stays cut,
+    // and was said above
+    if build_scope != "versions" && (a.get("version-lineage").is_some() || state.checkpoint(sbgk_core::audit::versions::KEY).is_some()) {
         fail("a pinned version map requires --build-scope versions");
     }
     if state.ontology_revision_state().is_some() != a.sw("ontology-revisions") {
         fail("--ontology-revisions must match the pinned genesis policy");
     }
-    if a.sw("ontology-revisions") && !circle_mode {
-        fail("--ontology-revisions needs --circles and its authenticated roster");
-    }
     if let Some(snapshot) = state.ontology_revision_state() {
-        let requested = json!({"rule":"next_nonproposer/1","unmapped_circles":a.num("ontology-unmapped-circles",3usize),"catchall_mappings":a.num("ontology-catchall-mappings",8usize),"catchall_reports":a.num("ontology-catchall-reports",2usize)});
-        if snapshot["policy"] != requested {
+        if snapshot["policy"] != ontology_policy {
             fail("ontology hint thresholds must match the pinned genesis policy");
         }
     }
-    let agent_attempts = a.get("agent-attempts").map(|_| a.num("agent-attempts", 3u32));
-    if agent_attempts.is_some_and(|n| n == 0 || n > 1000) {
-        fail("--agent-attempts must be 1..1000");
-    }
-    let ontology_review = a.sw("ontology-review");
-    if ontology_review && (!circle_mode || !a.sw("ontology-revisions")) {
-        fail("--ontology-review requires --circles --ontology-revisions");
-    }
-    let answer_timeout_ms = a.get("answer-timeout-ms").map(|_| a.num("answer-timeout-ms", 900000u64));
-    if answer_timeout_ms == Some(0) {
-        fail("--answer-timeout-ms must be positive");
-    }
     // reading zones and own references (run S1.2): off unless given
-    let zones = a.get("zones").map(|p| parse_zones(&read_json(p, "--zones"), &state).unwrap_or_else(|e| fail(&format!("--zones: {e}")))).unwrap_or_default();
+    let zones = zones_file.map(|v| parse_zones(&v, &state).unwrap_or_else(|e| fail(&format!("--zones: {e}")))).unwrap_or_default();
     let own_refs = a.sw("own-refs");
-    bind_coverage(
-        &mut state,
+    let coverage = coverage_context(
         section_bytes,
         &zones,
         own_refs,
         build_backlog,
         circles.as_ref(),
         CoverageMode {
-            graph_quality: graph_quality_args(a),
+            graph_quality,
             circle_refiner: refiner.clone(),
-            resumed: resume,
             ontology_review,
             answer_timeout_ms,
             agent_attempts,
             unattested_at_end: a.sw("unattested-at-end"),
             build_scope,
         },
-    )
-    .unwrap_or_else(|error| fail(&error));
+    );
+    check_coverage(&state, &coverage, section_bytes, resume).unwrap_or_else(|error| fail(&error));
     // a concept type a question selects must be one of the run's ontology (Codex review d7d9a49, D11)
     let types = state.concept_types();
     for q in &questions {
@@ -1711,17 +1766,13 @@ pub fn cmd_audit_serve(a: &Args) {
             fail(&format!("--questions: question {}: unknown concept type '{t}' (one of {types:?})", q.id));
         }
     }
-    // the graph builder's typed requests (U1): off unless the run gives a positive bound
-    let max_requests: usize = a.num("builder-requests", 0);
-    let auto_reread_limit: usize = a.num("auto-rereads", 20);
-    // backpressure (run 10A-17): first readings wait for the graph builder's backlog; 0 keeps it off
-    let backpressure_records: usize = a.num("backpressure-records", 0);
-    let backpressure_per_task: usize = a.num("backpressure-per-task", DispatchConfig::default().backpressure_per_task);
-    let stall = Duration::from_millis(a.num("backpressure-stall-ms", 120_000));
-    // the lines one answer may hold: a strong reader of a whole report writes more than the swarm's 32
-    let max_lines: usize = a.num("max-lines", DispatchConfig::default().max_lines);
-    // the records a summary is shown (run S1.2: 0, the summary cites its agent's own records only, with --own-refs)
-    let summary_records: usize = a.num("summary-records", DispatchConfig::default().summary_records);
+    if build_scope == "versions" {
+        let lineage = lineage_file
+            .or_else(|| state.checkpoint(sbgk_core::audit::versions::KEY).map(|c| c["context"]["lineage"].clone()))
+            .unwrap_or_else(|| json!({"lineages":[]}));
+        state.enable_versions(&lineage).unwrap_or_else(|e| fail(&format!("--version-lineage: {e}")));
+    }
+    bind_coverage(&mut state, coverage).unwrap_or_else(|error| fail(&error));
     let cfg = DispatchConfig {
         ttl_ms,
         answer_timeout_ms,
@@ -1781,6 +1832,7 @@ pub fn cmd_audit_serve(a: &Args) {
     }
     let server = Arc::new(AuditServer { run: Mutex::new(run), changed: Condvar::new(), subjects, max_message_bytes, started: Instant::now() });
     let note = json!({"status": "ready", "audit": hello});
+    keep_new_journal();
     mcp::run_bound(server, listener, max_connections, Some(note), json!({"audit": hello}));
 }
 
