@@ -2732,6 +2732,7 @@ def run_arm_a(model: Model, docs: dict[str, str], withdraw: dict, workers: int =
 
 # The bounds of an answer, the kernel's for a summary (directives.rs SUMMARY_CLAIMS, SUMMARY_TEXT_CHARS): the same task for both.
 SINGLE_CLAIMS, SINGLE_TEXT_CHARS = 40, 240
+CUT_MARK = " [cut]"
 SINGLE_RESPONSE_CHARS = 32000  # arm A JSON response characters, not the provider token allowance
 SINGLE_RULES = G.append_to(
     "Answer only from the reports above. Write JSON lines only, no prose and no code fences:\n"
@@ -2787,10 +2788,13 @@ def check_single(lines: list[dict], docs: dict[str, str], withdrawn: list[dict],
             text = v.get("text") if isinstance(v.get("text"), str) else ""
             if done is not None:
                 refused.append({"local_id": local, "kind": "done", "why": "a second done line"})
-            elif len(text) > SINGLE_TEXT_CHARS:
-                refused.append({"local_id": local, "kind": "done", "why": f"done text over {SINGLE_TEXT_CHARS} characters ({len(text)})"})
-            else:
+            elif len(text) <= SINGLE_TEXT_CHARS:
                 done = {"text": text}
+            else:
+                # The closing line says what the reports leave open. It backs no claim, so an over-long one is cut, not refused: refused, it
+                # marked the whole answer incomplete and the page was done again at the next stage, calls that had nothing to do with a
+                # withdrawal. It goes into the answer, so a reader sees the mark and the run counts the cut.
+                done = {"text": text[:SINGLE_TEXT_CHARS - len(CUT_MARK)] + CUT_MARK, "cut_from_chars": len(text)}
             continue
         if kind != "claim" or not isinstance(local, str) or not local:
             refused.append({"local_id": local, "kind": kind, "why": "a line is a claim with a local_id or the done line"})
@@ -2907,6 +2911,8 @@ def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], w
                 del new[local_id]
         kept.update(new)
         done = got or done
+        if got and got.get("cut_from_chars"):
+            log.event(arm="A", phase=phase, kind="CLOSING_LINE_CUT", rq_id=rq, name=name, chars=got["cut_from_chars"])
         if got is None:
             refused.append({"local_id": None, "kind": "done", "why": "one done line is required, including after a repair"})
         refused_ids = {r["local_id"] for r in refused if isinstance(r.get("local_id"), str)}
@@ -2917,7 +2923,8 @@ def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], w
             break
     claims = list(kept.values())
     return {"outcome": "answered" if claims else "unknown", "claims": claims, "unsettled": (done or {}).get("text"),
-            "refused_at_end": refused, "repairs": repairs, "complete": done is not None and not refused}
+            "refused_at_end": refused, "repairs": repairs, "complete": done is not None and not refused,
+            "unsettled_cut_from_chars": (done or {}).get("cut_from_chars")}
 
 
 def answers_status(answers: dict, log: "Log") -> tuple[str, str | None]:
@@ -3532,7 +3539,7 @@ def measures(a: dict, c: dict, docs: dict[str, str] | None = None) -> dict:
         "worker_errors": [e for e in c["events"] + a["events"] if e.get("outcome") == "ERROR"],
         # submissions whose answer was lost (stored or not: read the WAL receipt) and errors after a stop (Codex's review of 77a803e, R02)
         "ack_unknown": [e for e in c["events"] if e.get("outcome") == "ACK_UNKNOWN"],
-        "model_refusals": [e for e in c["events"] if e.get("outcome") == "MODEL_REFUSED"],
+        "closing_lines_cut": sum(1 for e in a.get("events") or [] if e.get("kind") == "CLOSING_LINE_CUT"), "model_refusals": [e for e in c["events"] if e.get("outcome") == "MODEL_REFUSED"],
         "errors_after_stop": [e for e in c["events"] + a["events"] if e.get("outcome") == "ERROR_AFTER_STOP"],
         "semantic_check": "manual and blind: answers_blind.md by checklist.md; the variant key is in answers_key.json",
         "strategies": STRATEGIES,

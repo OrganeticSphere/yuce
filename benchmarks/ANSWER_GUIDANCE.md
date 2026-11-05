@@ -4,7 +4,7 @@ The canonical UTF-8 asset is `crates/sbgk-core/src/audit/answer_guidance.json` (
 `r2r-common-answer-guidance/1`). Rust embeds this asset and Python reads the same file from the source checkout. Both render
 the identical `COMMON ANSWER GUIDANCE` block in their answer prompts, including when C's temporal retrieval option is off.
 The block covers chronology and incomplete coverage. Claim and done instructions ask for text of at most 200 characters; the
-existing 240-character validation bound is unchanged. Native output schemas and their citation mechanisms remain distinct.
+240-character validation bound stays for claims, and on the sides without the kernel a closing line over it is cut, with a mark. Native output schemas and their citation mechanisms remain distinct.
 
 Arm A's notes, direct, map, tree merge and final reduce prompts show the question id and text without the private `about` search
 topics. Actual source text is preserved, including an `ABOUT:` line in a source. The notes stub receives its test topics through

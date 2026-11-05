@@ -56,7 +56,7 @@ class ReuseArmC(unittest.TestCase):
             self.assertEqual(reused["spend_c"], {"spent_usd_estimate": 4.18})
             self.assertEqual(reused["circles"], {"n": 21})
             record = json.loads((out / "arm_c_reused.json").read_text(encoding="utf-8"))
-            self.assertEqual((record["from"], record["provenance"]["git_head"]), (str(src), "2c2f517"))
+            self.assertEqual((record["from"], record["provenance"]["git_head"]), (src.name, "2c2f517"))
             self.assertEqual(len(record["arm_c_sha256"]), 64)
 
     def test_other_inputs_an_unfinished_run_or_a_stopped_arm_c_are_refused(self, _shape):

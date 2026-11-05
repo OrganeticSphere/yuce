@@ -13,13 +13,14 @@ use crate::arena::{find_all, Occurrence};
 use crate::cdc::CdcParams;
 use crate::container::{build_container, open_session};
 use crate::error::{Code, KResult};
-use crate::hash::{from_hex, sha256, sha256_parts, ZERO_HASH};
+use crate::hash::{from_hex, sha256, sha256_parts, sha256_stream, ZERO_HASH};
 use crate::jcs::to_jcs;
+use crate::merkle::KeyedIdBuild;
 use crate::node::EV_ACTIVE;
 use crate::ontology::Ontology;
 use crate::session::{Session, MAX_REFS, MAX_STR};
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -155,6 +156,49 @@ struct EvidenceBinding {
     end: usize,
 }
 
+/// What a pass over the records keeps of each one. Record ids are digests and nothing reads these maps in order; an ordered map
+/// cost a pass several times what it derives, and a command makes several passes.
+///
+/// Its key is drawn per process, so its order changes from run to run, and an order that reached a root would make two runs of one
+/// journal differ. So it cannot be walked: `sorted` is the way out.
+#[derive(Clone, Debug, PartialEq)]
+struct ById<T>(HashMap<RecordId, T, KeyedIdBuild>);
+
+impl<T> Default for ById<T> {
+    fn default() -> Self {
+        Self(HashMap::default())
+    }
+}
+
+impl<T> ById<T> {
+    fn with_capacity(n: usize) -> Self {
+        Self(HashMap::with_capacity_and_hasher(n, KeyedIdBuild::default()))
+    }
+
+    fn get(&self, id: &RecordId) -> Option<&T> {
+        self.0.get(id)
+    }
+
+    fn insert(&mut self, id: RecordId, value: T) -> Option<T> {
+        self.0.insert(id, value)
+    }
+
+    fn sorted(&self) -> BTreeMap<RecordId, T>
+    where
+        T: Clone,
+    {
+        self.0.iter().map(|(id, value)| (*id, value.clone())).collect()
+    }
+}
+
+impl<T> std::ops::Index<&RecordId> for ById<T> {
+    type Output = T;
+
+    fn index(&self, id: &RecordId) -> &T {
+        &self.0[id]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Data {
     run_id: String,
@@ -165,7 +209,7 @@ struct Data {
     records: Vec<RecordView>,
     locals: BTreeMap<(String, String, String), RecordId>,
     task_ordinals: BTreeMap<(String, String), u64>,
-    evidence: BTreeMap<RecordId, EvidenceBinding>,
+    evidence: ById<EvidenceBinding>,
     mappings: BTreeMap<(RecordId, String, ConceptId), String>,
     links: BTreeMap<LinkId, LinkView>,
     acceptance_basis: BTreeMap<LinkId, Vec<RecordId>>,
@@ -179,13 +223,21 @@ struct Core {
     engine_root: Hash,
     data: Data,
     root_cache: Mutex<root_cache::Cache>,
+    /// Set while `replay_in_place` runs a command: no step of it keeps a copy to go back to. Never set on a fork.
+    in_place: bool,
 }
 
 impl Core {
     fn fork(&self) -> KResult<Self> {
         #[cfg(test)]
         FORKS.with(|n| n.set(n.get() + 1));
-        Ok(Self { session: self.fork_session()?, engine_root: self.engine_root, data: self.data.clone(), root_cache: Mutex::new(self.cache().clone()) })
+        Ok(Self {
+            session: self.fork_session()?,
+            engine_root: self.engine_root,
+            data: self.data.clone(),
+            root_cache: Mutex::new(self.cache().clone()),
+            in_place: false,
+        })
     }
 
     /// The session of `fork` alone: an observation binds its evidence on a staged engine and keeps it only when the record is
@@ -227,10 +279,31 @@ impl Core {
                 Outcome::Error(error)
             }
         };
-        next.engine_root = next.session.engine.root();
-        next.data.receipts.insert((actor.into(), id.into()), Receipt { request_hash: request_hash(actor, command), outcome: outcome.clone() });
-        next.root_cache.get_mut().expect("audit root cache poisoned").finish();
+        next.seal(actor, id, command, &outcome);
         Ok((next, outcome))
+    }
+
+    /// `stage` on this state itself, for a replayed command whose journal entry reports no failure (`AuditState::prepare_recorded`).
+    /// `stage` copies this state to have a way back from a failure, and a copy costs as much as the state is long. A command that
+    /// does not fail runs the same code on the same state here and leaves the same state. One that fails all the same has an outcome
+    /// other than the recorded one: the caller refuses the journal as it refuses any divergence, and nothing reads the half-changed
+    /// state after `seal` has written its receipt into it.
+    fn replay_in_place(&mut self, actor: &str, id: &str, command: &Value) -> Outcome {
+        self.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+        self.session.reset_transients();
+        self.in_place = true;
+        let executed = if command["kind"] == "batch" { self.batch(actor, command, None) } else { self.execute(actor, command) };
+        self.in_place = false;
+        let outcome = executed.unwrap_or_else(Outcome::Error);
+        self.seal(actor, id, command, &outcome);
+        outcome
+    }
+
+    /// What every staged command ends with, failed or not: the engine root, the receipt, an audit root to compute.
+    fn seal(&mut self, actor: &str, id: &str, command: &Value, outcome: &Outcome) {
+        self.engine_root = self.session.engine.root();
+        self.data.receipts.insert((actor.into(), id.into()), Receipt { request_hash: request_hash(actor, command), outcome: outcome.clone() });
+        self.root_cache.get_mut().expect("audit root cache poisoned").finish();
     }
 
     fn record(&self, id: &RecordId) -> Option<&RecordView> {
@@ -264,8 +337,12 @@ impl Core {
         })
     }
 
-    fn structural_grounding(&self) -> BTreeMap<RecordId, bool> {
-        let mut flags = BTreeMap::<RecordId, bool>::new();
+    fn by_record<T>(&self) -> ById<T> {
+        ById::with_capacity(self.data.records.len())
+    }
+
+    fn structural_grounding(&self) -> ById<bool> {
+        let mut flags = self.by_record();
         for r in &self.data.records {
             let active = if r.kind == RecordKind::Observe {
                 self.observe_grounded(r)
@@ -280,7 +357,7 @@ impl Core {
         flags
     }
 
-    fn effective_links(&self, structural: &BTreeMap<RecordId, bool>) -> BTreeSet<(RecordId, String, RecordId)> {
+    fn effective_links(&self, structural: &ById<bool>) -> BTreeSet<(RecordId, String, RecordId)> {
         let proof = self.proof_admissibility(structural);
         self.data
             .links
@@ -297,10 +374,10 @@ impl Core {
             .collect()
     }
 
-    fn proof_admissibility(&self, structural: &BTreeMap<RecordId, bool>) -> BTreeMap<RecordId, bool> {
+    fn proof_admissibility(&self, structural: &ById<bool>) -> ById<bool> {
         // A verifier may cite its own structurally grounded judgement without recursively verifying that judgement.
         // However, a hypothesis must not become proof through a relation endpoint or an indirect basis chain.
-        let mut proof = BTreeMap::new();
+        let mut proof = self.by_record();
         for r in &self.data.records {
             let allowed = structural.get(&r.id) == Some(&true)
                 && !matches!(r.kind, RecordKind::Hypothesis | RecordKind::Question | RecordKind::Done)
@@ -324,10 +401,10 @@ impl Core {
         cache.support.get_or_insert_with(|| Arc::new(self.support_flags_fresh())).clone()
     }
 
-    fn support_flags_fresh(&self) -> BTreeMap<RecordId, (bool, bool)> {
+    fn support_flags_fresh(&self) -> root_cache::Support {
         // References only point backwards in the immutable ingest stream. One ordered pass avoids recursion and
         // exponential walks through shared premises, even for adversarially deep relation records.
-        let mut flags = BTreeMap::<RecordId, (bool, bool)>::new();
+        let mut flags = self.by_record::<(bool, bool)>();
         let structural = self.structural_grounding();
         let accepted = self.effective_links(&structural);
         for r in &self.data.records {
@@ -409,7 +486,7 @@ impl Core {
     }
 
     fn visible_in_scope(&self, id: &RecordId, scope: &Scope) -> bool {
-        let mut visible = BTreeMap::<RecordId, bool>::new();
+        let mut visible = self.by_record();
         for record in &self.data.records {
             let allowed = if record.kind == RecordKind::Observe {
                 record.doc_id.as_ref().is_some_and(|doc| {
@@ -511,14 +588,20 @@ impl Core {
             let span = quote_span(scope, &doc_id, self.session.arena.doc(&doc_id).map(|d| d.bytes.as_slice()), &quote)?;
             let doc = self.session.arena.doc(&doc_id).expect("quote_span found the document");
             let version = doc.version_id;
-            let mut staged = self.fork_session()?;
+            let mut fork = None;
+            if self.in_place {
+                self.session.reset_transients();
+            } else {
+                fork = Some(self.fork_session()?);
+            }
+            let staged = fork.as_mut().unwrap_or(&mut self.session);
             let event = json!({"seq":staged.last_seq+1,"op":"bind_evidence","local_id":format!("audit_observe_{seq}"),"doc_id":doc_id,"exact_quote":quote});
             let applied = staged.apply_line(&to_jcs(&event))?;
             let evidence = applied.node.ok_or_else(|| bad("evidence", "engine did not return an evidence id"))?;
             let bound = EvidenceBinding { evidence, version, start: span.start, end: span.end };
             body["evidence_id"] = json!(to_hex(&evidence));
             body["document_version"] = json!(to_hex(&version));
-            binding = Some((staged, bound));
+            binding = Some((fork, bound));
             (Some(doc_id), Some(quote))
         } else {
             (None, None)
@@ -533,8 +616,10 @@ impl Core {
             }
             self.add_link(actor, from, rel, to, &based_on)?;
         }
-        if let Some((session, bound)) = binding {
-            self.session = session;
+        if let Some((fork, bound)) = binding {
+            if let Some(session) = fork {
+                self.session = session;
+            }
             self.data.evidence.insert(id, bound);
         }
         self.data.records.push(RecordView {
@@ -728,6 +813,7 @@ impl AuditState {
                 session,
                 engine_root,
                 root_cache: Mutex::default(),
+                in_place: false,
                 data: Data {
                     run_id: "unbound".into(),
                     manifest_hash: ZERO_HASH,
@@ -740,7 +826,7 @@ impl AuditState {
                     records: Vec::new(),
                     locals: BTreeMap::new(),
                     task_ordinals: BTreeMap::new(),
-                    evidence: BTreeMap::new(),
+                    evidence: ById::default(),
                     mappings: BTreeMap::new(),
                     links: BTreeMap::new(),
                     acceptance_basis: BTreeMap::new(),
@@ -891,7 +977,7 @@ impl AuditState {
             if state.core.data.receipts.contains_key(&(actor.into(), request_id.into())) {
                 return Err(bad("wal", "duplicate persisted submission"));
             }
-            let outcome = state.prepare(actor, request_id, &payload["command"])?;
+            let outcome = state.prepare_recorded(actor, request_id, payload)?;
             if outcome.value() != payload["outcome"]
                 || state.engine_root() != hash_field(payload, "engine_root")?
                 || state.audit_root() != hash_field(payload, "audit_root")?
@@ -1059,7 +1145,7 @@ impl AuditState {
     }
     /// Read-only: every record's (grounded, answer support) flags, computed in one ordered pass.
     pub fn support_map(&self) -> BTreeMap<RecordId, (bool, bool)> {
-        (*self.core.support_flags()).clone()
+        self.core.support_flags().sorted()
     }
     /// Read-only: `quality::stale::suspects`, kept like the support flags until the next command (01.11.2026 measurement: 69-103 ms
     /// of each 80-120 ms task acquire at the end of a live run, computed again by every poll of a waiting agent on an unchanged state).
@@ -1100,6 +1186,22 @@ impl AuditState {
         let (next, outcome) = self.core.stage(actor, id, command)?;
         self.core = next;
         Ok(outcome)
+    }
+
+    /// `prepare` of a journal entry. An entry that reports no failure runs on the state itself; the check of its outcome and roots
+    /// against what the replay computes is the caller's, whichever way it ran. The report only spares the copy: if it is false,
+    /// either way the outcome differs and the journal is refused. The version guard compares a command with the state before it,
+    /// so a run with a version map keeps the copy; only the first entry can install a map (`version_checkpoint`).
+    fn prepare_recorded(&mut self, actor: &str, id: &str, entry: &Value) -> KResult<Outcome> {
+        let recorded = &entry["outcome"];
+        let failed = recorded["kind"] == "error" || !recorded["result"]["error"].is_null();
+        let map = self.core.data.receipts.is_empty() || self.core.data.checkpoints.contains_key(super::versions::KEY);
+        #[cfg(test)]
+        let failed = failed || COPY_REPLAY.with(std::cell::Cell::get);
+        if failed || map {
+            return self.prepare(actor, id, &entry["command"]);
+        }
+        Ok(self.core.replay_in_place(actor, id, &entry["command"]))
     }
 
     fn commit(&mut self, actor: &str, id: &str, command: &Value) -> KResult<Outcome> {
@@ -1260,6 +1362,8 @@ impl Core {
             .collect()
     }
 
+    /// A command that succeeds may not rest on a way back: an error caught after a change, with a success returned on the strength of
+    /// the copy, would run differently on the state itself (`replay_in_place`), and an honest journal would be refused.
     fn execute(&mut self, actor: &str, command: &Value) -> KResult<Outcome> {
         let kind = string(command, "kind")?;
         let value = match kind {
@@ -1489,7 +1593,7 @@ impl Core {
                 failed_index = Some(index);
                 break;
             }
-            let previous = if index == 0 && base.is_some() { None } else { Some(self.fork()?) };
+            let previous = if self.in_place || (index == 0 && base.is_some()) { None } else { Some(self.fork()?) };
             match self.execute(actor, operation) {
                 Ok(Outcome::Records(report)) => {
                     results.push(report_value(&report));
@@ -1501,15 +1605,17 @@ impl Core {
                 }
                 Ok(Outcome::Value(value)) => results.push(value),
                 Ok(Outcome::Error(error)) | Err(error) => {
-                    *self = match previous {
-                        Some(previous) => previous,
-                        // the state as `stage` began the batch on it
-                        None => {
-                            let mut fresh = base.expect("the base of a staged batch").fork()?;
-                            fresh.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
-                            fresh
-                        }
-                    };
+                    if !self.in_place {
+                        *self = match previous {
+                            Some(previous) => previous,
+                            // the state as `stage` began the batch on it
+                            None => {
+                                let mut fresh = base.expect("the base of a staged batch").fork()?;
+                                fresh.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+                                fresh
+                            }
+                        };
+                    }
                     failure = Some(error);
                     failed_index = Some(index);
                     break;
@@ -1738,6 +1844,8 @@ thread_local! {
     static REPLAY_FORK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Tests only: a staged batch copies the state before its first operation too, the way before 02.11.2026, as the oracle.
     static TWO_COPY_BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests only: every replayed command is staged on a copy, as a live command is, as the oracle of the replay on the state itself.
+    static COPY_REPLAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Tests only: the copies of the state made on this thread.
     static FORKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }

@@ -137,11 +137,21 @@ def provenance() -> dict:
 
     dirty = git("status", "--porcelain", "--untracked-files=no")
     here = pathlib.Path(__file__).resolve().parent
-    # the closed layer's sources too, when it is installed: a run may use them
-    closed = sorted(p.relative_to(here).as_posix() for p in (here / "sbgk_bench" / "closed").glob("*.py") if not p.name.startswith("test_"))
-    return {"git_head": git("rev-parse", "HEAD"), "git_tree": git("rev-parse", "HEAD^{tree}"),
-            "changed_tracked_files": dirty.splitlines() if dirty else [], "sbgk_bin": str(C.BIN), "sbgk_sha256": digest(pathlib.Path(C.BIN)),
-            "runner_sha256": {name: digest(here / name) for name in ("run_pilot_ac.py", "sbgk_bench/pilot_ac.py", *closed)}}
+    # every source of the runner, the closed layer's too when it is installed: a run may use them
+    sources = sorted(p.relative_to(here).as_posix() for p in (here / "sbgk_bench").rglob("*.py") if not p.name.startswith("test_"))
+    binary = pathlib.Path(C.BIN)
+    version = subprocess.run([str(binary), "--version"], capture_output=True, text=True, encoding="utf-8").stdout.strip() if binary.is_file() else None
+    return {"git_head": git("rev-parse", "HEAD"), "git_tree": git("rev-parse", "HEAD^{tree}"), "git_tag": git("describe", "--tags", "--exact-match"),
+            "crates_tree": git("rev-parse", "HEAD:crates"), "benchmarks_tree": git("rev-parse", "HEAD:benchmarks"),
+            "changed_tracked_files": dirty.splitlines() if dirty else [], "sbgk_bin": binary.name, "sbgk_version": version, "sbgk_sha256": digest(binary),
+            "closed_layer": P.closed_layer() is not None, "preregistration_sha256": {p.name: digest(p) for p in sorted(here.glob("PREREGISTRATION_*.md"))},
+            "runner_sha256": {name: digest(here / name) for name in ("run_pilot_ac.py", *sources)}}
+
+
+def binary_fits_tag(ran: dict) -> bool:
+    """On a tagged checkout the binary must be of that version: an older one beside the tag would make the run's archive say otherwise."""
+    tag, version = ran.get("git_tag"), ran.get("sbgk_version")
+    return not tag or not version or tag.removeprefix("v") == version.split()[-1]
 
 
 def corpus_choice(reports: pathlib.Path | None, plan: pathlib.Path | None, checklist: pathlib.Path | None,
@@ -246,7 +256,7 @@ def reuse_arm_c(src: pathlib.Path, out: pathlib.Path, corpus: dict, withdraw: di
     if P.graph_shape(out / "arm_c" / "run.wal") != P.graph_shape(src / "arm_c" / "run.wal"):
         raise ValueError(f"{src}: the graph's measure of the copied arm C differs from the source's")
     summary = json.loads((src / "summary.json").read_text(encoding="utf-8"))
-    reused = {"from": str(src), "provenance": json.loads((src / "provenance.json").read_text(encoding="utf-8")),
+    reused = {"from": src.name, "provenance": json.loads((src / "provenance.json").read_text(encoding="utf-8")),
               "arm_c_sha256": hashlib.sha256((src / "arm_c.json").read_bytes()).hexdigest(),
               "ontology_evolution_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest() if snapshot.is_file() else None,
               "spend_c": ((summary.get("spend") or {}).get("budget") or {}).get("C"), "circles": (summary.get("measures") or {}).get("circles")}
@@ -273,8 +283,10 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
     # a phase deadline is a finite positive number of seconds: inf or NaN would switch the deadline off (Codex review d7d9a49, D10)
     if not (isinstance(phase_timeout_s, (int, float)) and math.isfinite(phase_timeout_s) and phase_timeout_s > 0):
         raise ValueError("phase_timeout_s must be a finite positive number of seconds")
-    out.mkdir(parents=True, exist_ok=False)
     ran = provenance()
+    if not binary_fits_tag(ran):
+        raise ValueError(f"the checkout is at {ran['git_tag']} and the binary is {ran['sbgk_version']}")
+    out.mkdir(parents=True, exist_ok=False)
     save_json(out / "provenance.json", ran)
     evidence = Evidence(out)
     stage = "inputs"

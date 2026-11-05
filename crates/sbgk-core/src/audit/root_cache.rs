@@ -4,22 +4,25 @@
 use super::*;
 use std::sync::Arc;
 
-pub(super) type Support = BTreeMap<RecordId, (bool, bool)>;
+pub(super) type Support = ById<(bool, bool)>;
 
 #[derive(Clone)]
 pub(super) struct Cache {
     pub(super) readable: bool,
     pub(super) support: Option<Arc<Support>>,
-    /// `quality::stale::suspects` of this state, like the support flags dropped at every command.
+    /// `quality::stale::suspects` of this state, dropped at every command: unlike the support flags it reads the checkpoints.
     pub(super) stale: Option<Arc<Vec<RecordId>>>,
     hash: Option<Hash>,
     fragments: Arc<Fragments>,
+    /// The `"key":value` member of each checkpoint, dropped when that key is written: most commands of a run write one checkpoint,
+    /// and the others stay as they were.
+    checkpoints: Arc<BTreeMap<String, Arc<str>>>,
     sections: BTreeMap<&'static str, Arc<str>>,
 }
 
 impl Default for Cache {
     fn default() -> Self {
-        Self { readable: true, support: None, stale: None, hash: None, fragments: Arc::default(), sections: BTreeMap::new() }
+        Self { readable: true, support: None, stale: None, hash: None, fragments: Arc::default(), checkpoints: Arc::default(), sections: BTreeMap::new() }
     }
 }
 
@@ -33,10 +36,13 @@ struct Fragments {
 
 impl Cache {
     // No cached support is consulted while executing a transaction: later lines/operations
-    // must see earlier mutations in that same batch, including accepted prefixes.
+    // must see earlier mutations in that same batch, including accepted prefixes. The flags of a state
+    // are kept for its successor only by a command of checkpoints, which changes nothing they read.
     pub(super) fn begin(&mut self, command: &Value) {
         self.readable = false;
-        self.support = None;
+        if !checkpoints_alone(command) {
+            self.support = None;
+        }
         self.stale = None;
         self.hash = None;
         self.invalidate(command);
@@ -55,12 +61,15 @@ impl Cache {
                     self.invalidate(op);
                 }
                 if !command["checkpoint"].is_null() {
-                    self.sections.remove("checkpoints");
+                    self.checkpoint_written(&command["checkpoint"]);
                 }
                 return;
             }
             Some("submit") => &["ordinals", "links"], // relation records also materialize native links
-            Some("checkpoint") => &["checkpoints"],
+            Some("checkpoint") => {
+                self.checkpoint_written(command);
+                return;
+            }
             Some("put_document") => &["source_documents"],
             Some("revoke") => &[], // record fragments compare newly derived grounding below
             Some("add_link") => &["links"],
@@ -70,6 +79,7 @@ impl Cache {
                 // Ontology operations, including narrowing/mapping moves, and future commands
                 // conservatively invalidate every mutable section. Append-only rows are separate.
                 self.sections.clear();
+                self.checkpoints = Arc::default();
                 return;
             }
         };
@@ -77,24 +87,72 @@ impl Cache {
             self.sections.remove(section);
         }
     }
+
+    fn checkpoint_written(&mut self, checkpoint: &Value) {
+        self.sections.remove("checkpoints");
+        match checkpoint["key"].as_str() {
+            Some(key) => {
+                Arc::make_mut(&mut self.checkpoints).remove(key);
+            }
+            None => self.checkpoints = Arc::default(),
+        }
+    }
 }
 
-fn array(out: &mut String, rows: impl IntoIterator<Item = impl AsRef<str>>) {
-    out.push('[');
+/// A command that can change only `Data::checkpoints` (and its own receipt) when it succeeds, and nothing when it fails.
+fn checkpoints_alone(command: &Value) -> bool {
+    match command["kind"].as_str() {
+        Some("checkpoint") => true,
+        Some("batch") => command["operations"].as_array().is_some_and(|operations| operations.iter().all(|op| op["kind"] == "checkpoint")),
+        _ => false,
+    }
+}
+
+/// Add the rows of the keys of `data` that `rows` lacks. `rows` holds no other key, and both maps are in key order: one walk finds
+/// them, and a map of equal length has none to add.
+fn fill<K: Ord + Clone, V>(rows: &mut BTreeMap<K, Arc<str>>, data: &BTreeMap<K, V>, row: impl Fn(&K, &V) -> Arc<str>) {
+    if rows.len() == data.len() {
+        return;
+    }
+    let mut known = rows.keys().peekable();
+    let missing: Vec<_> = data.iter().filter(|(key, _)| known.next_if_eq(key).is_none()).map(|(key, value)| (key.clone(), row(key, value))).collect();
+    rows.extend(missing);
+}
+
+/// The JSON object of the checkpoints, from their rows. JCS orders members by UTF-16 code units, the map by bytes.
+fn checkpoints_object(rows: &BTreeMap<String, Arc<str>>) -> Arc<str> {
+    let mut members: Vec<_> = rows.iter().collect();
+    members.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+    let mut object = String::with_capacity(rows.values().map(|row| row.len() + 1).sum::<usize>() + 2);
+    object.push('{');
+    for (n, (_, row)) in members.into_iter().enumerate() {
+        if n != 0 {
+            object.push(',');
+        }
+        object.push_str(row);
+    }
+    object.push('}');
+    Arc::from(object)
+}
+
+fn array(out: &mut dyn FnMut(&[u8]), rows: impl IntoIterator<Item = impl AsRef<str>>) {
+    out(b"[");
     for (n, row) in rows.into_iter().enumerate() {
         if n != 0 {
-            out.push(',');
+            out(b",");
         }
-        out.push_str(row.as_ref());
+        out(row.as_ref().as_bytes());
     }
-    out.push(']');
+    out(b"]");
 }
 
 impl Core {
-    fn cached_preimage(&self) -> String {
+    /// The r2r-audit-state/1 preimage, handed to `out` piece by piece and in order: a root hashes the pieces as they come, and the
+    /// megabytes of a long run are not put together in a string first.
+    fn write_preimage(&self, out: &mut dyn FnMut(&[u8])) {
         let support = self.support_flags();
         let mut cache = self.cache();
-        let Cache { fragments, sections, .. } = &mut *cache;
+        let Cache { fragments, checkpoints, sections, .. } = &mut *cache;
         let rows = Arc::make_mut(fragments);
         for (n, record) in self.data.records.iter().enumerate() {
             let grounded = support.get(&record.id).is_some_and(|v| v.0);
@@ -117,12 +175,10 @@ impl Core {
         rows.records.truncate(self.data.records.len());
         // These keys/values and the ingest/decision rows are immutable once committed.
         // In particular a duplicate submission never replaces its historical receipt.
-        for (key @ (a, d, l), id) in &self.data.locals {
-            rows.locals.entry(key.clone()).or_insert_with(|| Arc::from(to_jcs(&json!([a, d, l, to_hex(&id.0)]))));
-        }
-        for (key @ (a, id), receipt) in &self.data.receipts {
-            rows.receipts.entry(key.clone()).or_insert_with(|| Arc::from(to_jcs(&json!([a, id, to_hex(&receipt.request_hash), receipt.outcome.value()]))));
-        }
+        fill(&mut rows.locals, &self.data.locals, |(a, d, l), id| Arc::from(to_jcs(&json!([a, d, l, to_hex(&id.0)]))));
+        fill(&mut rows.receipts, &self.data.receipts, |(a, id), receipt| {
+            Arc::from(to_jcs(&json!([a, id, to_hex(&receipt.request_hash), receipt.outcome.value()])))
+        });
         for decision in &self.data.decisions[rows.decisions.len()..] {
             rows.decisions.push(Arc::from(to_jcs(decision)));
         }
@@ -146,20 +202,27 @@ impl Core {
             "source_documents",
             "source_mode",
         ];
-        let mut out = String::new();
-        out.push('{');
+        out(b"{");
         for (n, key) in keys.into_iter().enumerate() {
             if n != 0 {
-                out.push(',');
+                out(b",");
             }
-            out.push('"');
-            out.push_str(key);
-            out.push_str("\":");
+            out(b"\"");
+            out(key.as_bytes());
+            out(b"\":");
             match key {
-                "records" => array(&mut out, rows.records.iter().map(|(_, _, v)| v)),
-                "locals" => array(&mut out, rows.locals.values()),
-                "receipts" => array(&mut out, rows.receipts.values()),
-                "decisions" => array(&mut out, &rows.decisions),
+                "records" => array(out, rows.records.iter().map(|(_, _, v)| v)),
+                "locals" => array(out, rows.locals.values()),
+                "receipts" => array(out, rows.receipts.values()),
+                "decisions" => array(out, &rows.decisions),
+                "checkpoints" => {
+                    let part = sections.entry(key).or_insert_with(|| {
+                        let rows = Arc::make_mut(checkpoints);
+                        fill(rows, &self.data.checkpoints, |key, value| Arc::from(format!("{}:{}", to_jcs(&json!(key)), to_jcs(value))));
+                        checkpoints_object(rows)
+                    });
+                    out(part.as_bytes());
+                }
                 _ => {
                     let part = sections.entry(key).or_insert_with(|| {
                         let value = match key {
@@ -178,17 +241,22 @@ impl Core {
                                 .iter()
                                 .map(|(id, p)| json!([to_hex(&id.0), p.iter().map(|r| to_hex(&r.0)).collect::<Vec<_>>()]))
                                 .collect::<Vec<_>>()),
-                            "checkpoints" => json!(self.data.checkpoints),
                             _ => unreachable!("fixed /1 member"),
                         };
                         Arc::from(to_jcs(&value))
                     });
-                    out.push_str(part);
+                    out(part.as_bytes());
                 }
             }
         }
-        out.push('}');
-        out
+        out(b"}");
+    }
+
+    #[cfg(any(test, feature = "audit-root-verify"))]
+    fn cached_preimage(&self) -> String {
+        let mut preimage = Vec::new();
+        self.write_preimage(&mut |piece| preimage.extend_from_slice(piece));
+        String::from_utf8(preimage).expect("pieces of a UTF-8 preimage")
     }
 
     pub(super) fn root(&self) -> Hash {
@@ -211,9 +279,9 @@ impl Core {
         } else if let Some(root) = cached {
             root
         } else {
-            let preimage = self.cached_preimage();
             #[cfg(any(test, feature = "audit-root-verify"))]
             {
+                let preimage = self.cached_preimage();
                 let expected = self.legacy_preimage();
                 if preimage != expected {
                     let actual: Value = serde_json::from_str(&preimage).expect("cached JSON");
@@ -222,7 +290,10 @@ impl Core {
                     panic!("audit /1 preimage diverged in {fields:?}; cached {} B, legacy {} B", preimage.len(), expected.len());
                 }
             }
-            let root = sha256_parts(&[b"R2R-AUDIT-STATE/1", preimage.as_bytes()]);
+            let root = sha256_stream(|out| {
+                out(b"R2R-AUDIT-STATE/1");
+                self.write_preimage(out);
+            });
             self.cache().hash = Some(root);
             root
         };

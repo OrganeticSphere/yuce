@@ -41,6 +41,27 @@ fn run(args: &[&str]) -> (i32, String) {
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// An entity no claim names is a mistake of the question, not an empty answer: it printed an empty cone and exited 0 before.
+#[test]
+fn cone_refuses_an_entity_no_claim_names() {
+    let dir = std::env::temp_dir().join(format!("sbgk_cli_cone_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let container = quickstart_container(&dir);
+    let cone = |entity: &str| Command::new(BIN).args(["cone", container.to_str().unwrap(), "--entity", entity, "--reps", "1"]).output().unwrap();
+    assert_eq!(cone("svc_auth").status.code(), Some(0));
+    let unknown = cone("no_such_entity");
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("no_such_entity"));
+    // the whole projection does not depend on the entity
+    let full = dir.join("full.json");
+    let whole = Command::new(BIN)
+        .args(["cone", container.to_str().unwrap(), "--entity", "no_such_entity", "--reps", "1", "--full-out", full.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(whole.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn quickstart_container(dir: &Path) -> PathBuf {
     let q = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/quickstart");
     let out = dir.join("graph.sbgk");

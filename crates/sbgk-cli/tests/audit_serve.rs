@@ -909,6 +909,141 @@ fn a_journal_whose_last_entry_is_damaged_is_not_a_clean_pass_and_recovery_report
     assert_eq!(std::fs::read(&wal).unwrap().len(), whole.len() - dropped as usize, "the journal resumes before the tail");
 }
 
+/// The warning about a cut tail comes right after the recovery, so a start that a later check stops does not lose it: the cut stays
+/// done, and the operator has only this message and the kept file.
+#[test]
+fn a_start_refused_after_the_recovery_still_says_that_the_tail_was_cut() {
+    let fx = Fixture::new("tornstart");
+    let server = Server::start(&fx.args(true));
+    let mut w1 = Client::connect(server.port, W1);
+    let t = w1.call("audit_acquire", json!({}));
+    assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let mut bytes = std::fs::read(&wal).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&wal, &bytes).unwrap();
+    let out = Command::new(BIN)
+        .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0", "--section-bytes", "4096"])
+        .args(fx.args(false))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("no complete entry") && said.contains("kept_in"), "{said}");
+    assert!(said.contains("the stored configuration differs"), "{said}");
+}
+
+/// A flag that needs no journal is settled before the journal is touched: a torn tail stays where it is.
+#[test]
+fn a_mistyped_flag_leaves_a_torn_journal_as_it_was() {
+    let fx = Fixture::new("tornflag");
+    let server = Server::start(&fx.args(true));
+    let mut w1 = Client::connect(server.port, W1);
+    let t = w1.call("audit_acquire", json!({}));
+    assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let mut bytes = std::fs::read(&wal).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&wal, &bytes).unwrap();
+    let missing = fx.p("no-such-zones.json");
+    let bad: Vec<Vec<&str>> = vec![
+        vec!["--zones", &missing],
+        vec!["--max-lines", "abc"],
+        vec!["--summary-records", "abc"],
+        vec!["--auto-rereads", "abc"],
+        vec!["--builder-requests", "abc"],
+        vec!["--backpressure-records", "abc"],
+        vec!["--backpressure-per-task", "abc"],
+        vec!["--backpressure-stall-ms", "abc"],
+        vec!["--ontology-unmapped-circles", "abc"],
+        vec!["--ontology-catchall-mappings", "abc"],
+        vec!["--ontology-catchall-reports", "abc"],
+        vec!["--term-max-words", "0"],
+        vec!["--candidate-match", "abc"],
+    ];
+    for flags in bad {
+        let out = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(&flags).args(fx.args(false)).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{flags:?}");
+        assert_eq!(std::fs::read(&wal).unwrap(), bytes, "{flags:?}: not cut, and nothing added");
+    }
+}
+
+/// A start that fails once the new run exists takes the new journal away: the same command can be given again.
+#[test]
+fn a_start_refused_after_the_run_was_created_leaves_no_journal() {
+    let fx = Fixture::new("newrefused");
+    let zones = fx.p("zones.json");
+    std::fs::write(&zones, json!([["no/such/report.md"]]).to_string()).unwrap();
+    let out =
+        Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0", "--zones", &zones]).args(fx.args(true)).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--zones"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!std::path::Path::new(&fx.p("run.wal")).exists(), "the refused start left its journal");
+    drop(Server::start(&fx.args(true)));
+}
+
+/// A resume that does not fit the stored settings is refused before anything is written: the version map of `--build-scope
+/// versions` was written first and the start was refused after it, so a refused start grew the journal.
+#[test]
+fn a_refused_resume_leaves_the_journal_byte_for_byte() {
+    let fx = Fixture::new("refusedresume");
+    let file = fx.p("subjects.json");
+    let mut subjects: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let list = if subjects.is_array() { &mut subjects } else { &mut subjects["subjects"] };
+    list.as_array_mut().unwrap().retain(|s| s["role"] != "builder");
+    std::fs::write(&file, subjects.to_string()).unwrap();
+    let mut first = fx.args(true);
+    first.extend(["--build-scope".to_string(), "none".to_string()]);
+    drop(Server::start(&first));
+    let wal = fx.p("run.wal");
+    let before = std::fs::read(&wal).unwrap();
+    for flags in [&["--build-scope", "versions"][..], &["--build-scope", "none", "--section-bytes", "4096"][..]] {
+        let out = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(flags).args(fx.args(false)).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{flags:?}");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.contains("the stored configuration differs"), "{flags:?}: {said}");
+        assert_eq!(std::fs::read(&wal).unwrap(), before, "{flags:?} wrote to the journal");
+    }
+}
+
+/// `--at-end` asks more of a receipt: its state must be the journal's last, so an entry written after it is a mismatch.
+#[test]
+fn at_end_refuses_a_journal_that_went_on_after_the_receipt() {
+    let fx = Fixture::new("atend");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    let t = w1.call("audit_acquire", json!({}));
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let before = own.call("audit_status", json!({}));
+    let quote = r["accepted"].as_array().expect("accepted records")[0].clone();
+    assert_eq!(own.call("audit_revoke", json!({"record": quote}))["status"], "REVOKED");
+    drop(server);
+    let receipt = fx.p("before.json");
+    std::fs::write(&receipt, json!({"audit_root": before["audit_root"], "engine_root": before["engine_root"]}).to_string()).unwrap();
+    let wal = fx.p("run.wal");
+    let verify = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-verify").args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (code, v) = verify(&["--wal", &wal, "--expect", &receipt]);
+    assert_eq!((code, v["status"].as_str(), v["expected"]["at_end"].as_bool()), (Some(0), Some("VERIFIED"), Some(false)), "{v}");
+    let (code, v) = verify(&["--wal", &wal, "--expect", &receipt, "--at-end"]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("MISMATCH")), "{v}");
+    assert_eq!(verify(&["--wal", &wal, "--at-end"]).0, Some(2), "it needs a receipt");
+
+    // the revocation damaged in its last byte: the receipt's state is now the last whole entry, and what follows it may be what is lost
+    let mut bytes = std::fs::read(&wal).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&wal, &bytes).unwrap();
+    let (code, v) = verify(&["--wal", &wal, "--expect", &receipt]);
+    assert_eq!((code, v["expected"]["at_end"].as_bool()), (Some(0), Some(false)), "{v}");
+    let (code, v) = verify(&["--wal", &wal, "--expect", &receipt, "--at-end"]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("MISMATCH")), "bytes after the state are not the end: {v}");
+}
+
 #[test]
 fn a_port_that_is_taken_leaves_no_journal_behind() {
     let fx = Fixture::new("port");

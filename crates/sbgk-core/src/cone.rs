@@ -99,6 +99,13 @@ pub fn project_minimal_cone(bytes: &[u8], query_entity: &str) -> String {
     }
 }
 
+/// Whether any claim of the container names the entity, under its id or an alias: an empty cone of an unknown name and of a known
+/// one with nothing supported look the same in the projection.
+pub fn entity_known(bytes: &[u8], query_entity: &str) -> Result<bool, crate::container::ContainerError> {
+    let v = ContainerView::parse(bytes)?;
+    Ok(!resolve_entity_records(&v, query_entity).1.is_empty())
+}
+
 pub fn minimal_cone_value(bytes: &[u8], query_entity: &str) -> Result<Value, crate::container::ContainerError> {
     let v = ContainerView::parse(bytes)?;
     let (entity, offs) = resolve_entity_records(&v, query_entity);

@@ -18,8 +18,7 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 * Only `verify` and `tamper` check a container first. `root`, `diff`, `cone`, `view`, `timetravel`, `node-table` and the `dump-*`
   commands read it as it is and can exit 0 on a damaged one: on a file you do not trust, run `verify` first and stop if it exits
-  non-zero. `cone` on an entity the
-  graph does not hold returns an empty cone, not an error.
+  non-zero.
 
 ## What the journal proves, and what it does not
 
@@ -35,8 +34,14 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * Check a stopped journal: a live server's lock blocks reading on Windows (exit 2), and elsewhere a read in the middle of a write
   can report a torn tail that is not there.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
-  `at_end` in the report says whether the state is the journal's end.
+  `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
 * `audit_close` is not journaled: a server restarted on the same journal is open again.
+* **What a withdrawal reaches.** In the journal, no claim stays grounded on a withdrawn quote: that holds by construction. The
+  text an agent writes is another matter: a later answer can repeat withdrawn content in other words, and how often it does is
+  measured, not prevented.
+* **`CURRENT_UNCERTAIN` needs one claim on both dates.** In the default profile the mark falls on a claim that rested on an earlier
+  and a later report, and on the next summary. A reader's claim on the earlier quote alone stays `LATEST_KNOWN`, and a summary written
+  as one claim per quote gets no mark. With accepted `supersedes` links, off by default, the earlier claim itself is marked.
 * A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
   `engine_root`, `wal_head`) where the journal's writer cannot change it, such as a protected commit or a CI artifact, and
   check the journal against it with `sbgk audit-verify --expect`. There is no external witness service in 0.1.
@@ -52,9 +57,10 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Size
 
-* Up to 8 agents at once and runs of a few thousand records are recommended for 0.1. On a journal of quotes alone one commit
-  takes about 41 ms (p50) at 10,000 records and reopening the journal 13 s, both growing with the journal; the journals of real
-  runs reopen more slowly, 14 to 19 s at about 3,000 records. More than 16 agents add little throughput
+* Up to 8 agents at once and runs of a few thousand records are recommended for 0.1. On a journal of quotes and claims alone one
+  commit takes about 25 ms (p50) at 10,000 records and reopening the journal about 2 s; a real run's journal takes as long at about
+  3,000 records, with more entries per record. The time of a replay grows close to the square of the journal's length, as the
+  whole state is hashed at every entry. More than 16 agents add little throughput
   ([BENCHMARKS.md](BENCHMARKS.md), section 4).
 * One process, one writer. There is no compaction of the journal, no rotation of tokens and no format migration in 0.1.
 * The connection limit is shared: connections that send nothing hold a place until the 5 s admission timeout, and there is no
@@ -70,7 +76,7 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Not in 0.1
 
-* A Python client library (`pip install yuce`) is planned for 0.1.4; until then agents talk to the server over MCP JSON-RPC
+* A Python client library (`pip install yuce`) is planned for 0.1.5; until then agents talk to the server over MCP JSON-RPC
   or through `sbgk mcp-bridge`.
 * Settings as a file and a page to edit them, and agents of any model joining and leaving with their own profile, are planned
   for 0.2.
