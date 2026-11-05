@@ -489,6 +489,10 @@ class CodexModel:
         self.config = {"model": model, "via": "codex exec (one session per task)", "reasoning_effort": effort, "sandbox": "read-only",
                        "cost": "subscription: unknown dollars per call"}
 
+    def longest_s(self, timeout_s: float | None = None) -> float:
+        """The longest life of one call: one session, no retries inside."""
+        return self.timeout_s if timeout_s is None else timeout_s
+
     def complete(self, prompt: str) -> tuple[str, dict, float | None]:
         self.workdir.mkdir(parents=True, exist_ok=True)
         exe = shutil.which("codex") or "codex"
@@ -700,6 +704,10 @@ class AgyModel:
                        "tool_filter": "not exposed by installed agy --help; plan mode retained",
                        "failure_capture_chars": 64_000}
 
+    def longest_s(self, timeout_s: float | None = None) -> float:
+        """The longest life of one call: one session, no hidden retries."""
+        return self.timeout_s if timeout_s is None else timeout_s
+
     @property
     def model_family(self):
         return "agy:"+re.sub(r"-(low|medium|high)$","",self.name)
@@ -750,6 +758,12 @@ def make_model(name: str, effort: str = "medium", *, timeout_s: float | None = N
     if name.startswith("codex:") or name.startswith("gpt-"):
         return CodexModel(name.removeprefix("codex:"), effort)
     raise ValueError(f"unknown model {name!r}: use an alias, agy:<id> or codex:<id>")
+
+
+def priced_by_the_brake(models: list) -> bool:
+    """Whether the money brake has something to count: a model with a price per call that it bills. A subscription seat beside one
+    reserves and settles nothing, as a subscription builder beside a paid swarm does."""
+    return any(hasattr(m, "estimate") and getattr(m, "billed", True) for m in models)
 
 
 class Budget:

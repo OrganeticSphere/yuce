@@ -143,6 +143,23 @@ class StepTimeout(unittest.TestCase):
             vars(P).update(saved)
             vars(E).update(saved_executor)
 
+    def test_a_team_of_several_makers_can_run_under_temporal(self):
+        # the side on Temporal could not start with a Codex or an Antigravity seat: neither declared its longest call
+        from sbgk_bench import pilot_ac as P
+
+        codex, agy = P.CodexModel("gpt-x", "medium", timeout_s=900.0), P.AgyModel("m", timeout_s=240.0)
+        self.assertEqual(P.call_life_s([codex], 0.1), 900.0)
+        self.assertEqual(P.call_life_s([agy], 0.1), 240.0)
+        self.assertEqual(P.call_life_s([codex, agy], 1000.0), 1000.0)
+
+    def test_the_money_brake_counts_the_paid_seats_of_a_mixed_team(self):
+        from sbgk_bench import pilot_ac as P
+
+        paid = P.DeepSeekModel.__new__(P.DeepSeekModel)
+        codex, agy = P.CodexModel("gpt-x"), P.AgyModel("m")
+        self.assertTrue(P.priced_by_the_brake([paid, codex, agy]))
+        self.assertFalse(P.priced_by_the_brake([codex, agy]))
+
     def test_each_adapter_counts_its_own_pauses(self):
         # Codex review of c24763f, EXEC-03: the Gemini CLI pauses 4, 8, ... s between attempts, Claude and DeepSeek 2, 4, ... s
         # (the Gemini CLI is the closed layer's: an adapter with its pauses stands for it here)

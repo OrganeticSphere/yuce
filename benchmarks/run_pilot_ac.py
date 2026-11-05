@@ -1017,7 +1017,7 @@ def main() -> None:
             P.executors.STEP_TIMEOUT_S = phases * (a.phase_timeout_s + P.step_overrun_s(priced, a.answer_timeout_s, a.agy_timeout_s))
         except ValueError as e:
             sys.exit(f"--executor temporal bounds each step by the longest life of a call: {e}")
-    if any(isinstance(m, P.AgyModel) for m in priced) and budget is not None:
+    if any(isinstance(m, P.AgyModel) for m in priced) and budget is not None and not P.priced_by_the_brake(priced):
         sys.exit("agy has no monetary price: omit --budget-usd and use --max-calls")
     try:
         with closed.model_session(a.model) if closed is not None else contextlib.nullcontext():

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.5 (2026-11-05)
+
+A fix of the runner for a team of several makers, found while preparing the run of `benchmarks/PREREGISTRATION_0.1.5.md`. The kernel did
+not change: its code is that of 0.1.4.
+
+* **The side on Temporal starts with a Codex or an Antigravity seat.** Neither declared its longest call, which bounds a Temporal step,
+  so that side stopped at its start.
+* **The money brake runs beside a seat without a price per call.** With an Antigravity seat the runner refused the brake even when other
+  seats were paid. It now counts the paid seats, as it already did beside a Codex seat. A team with no paid seat is refused as before.
+* **`benchmarks/PREREGISTRATION_0.1.5.md`** replaces the pre-registration of 0.1.4 for the run, which had not started: four readers of four
+  makers, and what else changed is listed in the file.
+
 ## 0.1.4 (2026-11-05)
 
 Answers to the outside reviews of 0.1.3: a faster check of a journal, the campaign of the limits in the open, and the runner ready
