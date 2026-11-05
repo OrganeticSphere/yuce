@@ -2,8 +2,12 @@
 
 ## 0.1.5 (2026-11-05)
 
-A fix of the runner for a team of several makers, found while preparing the run of `benchmarks/PREREGISTRATION_0.1.5.md`. The kernel did
-not change: its code is that of 0.1.4.
+The Python client, and a fix of the runner for a team of several makers, found while preparing the run of
+`benchmarks/PREREGISTRATION_0.1.5.md`. The kernel did not change: its code is that of 0.1.4.
+
+* **A Python client of the audit server** in [clients/python](clients/python): one connection per agent, the server's tools as methods,
+  standard library only. A refusal of the kernel is an ordinary answer; an exception means the call itself failed. It installs from the
+  repository or the wheel of the release, and it is not on PyPI.
 
 * **The side on Temporal starts with a Codex or an Antigravity seat.** Neither declared its longest call, which bounds a Temporal step,
   so that side stopped at its start.

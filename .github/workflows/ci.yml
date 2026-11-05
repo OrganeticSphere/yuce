@@ -53,6 +53,9 @@ jobs:
       - name: Runner logic (offline unit tests; no server, no model calls)
         run: python -m unittest discover -s benchmarks -p "test_*.py"
 
+      - name: Python client
+        run: python -m unittest discover -s clients/python/tests
+
       - name: EXP-10 self-test (MCP server, leases, guard; no model calls)
         run: python benchmarks/run_exp10_mcp_swarm.py --selftest --skip-build
 

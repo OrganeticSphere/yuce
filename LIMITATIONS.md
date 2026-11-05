@@ -76,8 +76,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 ## Not in 0.1
 
-* A Python client library (`pip install yuce`) is planned for 0.1.6; until then agents talk to the server over MCP JSON-RPC
-  or through `sbgk mcp-bridge`.
+* The Python client ([clients/python](clients/python)) is a thin client of the server's tools, with no model or loop of its own. It
+  installs from the repository or from the wheel of a release; it is not on PyPI.
 * Settings as a file and a page to edit them, and agents of any model joining and leaving with their own profile, are planned
   for 0.2.
 * TLS: the servers listen on loopback by default and have no TLS. See [SECURITY.md](SECURITY.md).

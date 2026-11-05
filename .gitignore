@@ -11,3 +11,5 @@ SBGK_EXPERIMENT_REPORT_RU.quick.md
 *_RU.*.md
 benchmarks/sbgk_bench/*_ru.py
 standalone_byte_graph_kernel_prompt.md
+clients/python/build/
+clients/python/src/*.egg-info/
