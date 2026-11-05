@@ -130,7 +130,8 @@ All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting
 ## Three ways to use it
 
 * **On its own.** Run `sbgk audit-serve` on your corpus (a manifest of source files pinned by commit and SHA-256) and let
-  your agents call its MCP tools, each with its own token. See [An audit server on the open corpus](#an-audit-server-on-the-open-corpus).
+  your agents call its MCP tools, each with its own token, from any language or through the
+  [Python client](clients/python). See [An audit server on the open corpus](#an-audit-server-on-the-open-corpus).
 * **With a team you run.** The benchmark runner (`benchmarks/run_pilot_ac.py`) drives a team of readers and a checker
   through the kernel on DeepSeek, on Claude through Claude Code, or on a stub model that makes no calls, and runs the same
   team without the kernel for comparison. `python benchmarks/run_pilot_ac.py --help` lists its options.
