@@ -13,6 +13,9 @@ The Python client, and a fix of the runner for a team of several makers, found w
   so that side stopped at its start.
 * **The money brake runs beside a seat without a price per call.** With an Antigravity seat the runner refused the brake even when other
   seats were paid. It now counts the paid seats, as it already did beside a Codex seat. A team with no paid seat is refused as before.
+* **`benchmarks/revision_outcomes.py` counts what it says.** A quote that partly overlaps the withdrawn text is touched, found in the page's
+  bytes, and a reader's stored quotes come from the journal, apart from its other records.
+* **`benchmarks/run_limits.py` fails a campaign whose journal does not verify.** It marked it complete and exited 0.
 * **`benchmarks/PREREGISTRATION_0.1.5.md`** replaces the pre-registration of 0.1.4 for the run, which had not started: four readers of four
   makers, and what else changed is listed in the file.
 

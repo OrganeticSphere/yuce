@@ -30,7 +30,8 @@ kernel, and most of their calls after a withdrawal went to doing those again. Th
 
 * The GPT seat is named: GPT-5.6 Luna. Gemini Flash is a fourth reader, no longer the fallback of that seat, and there is no fallback: if a seat's limits end during the run, the run says so, and its failed calls stay visible in it.
 * The runner of `v0.1.4` could not start the side on Temporal with a Codex or an Antigravity seat, and refused the money brake beside an Antigravity seat. Both are fixed in this tag; nothing else in the runner changed.
-* A short check with real models on two pages and all three sides found those defects before this tag. Its data is not part of the run and is not used.
+* `benchmarks/revision_outcomes.py` now finds a quote that partly overlaps the withdrawn text, which outcome 3 would have counted as collateral, and counts a reader's stored quotes from the journal, as outcome 5 asks, apart from its other records.
+* A short check with real models on two pages and all three sides found the defects of the runner before this tag. Its data is not part of the run and is not used.
 
 ## Primary outcomes
 
