@@ -7,7 +7,7 @@ The Python client, and a fix of the runner for a team of several makers, found w
 
 * **A Python client of the audit server** in [clients/python](clients/python): one connection per agent, the server's tools as methods,
   standard library only. A refusal of the kernel is an ordinary answer; an exception means the call itself failed. It installs from the
-  repository or the wheel of the release, and it is not on PyPI.
+  repository or the wheel of the release as `organetic-yuce`, and it is not on PyPI, where the name `yuce` belongs to an unrelated project.
 
 * **The side on Temporal starts with a Codex or an Antigravity seat.** Neither declared its longest call, which bounds a Temporal step,
   so that side stopped at its start.

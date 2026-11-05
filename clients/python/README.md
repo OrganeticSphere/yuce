@@ -14,7 +14,10 @@ From a clone of the repository:
 pip install ./clients/python
 ```
 
-Or from the wheel attached to a [release](https://github.com/OrganeticSphere/yuce/releases). The package is not on PyPI.
+Or from the wheel attached to a [release](https://github.com/OrganeticSphere/yuce/releases). The distribution is `organetic-yuce`, and you
+import it as `yuce`.
+
+It is not on PyPI yet. Do not run `pip install yuce`: that name belongs to an unrelated project.
 
 ## A reader
 
