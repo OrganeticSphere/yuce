@@ -54,6 +54,35 @@ class Outcomes(unittest.TestCase):
         self.assertEqual((row["model"], row["lines_sent"], row["records_stored"], row["lines_refused"]), ("m1", 5, 3, 2))
         self.assertEqual((row["quotes_cut_mid_clause"], row["quotes_refused_otherwise"]), (1, 1))
 
+    def test_a_quote_that_partly_overlaps_the_withdrawn_text_is_touched(self):
+        page = "Alpha. Beta. Gamma."
+        withdrawn = {"report": PAGE, "quote": "Alpha. Beta."}
+        self.assertTrue(R.touched((PAGE, "Beta. Gamma."), withdrawn, page))
+        self.assertFalse(R.touched((PAGE, "Gamma."), withdrawn, page))
+        self.assertFalse(R.touched(("other.md", "Beta. Gamma."), withdrawn, page))
+        self.assertFalse(R.touched((PAGE, "Beta. Gamma."), withdrawn), "without the page only containment is seen")
+
+    def test_the_counter_reads_the_page_of_the_run_and_says_when_it_has_none(self):
+        with tempfile.TemporaryDirectory(prefix="revision-") as tmp:
+            folder = self.run_folder(tmp)
+            self.assertFalse(R.outcomes(folder)[0]["page_found"])
+            (folder / "inputs" / "repo" / "docs").mkdir(parents=True)
+            (folder / "inputs" / "repo" / PAGE).write_bytes("The withdrawn sentence. Next.".encode())
+            self.assertEqual(R.page_of(folder, PAGE), "The withdrawn sentence. Next.")
+            self.assertTrue(R.outcomes(folder)[0]["page_found"])
+
+    def test_stored_quotes_come_from_the_journal_and_leave_out_claims_and_refused_lines(self):
+        with tempfile.TemporaryDirectory(prefix="revision-") as tmp:
+            folder = self.run_folder(tmp)
+            self.assertIsNone(R.quotes_stored(folder))
+            (folder / "arm_c").mkdir()
+            lines = [{"kind": "observe"}, {"kind": "claim"}, {"kind": "observe"}]
+            frames = [{"payload": {"format": "genesis"}},
+                      {"payload": {"actor": "w1", "command": {"kind": "submit", "lines": lines}, "outcome": {"result": {"accepted": ["a", "b"]}}}},
+                      {"payload": {"actor": "kernel", "command": {"kind": "batch"}, "outcome": {"result": {}}}}]
+            (folder / "arm_c" / "run.wal").write_text("\n".join(json.dumps(f) for f in frames) + "\n", encoding="utf-8")
+            self.assertEqual(R.quotes_stored(folder), {"w1": 1})
+
     def test_a_quote_is_touched_when_it_overlaps_the_withdrawn_text_in_that_page(self):
         withdrawn = {"report": PAGE, "quote": "The withdrawn sentence."}
         self.assertTrue(R.touched((PAGE, "withdrawn sentence"), withdrawn))

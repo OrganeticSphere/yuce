@@ -342,6 +342,10 @@ def verify_time(binary: pathlib.Path, wal: pathlib.Path) -> dict:
     return {"journal": wal.name, "bytes": wal.stat().st_size, "status": answer.get("status"), "exit": done.returncode, "elapsed_s": elapsed}
 
 
+def refused_journals(rows: list[dict]) -> list[str]:
+    return [row["journal"] for row in rows if row["exit"] != 0]
+
+
 def find(given: str | None, *relative: str) -> pathlib.Path:
     if given:
         return pathlib.Path(given)
@@ -392,6 +396,9 @@ def main() -> int:
                 raise RuntimeError("the cells did not start from the same records")
         for wal in a.journals:
             result["journals"].append(verify_time(binary, wal))
+        refused = refused_journals(result["journals"])
+        if refused:
+            raise RuntimeError(f"journals that did not verify: {', '.join(refused)}")
         result["status"] = "COMPLETE"
     finally:
         write(a.out / "summary.json", result)

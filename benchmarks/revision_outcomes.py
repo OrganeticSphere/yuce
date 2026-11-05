@@ -8,9 +8,10 @@ For each side of a run folder and each withdrawal:
   quotes          the quotes the answers of the stage before cited, split into those the withdrawal touched and the others;
                   of the others, how many the answers after it no longer cite: the collateral
 
-and, on the kernel's side, for each reader and its model, the lines it sent and the quotes refused by reason.
+and, on the kernel's side, for each reader and its model, the lines it sent, the quotes stored and the quotes refused by reason.
 
-A quote is touched when it is in the withdrawn page and overlaps the withdrawn text. A call is on the withdrawn page when its context
+A quote is touched when it is in the withdrawn page and overlaps the withdrawn text, partly or wholly: both are found in the page's bytes
+under the run's inputs, and a side whose page is missing there sees only containment, which `page_found` says. A call is on the withdrawn page when its context
 names that page, is assembly when it is a summary or a reduction, and is on other pages otherwise. A quote no longer cited is a fact
 about the answer, not a loss of truth: an answer may drop a quote and say the same. What it counts is what a revision did not keep.
 
@@ -37,9 +38,26 @@ def cited(answers: dict) -> set[tuple[str, str]]:
     return {(q["report"], q["quote"]) for answer in answers.values() for claim in answer.get("claims") or [] for q in claim.get("quotes") or []}
 
 
-def touched(quote: tuple[str, str], withdrawn: dict) -> bool:
+def spans(text: str, page: str) -> list[tuple[int, int]]:
+    found, at = [], page.find(text) if text else -1
+    while at >= 0:
+        found.append((at, at + len(text)))
+        at = page.find(text, at + 1)
+    return found
+
+
+def touched(quote: tuple[str, str], withdrawn: dict, page: str | None = None) -> bool:
     report, text = quote
-    return report == withdrawn["report"] and (text in withdrawn["quote"] or withdrawn["quote"] in text)
+    if report != withdrawn["report"]:
+        return False
+    if text in withdrawn["quote"] or withdrawn["quote"] in text:
+        return True
+    return any(a < d and c < b for a, b in spans(text, page or "") for c, d in spans(withdrawn["quote"], page or ""))
+
+
+def page_of(folder: pathlib.Path, report: str) -> str | None:
+    path = folder / "inputs" / "repo" / report
+    return path.read_bytes().decode("utf-8") if path.is_file() else None
 
 
 def where(call: dict, context: dict, page: str, doc_ids: set[str]) -> str:
@@ -81,23 +99,42 @@ def outcomes(folder: pathlib.Path) -> list[dict]:
                     sent += call.get("prompt_bytes") or 0
                     received += len((call.get("text") or "").encode("utf-8"))
             had, has = cited(before), cited(after)
-            hit = {q for q in had if touched(q, step)}
+            page = page_of(folder, step["report"])
+            hit = {q for q in had if touched(q, step, page)}
             rows.append({"run": folder.name, "side": arm, "step": step["step"], "calls": sum(spent.values()), **spent, "tokens_by_model": dict(sorted(by_model.items())), "bytes_sent": sent, "bytes_received": received,
-                         "quotes_before": len(had),
+                         "page_found": page is not None, "quotes_before": len(had),
                          "quotes_touched": len(hit), "quotes_untouched_not_cited_after": len((had - hit) - has), "touched_still_cited": len(hit & has)})
     return rows
 
 
+def quotes_stored(folder: pathlib.Path) -> dict[str, int] | None:
+    """The quotes each author got stored, from the journal: the accepted records of a submission are the first of its lines."""
+    journal = folder / "arm_c" / "run.wal"
+    if not journal.is_file():
+        return None
+    stored: dict[str, int] = {}
+    for frame in rows_of(journal):
+        entry = frame.get("payload") or {}
+        command = entry.get("command") or {}
+        if command.get("kind") == "submit":
+            accepted = ((entry.get("outcome") or {}).get("result") or {}).get("accepted") or []
+            quotes = sum(line.get("kind") == "observe" for line in (command.get("lines") or [])[:len(accepted)])
+            stored[entry["actor"]] = stored.get(entry["actor"], 0) + quotes
+    return stored
+
+
 def by_reader(folder: pathlib.Path) -> list[dict]:
-    """On the kernel's side, for each reader and its model: lines sent, records stored, lines and quotes refused, from the run's replies."""
+    """On the kernel's side, for each reader and its model: lines sent, records and quotes stored, lines and quotes refused."""
     summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
+    quotes = quotes_stored(folder)
     models = {row["agent"]: row.get("model") for row in summary.get("team") or []}
     rows: dict[str, dict] = {}
     for reply in rows_of(folder / "replies.jsonl"):
         if reply.get("arm") != "C":
             continue
         agent = str(reply.get("agent"))
-        row = rows.setdefault(agent, {"run": folder.name, "reader": agent, "model": models.get(agent), "lines_sent": 0, "records_stored": 0, "lines_refused": 0,
+        row = rows.setdefault(agent, {"run": folder.name, "reader": agent, "model": models.get(agent), "lines_sent": 0, "records_stored": 0,
+                                      "quotes_stored": None if quotes is None else quotes.get(agent, 0), "lines_refused": 0,
                                       "quotes_cut_mid_clause": 0, "quotes_refused_otherwise": 0})
         row["lines_sent"] += reply.get("lines_submitted") or 0
         row["records_stored"] += reply.get("accepted") or 0
