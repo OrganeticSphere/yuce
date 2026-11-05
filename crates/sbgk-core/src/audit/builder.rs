@@ -30,7 +30,7 @@ pub const LINK_CRITERIA: &str = "qualifies needs a quote that one record limits,
     needs a quote that one holds only because the other does; supersedes runs from a newer conclusion to the older conclusion it \
     replaces, never to its own quote; same_as needs the same meaning about the same subject; contradicts needs that both cannot hold. \
     Two facts stated side by side (in one report, section or episode) are no relation.";
-/// The address layer (owner and Gemini, 01.11.2026; offline the same rule put both sides of 14 to 15 of 22 read version changes under
+/// The address layer (offline the same rule put both sides of 14 to 15 of 22 read version changes under
 /// one function, where 5 shared a concept). The example comes from an unrelated domain, so that no term of a corpus is suggested.
 /// The function is optional (Fable 5.1's consultation of 01.11: a forced choice breeds catch-all functions).
 pub const FUNCTION_RULE: &str = "FUNCTIONS: in this run a propose_concept also names \"function\":\"<name>\", the broad part of the \
@@ -52,7 +52,7 @@ pub struct BuilderConfig {
     pub max_neighbors: usize,
     pub max_ops: usize,
     /// Links (`link`, `mark_duplicate`, `flag_conflict`) a card may add: each one costs a verification task of the swarm. 0 turns
-    /// links off (the build scope `concepts`, the owner's control run of 2026-10-30): record cards only name concepts and map
+    /// links off (the build scope `concepts`, the control runs): record cards only name concepts and map
     /// terms, there are no pair cards, and a link operation is refused.
     pub max_links: usize,
     /// Keep each record card within one author's consecutive run (dynamic roles only).
@@ -83,7 +83,7 @@ pub struct Card {
     pub pair: Option<Value>,
     pub ontology: Option<Value>,
     pub review: Option<String>,
-    /// With the address layer on (owner and Gemini, 01.11.2026): the known functions, each with examples of its concepts. Every
+    /// With the address layer on: the known functions, each with examples of its concepts. Every
     /// propose_concept of this card then names the function its concept belongs to.
     pub functions: Option<Vec<(String, usize, Vec<String>)>>,
 }
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn with_links_off_a_card_only_names_concepts_and_a_link_is_refused() {
-        // the build scope `concepts` (the owner's control run of 2026-10-30): `max_links` 0
+        // the build scope `concepts` (the control runs): `max_links` 0
         let (mut s, ids) = store_with_records();
         let mut b = Builder::new(BuilderConfig { max_links: 0, ..BuilderConfig::default() });
         let card = b.next_card(&s).unwrap();

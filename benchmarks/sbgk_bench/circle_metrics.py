@@ -49,22 +49,17 @@ def builder_empty_counts(events: list[dict], circle: int, phase: str = "BUILD") 
 def anomaly_counts(events, circle):
     relevant=[e for e in events if e.get("circle")==circle and e.get("circle_phase")=="BUILD"]
     cards={e.get("card") for e in relevant if e.get("ontology_anomaly") and e.get("card")}
-    attempts=[e for e in relevant if e.get("kind")=="ANOMALY_BUILD"]
-    cards.update(e["card"] for e in attempts if e.get("card"))
     proposals=[r for e in relevant if e.get("ontology_anomaly") for r in e.get("operation_decisions") or [] if r.get("op")=="revise_concept"]
     proposal_ids=set()
-    efforts={e.get("call_id"):e.get("effort") or "unknown" for e in attempts}
-    proposals_by_effort=collections.defaultdict(set)
     for event in relevant:
         if not event.get("ontology_anomaly"):continue
         for result in event.get("operation_results") or []:
             if result.get("op")=="revise_concept" and result.get("status")=="pending" and result.get("proposal"):
-                proposal_ids.add(result["proposal"]);proposals_by_effort[efforts.get(event.get("call_id"),"unknown")].add(result["proposal"])
+                proposal_ids.add(result["proposal"])
     return {"distinct_revision_proposals":len(proposal_ids),"revision_proposal_ids":sorted(proposal_ids),
-            "revision_proposals_by_effort":{effort:len(ids) for effort,ids in sorted(proposals_by_effort.items())},"distinct_hint_cards":len(cards),"model_attempts_by_effort":dict(collections.Counter(e.get("effort") or "unknown" for e in attempts)),
-            "distinct_cards_by_effort":{effort:len({e.get("card") for e in attempts if (e.get("effort") or "unknown")==effort}) for effort in sorted({e.get("effort") or "unknown" for e in attempts})},
+            "distinct_hint_cards":len(cards),
             "revise_submissions_by_decision":dict(collections.Counter(r.get("decision","unknown") for r in proposals)),
-            "unit":"distinct card IDs; efforts can overlap across repairs; revise submissions include retries, not unique proposals"}
+            "unit":"distinct card IDs; revise submissions include retries, not unique proposals"}
 
 
 def circle_metrics(wal: Path, events: list[dict], agent_models: dict[str,str] | None = None, *, frames=None) -> dict:
@@ -156,7 +151,7 @@ def circle_metrics(wal: Path, events: list[dict], agent_models: dict[str,str] | 
             "concepts_reused_definition":"new durable bindings of propose_concept to existing concepts",
             "time_definition":"wall-clock checkpoint boundaries; restart downtime included; backwards clock gives null",
             "idle_definition":"acquire RPC and poll backoff intervals intersected with durable phase boundaries; model execution excluded",
-            "empty_cards_definition":"Empty model answers are explicit [] on finished model card attempts; automatic no-model closes and operations supplied by Jev are separate. Assignments count leases, not unique card IDs.",
+            "empty_cards_definition":"Empty model answers are explicit [] on finished model card attempts; automatic no-model closes are separate. Assignments count leases, not unique card IDs.",
             "source_warnings":source_warnings,
             "final_builder_cards_by_model":builder_empty_counts(events,max((r["circle"] for r in rows),default=0),"FINAL"),
             "ontology_reviews":reviews,"rows":rows,"boundaries":boundaries}
@@ -186,7 +181,7 @@ def acceptance_svg(metrics:dict) -> str:
     return "\n".join(out)
 
 
-def matrix_markdown(metrics:dict)->str:
+def matrix_markdown(metrics:dict,row_lines=lambda row:[])->str:
     out=["# Cross-model measurements","",
          "Builder operations: accepted/refused by the kernel. Relation verdicts: accepted/rejected/unresolved.",
          "A multi-author operation appears in each author row. These counts are not semantic correctness.",""]
@@ -198,7 +193,7 @@ def matrix_markdown(metrics:dict)->str:
         for model,c in row.get("builder_cards_by_model",{}).items():
             out.append("| "+model+" | "+" | ".join(str(c.get(k,0)) for k in
                 ("assignments","finished_model_attempts","empty_model_answers","closed_without_operations","automatic_no_model_closes"))+" |")
-        out += ["", "Explicit [] counts model answers; a selector may still have supplied operations. Unknown older no-operation counts are retained in JSON.", ""]
+        out += ["", "Explicit [] counts model answers. Unknown older no-operation counts are retained in JSON.", ""]
         m=row["model_matrix"]
         for key,label,reviewer,counts in (
             ("builder_operations","Builder operations","executing_model",("accepted","refused","unknown")),
@@ -215,8 +210,5 @@ def matrix_markdown(metrics:dict)->str:
                     cells.append("/".join(str(sum(r.get(c,0) for r in records if r["author_model"]==author and r[reviewer]==col)) for c in counts))
                 out.append("| "+author+" | "+" | ".join(cells)+" |")
             out += [""]
-        out += ["### Jev agreement","","| Agent model | Same | Different | Unresolved | Not attempted |","|---|---:|---:|---:|---:|"]
-        for r in m["jev_agreement"]:
-            out += [f"| {r['agent_model']} | {r.get('same',0)} | {r.get('different',0)} | {r.get('unresolved',0)} | {r.get('not_attempted',0)} |"]
-        out += ["",f"Jev material-term coverage: {m['jev_coverage']['decided_terms']}/{m['jev_coverage']['material_terms']}.",""]
+        out += row_lines(row)
     return "\n".join(out)

@@ -219,7 +219,7 @@ fn legacy_schema_snapshot_has_no_new_fields_or_policy() {
 }
 
 #[test]
-fn pending_prevents_stale_selector_mappings_and_withdrawal_invalidates_it() {
+fn pending_prevents_stale_mappings_and_withdrawal_invalidates_it() {
     let mut f = Fixture::new();
     let p = f.proposal("retire", json!({}));
     let err = f.s.map_term("builder", &f.observe, "engine", &f.concept).unwrap_err();

@@ -1,4 +1,4 @@
-"""Step 0 of the consilium plan (owner's go, 2026-10-24), offline and model-free: audit the final answers of archived pilot runs
+"""Step 0 of the consilium plan, offline and model-free: audit the final answers of archived pilot runs
 against the verified links of their own graph.
 
 For every run directory (an archived PILOT_AC_LIVE10A* folder) and every phase and research question, with the final state of the

@@ -1,4 +1,4 @@
-"""The owner, 2026-10-23: a DeepSeek swarm with a Sonnet builder. The money brake bounds the paid swarm's calls only: a model it does
+"""A DeepSeek swarm with a Sonnet builder. The money brake bounds the paid swarm's calls only: a model it does
 not bill reserves and settles nothing, a billed one as before. In-process fakes only."""
 from __future__ import annotations
 

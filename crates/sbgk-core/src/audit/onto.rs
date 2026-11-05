@@ -381,7 +381,7 @@ impl AuditOntology {
         view
     }
 
-    /// Place a concept under a broad function of the system (owner and Gemini, 01.11.2026). The first placement stays: a later
+    /// Place a concept under a broad function of the system. The first placement stays: a later
     /// proposal of the same concept naming another function changes nothing and gets the standing one back. A placement is a new
     /// ontology revision, as any change of the state (claude-reviewer's observation 1 on 8dfff576).
     pub fn place(&mut self, id: &ConceptId, function: &str) -> KResult<String> {

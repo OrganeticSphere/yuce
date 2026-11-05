@@ -1,4 +1,4 @@
-"""Arm A as a Temporal-native team (the owner, 2026-10-30, on the LangGraph-native team: the same for Temporal before its run). The
+"""Arm A as a Temporal-native team (the same as the LangGraph-native team, for Temporal). The
 same agents, models, prompt templates and checks as the runner's team arm with --arm-a-answer map-reduce (the prompts actually sent
 differ where the orchestration does; every call keeps its context and prompt hash), built the way a Temporal application is built:
 

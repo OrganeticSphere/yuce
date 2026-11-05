@@ -493,7 +493,7 @@ fn answer_lease_has_900_seconds_while_read_build_keep_300_and_renewal_is_fixed()
     assert_eq!(d.renew(task, "w1", 901_000)["status"], "STALE_TASK");
 }
 
-/// Circles +1 (the owner, 2026-10-27): the swarm's independent graph builder, a fixed role outside the ring, refines every circle
+/// Circles +1: the swarm's independent graph builder, a fixed role outside the ring, refines every circle
 /// between the swarm's BUILD and the next reading.
 #[test]
 fn refiner_refines_each_circle_between_build_and_the_next_reading_and_survives_restart() {

@@ -1,4 +1,4 @@
-//! Reading zones and own references (run S1.2, the owner's agreement of 2026-10-25), on the durable store: it creates the links
+//! Reading zones and own references (run S1.2), on the durable store: it creates the links
 //! of relation lines and enforces the records a directive allows (MemStore does neither).
 use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, ResearchQuestion};
 use sbgk_core::audit::onto::AuditOntology;

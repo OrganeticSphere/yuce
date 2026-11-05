@@ -4,9 +4,10 @@ usage: python scripts/check_snapshot.py <snapshot dir> [--version 0.1.0]
 Checks: the license files, NOTICE and third-party list are present; the workspace version (Cargo.toml, parsed) and this
 repository's packages in Cargo.lock are the release version; no file holds Cyrillic text, a personal home path
 (C:\\Users\\<name>, /home/<name>, /Users/<name>), a token / key / password / secret field whose value is not one of the known
-placeholders, or a private key block; no runtime subjects file (agent tokens) is shipped; no file of the internal experiment
-history is shipped. It prints each problem (path and line, never the matched value) and exits 1 when there is one, 0
-otherwise. It is one control next to a secret scanner (gitleaks), not a replacement for it. Standard library only."""
+placeholders, a private key block, or a word of what stays out of a snapshot; no runtime subjects file (agent tokens) is shipped;
+no file of the internal experiment history is shipped. It prints each problem (path and line, never the matched value) and exits
+1 when there is one, 0 otherwise. It is one control next to a secret scanner (gitleaks), not a replacement for it. Standard library
+only."""
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ PLACEHOLDERS = [re.compile(p) for p in (
 )]
 PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+# the words that must not reach a snapshot are kept in a file outside it, given with --words (one word per line)
 TEXT = {".rs", ".py", ".md", ".toml", ".json", ".jsonl", ".yml", ".yaml", ".txt", ".html", ".mdx", ".lock", ".cfg", ".ini", ".sh",
         ".ps1", ".hbs", ".gitattributes", ".gitignore", ""}
 
@@ -40,8 +42,9 @@ def placeholder(value: str) -> bool:
     return any(p.fullmatch(value) for p in PLACEHOLDERS)
 
 
-def check(root: pathlib.Path, version: str) -> tuple[list[str], int, int]:
+def check(root: pathlib.Path, version: str, words: list[str] | None = None) -> tuple[list[str], int, int]:
     problems: list[str] = []
+    held = re.compile("|".join(re.escape(w) if w.isupper() else f"(?i:{re.escape(w)})" for w in words)) if words else None
     for rel in REQUIRED:
         if not (root / rel).is_file():
             problems.append(f"missing {rel}")
@@ -78,6 +81,8 @@ def check(root: pathlib.Path, version: str) -> tuple[list[str], int, int]:
                 problems.append(f"{rel}:{n}: a personal home path")
             if PRIVATE_KEY.search(line):
                 problems.append(f"{rel}:{n}: a private key block")
+            if held and held.search(line):
+                problems.append(f"{rel}:{n}: a word of what stays out of a snapshot")
             for m in SECRET_FIELD.finditer(line):
                 if not placeholder(m.group(2)):
                     problems.append(f"{rel}:{n}: a '{m.group(1)}' field with a value that is not a known placeholder")
@@ -88,9 +93,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("snapshot", type=pathlib.Path)
     ap.add_argument("--version", default="0.1.3")
+    ap.add_argument("--words", type=pathlib.Path, help="a file of words no snapshot file may hold, one per line, in any case; a word in capitals in exactly that case")
     a = ap.parse_args()
     root = a.snapshot.resolve()
-    problems, files, scanned = check(root, a.version)
+    words = [w.strip() for w in a.words.read_text(encoding="utf-8").splitlines() if w.strip()] if a.words else None
+    problems, files, scanned = check(root, a.version, words)
     for p in problems:
         print("  " + p)
     print(json.dumps({"snapshot": str(root), "files": files, "text_files_scanned": scanned, "problems": len(problems)}))

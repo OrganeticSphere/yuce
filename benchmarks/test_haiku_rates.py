@@ -1,4 +1,4 @@
-"""Claude Haiku 5.5 as the swarm in place of DeepSeek (the owner, 2026-10-24): the brake reserves a call at the model's own prices."""
+"""Claude Haiku 5.5 as the swarm in place of DeepSeek: the brake reserves a call at the model's own prices."""
 from __future__ import annotations
 
 import pathlib

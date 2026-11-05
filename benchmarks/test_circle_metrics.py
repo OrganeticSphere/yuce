@@ -41,28 +41,17 @@ class Metrics(unittest.TestCase):
         self.assertIsNone(row["build_s"])
 
 class Matrix(unittest.TestCase):
-    def test_partial_operations_keep_their_authors_and_jev_is_a_separate_executor(self):
+    def test_partial_operations_keep_their_authors_and_a_row_may_name_its_source(self):
         from sbgk_bench.agent_matrix import operation_decisions,matrices
         card={"records":[{"id":"@a","author":"w1"},{"id":"@b","author":"w2"}],"neighbors":[]}
         ops=[{"op":"link","from":"@a","to":"@b"},{"op":"map_term","record":"@b","term":"term","concept":"@c"}]
         reply={"status":"REPAIR_REQUIRED","accepted":1,"results":[{}],"refused":[{"index":0}]}
-        decisions=operation_decisions(card,ops,reply,["BUILDER","JEV"])
+        decisions=operation_decisions(card,ops,reply)
         self.assertEqual([r["decision"] for r in decisions],["refused","accepted"])
+        decisions[1]["source"]="Other"
         m=matrices([{"circle":1,"builder_model":"builder","operation_decisions":decisions}],{"w1":"A","w2":"B"},1)
         self.assertEqual(sum(r.get("refused",0) for r in m["builder_operations"]),2,"two endpoint authors are reported explicitly")
-        self.assertTrue(any(r["executing_model"]=="Jev" and r["author_model"]=="B" and r["accepted"]==1 for r in m["builder_operations"]))
-    def test_jev_same_different_unresolved_and_coverage_deduplicates_reissued_cards(self):
-        from sbgk_bench.agent_matrix import jev_comparison,matrices
-        card={"candidates":{"term":[{"id":"@c1","name":"one","aliases":["alias"]},{"id":"@c2","name":"two","aliases":[]}]}}
-        chosen=[{"op":"map_term","record":"@r","term":"term","concept":"@c1"}]
-        proposals=[{"op":"map_term","record":"@r","term":"term","concept":c} for c in ("alias","@c2","unknown")]
-        rows=jev_comparison(card,chosen,proposals)
-        self.assertEqual([r["agreement"] for r in rows],["same","different","unresolved"])
-        e={"circle":1,"outcome":"JEV_COVERAGE","card":"C1","material_keys":[["@r","term"]],"eligible_keys":[["@r","term"]],"selected_keys":[["@r","term"]]}
-        m=matrices([e,e,{"circle":1,"builder_model":"B","jev_comparison":rows}],{},1)
-        self.assertEqual(m["jev_coverage"]["material_terms"],1)
-        self.assertEqual(m["jev_coverage"]["share"],1)
-        self.assertEqual(m["jev_agreement"][0]["different"],1)
+        self.assertTrue(any(r["executing_model"]=="Other" and r["author_model"]=="B" and r["accepted"]==1 for r in m["builder_operations"]))
     def test_wholly_refused_operations_are_not_counted_as_accepted(self):
         from sbgk_bench.agent_matrix import operation_decisions
         ops=[{"op":"map_term","record":"@a"}]*2

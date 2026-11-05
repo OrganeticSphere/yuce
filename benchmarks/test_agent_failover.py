@@ -25,18 +25,18 @@ class Failover(unittest.TestCase):
   rpc=mock.Mock()
   with mock.patch.multiple(P,CIRCLES=False,AGENT_ATTEMPTS=None):self.assertFalse(P.report_agent_timeout(rpc,P.Call(call_id='x',arm='C',role='EXTEND',phase=1,prompt_chars=0,ok=False,error='AGY_TIMEOUT'),'T',P.Log(),agent='w',phase=1,context={}))
   rpc.call.assert_not_called()
- def test_standalone_same_card_has_distinct_attempt_and_lower_effort(self):
+ def test_standalone_same_card_has_distinct_attempt(self):
   seen=[];rpc=mock.Mock();rpc.call.side_effect=lambda tool,**kw: {'status':'CARD_RETRY'} if tool=='audit_builder_failure' else {'status':'CARD_DONE'}
   def complete(model,prompt):
    seen.append(model.name)
    if len(seen)==1:raise P.AgyCallError('AGY_STREAM_ERROR: stdin: BrokenPipeError',{}, {'stdout_prefix':'partial builder'})
    return '[]',{},None
-  log=P.Log();card={'card_id':'C1-2-unit','records':[{'author':'w1'}],'prompt':'make links'}
-  with mock.patch.multiple(P,CIRCLES=False,AGENT_ATTEMPTS=3,PAIRS_ONLY=False,WHOLE_READER=False,AGENT_RETRY_PAUSE_S=0),mock.patch.object(P.AgyModel,'complete',complete):
-   log.effort_policy.failure_ladder=True
+  card={'card_id':'C1-2-unit','records':[{'author':'w1'}],'prompt':'make links'}
+  with mock.patch.multiple(P,CIRCLES=False,AGENT_ATTEMPTS=3,PAIRS_ONLY=False,WHOLE_READER=False,AGENT_RETRY_PAUSE_S=0,RUN_HOOK=P.RunHook()),mock.patch.object(P.AgyModel,'complete',complete):
+   log=P.Log()
    self.assertIsNone(P.build_card(rpc,dict(card,agent_attempt=1),P.AgyModel('flash-medium'),log,1,threading.Event()))
    self.assertTrue(P.build_card(rpc,dict(card,agent_attempt=2),P.AgyModel('flash-medium'),log,1,threading.Event()))
-  self.assertEqual(seen,['flash-medium','flash-low']);self.assertEqual(len({c.call_id for c in log.calls}),2);self.assertIn('-agent2',log.calls[-1].call_id)
+  self.assertEqual(seen,['flash-medium','flash-medium']);self.assertEqual(len({c.call_id for c in log.calls}),2);self.assertIn('-agent2',log.calls[-1].call_id)
   self.assertEqual(log.calls[0].diagnostics['stdout_prefix'],'partial builder');self.assertIsNone(log.stopped)
 
  def test_standalone_physical_id_is_fresh_even_after_client_restart_before_failure_ack(self):
@@ -120,7 +120,7 @@ class MapReduce(unittest.TestCase):
     if 'ANSWER_MAP:' in p and '=== REPORT a.md' in p:raise TimeoutError('simulated timeout')
     return super().complete(p)
   a,log,sink=self.invoke(Model());self.assertIsNone(log.stopped);self.assertFalse(a['complete']);self.assertEqual(a['partial_reports_missing'],['a.md']);self.assertEqual([r['status'] for r in sink],['INCOMPLETE','COMPLETE'])
- def test_repair_and_retry_use_same_answer_model_effort_and_deadline(self):
+ def test_repair_and_retry_use_same_answer_model_and_deadline(self):
   seen=[]
   def complete(m,p):seen.append((m.name,m.timeout_s));return P.StubModel().complete(p)
   with mock.patch.object(P.AgyModel,'complete',complete),mock.patch.object(P,'ANSWER_TIMEOUT_S',900):

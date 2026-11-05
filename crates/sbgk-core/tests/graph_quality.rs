@@ -1103,7 +1103,7 @@ fn function_pairs(q: Value, states_change: bool) -> (Vec<Value>, RecordId, Recor
 }
 #[test]
 fn a_claim_meets_the_records_of_change_of_its_function_only_when_asked() {
-    // the address layer (owner and Gemini, 01.11.2026): a later detail meets the earlier record of change of its whole
+    // the address layer: a later detail meets the earlier record of change of its whole
     let on = json!({"evolution_cards":true,"evolution_pairing":"lexical","evolution_pairs_per_card":4,"concept_functions":true});
     let (rows, old, _) = function_pairs(on.clone(), true);
     let pair = rows.iter().find(|r| quality::evolution::id(&r["old"]) == Some(old)).unwrap_or_else(|| panic!("paired through the function: {rows:?}"));

@@ -53,7 +53,7 @@ class FakeRpc:
 
 
 class D05ControlFlow(unittest.TestCase):
-    def flow(self, role, outputs, *, replies=None, kind="EXTEND", max_calls=20, decided=None):
+    def flow(self, role, outputs, *, replies=None, kind="EXTEND", max_calls=20):
         stop, prompts, emitted = threading.Event(), [], []
         rpc = FakeRpc(role, stop, replies, kind)
         kernel = SimpleNamespace(connect=lambda agent: rpc)
@@ -62,8 +62,7 @@ class D05ControlFlow(unittest.TestCase):
 
         def scripted(unused, prompt, **fields):
             prompts.append(prompt)
-            text = "{}" if fields["role"] == "JEV" else next(remaining)
-            return P.Call(**fields, prompt_chars=len(prompt), text=text, model="in-process-script")
+            return P.Call(**fields, prompt_chars=len(prompt), text=next(remaining), model="in-process-script")
 
         forbidden = AssertionError("external dependency forbidden in D05 control-flow tests")
         with mock.patch.object(P, "call_model", side_effect=scripted), \
@@ -72,13 +71,10 @@ class D05ControlFlow(unittest.TestCase):
                 mock.patch.object(P.subprocess, "Popen", side_effect=forbidden), \
                 mock.patch.object(P.subprocess, "run", side_effect=forbidden):
             model = SimpleNamespace(name="script-only")
-            # a term selector with a fixed question and decision (the open hook of build_card; Jev is the closed layer's)
-            selector = SimpleNamespace(name="script-only", request=lambda card: ({"synthetic": True}, {0: ("@o", "topic")}),
-                                       ops=lambda answers, index, card: decided or [])
             if role == "worker":
                 P.c_worker(kernel, "w1", model, log, [1], stop)
             else:
-                P.c_builder(kernel, model, log, [1], stop, selector if decided is not None else None)
+                P.c_builder(kernel, model, log, [1], stop)
         self.assertEqual(rpc.closed, 1)
         self.assertFalse(log.in_flight)
         self.assertEqual(len([k for k, _ in emitted if k == "call"]), len(log.calls))
@@ -172,31 +168,6 @@ class D05ControlFlow(unittest.TestCase):
                 self.assertIsNone(log.stopped)
                 self.assertTrue(log.events[-1]["abandoned"])
                 self.assertFalse(log.events[-1]["parse_failure"])
-
-    def test_jev_merge_and_combined_previous_output_survive_a_semantic_repair(self):
-        own = {"op": "propose_concept", "name": "Topic"}
-        decided = [OP]
-        repaired = {"op": "map_term", "record": "@o", "term": "topic", "concept": "Other"}
-        refusal = {"status": "REPAIR_REQUIRED", "accepted": 1, "refused": [{"index": 1, "error": {"code": "BAD_FIELD"}}]}
-        rpc, log, prompts = self.flow("builder", [json.dumps(own), json.dumps(repaired)], replies=[refusal], decided=decided)
-        self.assertEqual(rpc.submissions, [[own, OP], [repaired]])
-        self.assertIn(json.dumps(own) + "\n" + json.dumps(OP), prompts[-1])
-        self.assertIsNone(log.stopped)
-
-
-    def test_jev_decisions_join_the_first_valid_answer_after_local_repair(self):
-        own = {"op": "propose_concept", "name": "Topic"}
-        conflict = dict(OP, concept="Wrong")
-        response = json.dumps(own) + "\n" + json.dumps(conflict)
-        rpc, log, _ = self.flow("builder", ['{"broken":', response], decided=[OP])
-        self.assertEqual(rpc.submissions, [[own, OP]])
-        self.assertEqual(log.events[-1]["jev_overridden"], 1)
-        self.assertIsNone(log.stopped)
-
-    def test_bad_builder_output_does_not_submit_even_preselected_jev_ops(self):
-        rpc, log, _ = self.flow("builder", ["unparseable prose"] * 3, decided=[OP])
-        self.assertEqual(rpc.submissions, [])
-        self.assert_parse_stop(rpc, log)
 
 
 if __name__ == "__main__":

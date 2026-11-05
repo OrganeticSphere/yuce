@@ -10,7 +10,7 @@ pub fn config<S: AuditStore>(s: &S) -> Value {
 pub fn enabled<S: AuditStore>(s: &S, k: &str) -> bool {
     config(s)[k] == true || (k == "temporal_summary" && s.has_checkpoint(super::versions::KEY))
 }
-/// The functions concepts are placed under (the address layer, owner and Gemini 01.11.2026), the most used first, each with its
+/// The functions concepts are placed under (the address layer), the most used first, each with its
 /// number of live concepts and the names of up to `examples` of them, the most mapped first: what a builder card shows so that a new
 /// concept reuses a function (Fable 5.1, 01.11: sorted by use, with counts).
 pub fn known_functions<S: AuditStore>(s: &S, examples: usize) -> Vec<(String, usize, Vec<String>)> {

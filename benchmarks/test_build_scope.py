@@ -1,4 +1,4 @@
-"""The owner's control runs (2026-10-30): arm C without the graph builder (`--build-scope none`) or with links off (`concepts`), on
+"""The control runs: arm C without the graph builder (`--build-scope none`) or with links off (`concepts`), on
 the stub team in real kernel circles. Needs the kernel binary; no provider is called."""
 from __future__ import annotations
 
@@ -212,7 +212,7 @@ class StrongGraph(unittest.TestCase):
     setUp, tearDown, run_c = BuildScope.setUp, BuildScope.tearDown, BuildScope.run_c
 
     def test_the_strongest_graph_pairs_by_words_and_links_the_change_on_a_packed_card(self):
-        # the owner's decision run (31.10): pairs from the claims' own words on dated reports, cards of up to four pairs; the stub
+        # the lexical pairing run: pairs from the claims' own words on dated reports, cards of up to four pairs; the stub
         # links the first pair of a card and the checker confirms it
         P.GRAPH_QUALITY = {"temporal_summary": True, "evolution_cards": True, "evolution_pairing": "lexical", "evolution_pairs_per_card": 4}
         r = self.run_c("full", docs=DATED)
@@ -246,7 +246,7 @@ class Hints(unittest.TestCase):
     setUp, tearDown, run_c = BuildScope.setUp, BuildScope.tearDown, BuildScope.run_c
 
     def test_with_hints_a_reading_task_relates_its_claims_to_other_report_dates_and_the_run_ends(self):
-        # the owner's hint profile (31.10): no builder; a stored reading answer gets one more turn with the claims of other report
+        # the hint profile: no builder; a stored reading answer gets one more turn with the claims of other report
         # dates that share its words, and the stub writes the change on both quotes
         r = self.run_c("hints", docs=DATED)
         receipt, st = r["phase1"]["receipt"], r["phase1"]["status"]

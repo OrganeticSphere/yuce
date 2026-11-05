@@ -247,7 +247,7 @@ struct Run {
     builder: Builder,
     pool: Option<sbgk_core::audit::builder::parallel::ParallelBuilder>,
     build_backlog: Option<usize>,
-    /// `full`, `concepts` (links off), `none` (no graph builder): the owner's control runs of 2026-10-30, or `hints` (as `none`,
+    /// `full`, `concepts` (links off), `none` (no graph builder): the control runs, or `hints` (as `none`,
     /// with the RELATE turn of a reading task, 2026-10-31). Without a builder the kernel gives no builder work, and the builder is
     /// caught up by definition: there is none to wait for.
     build_scope: &'static str,
@@ -1219,11 +1219,7 @@ fn graph_quality_args(a: &Args) -> Value {
         q["term_max_words"] = json!(n);
         q["language_pack_sha256"] = json!(to_hex(&sha256(sbgk_core::jcs::to_jcs(&sbgk_core::audit::quality::language_data()).as_bytes())));
     }
-    for (k, allowed) in [
-        ("candidate-match", vec!["legacy", "strict"]),
-        ("jev-mode", vec!["footer", "already-mapped", "inline-flag"]),
-        ("known-concepts", vec!["off", "circles", "all"]),
-    ] {
+    for (k, allowed) in [("candidate-match", vec!["legacy", "strict"]), ("known-concepts", vec!["off", "circles", "all"])] {
         if let Some(v) = a.get(k) {
             if !allowed.contains(&v) {
                 fail(&format!("invalid --{k}"));
@@ -1271,7 +1267,7 @@ fn graph_quality_args(a: &Args) -> Value {
         }
         q["summary_companions"] = json!(true);
     }
-    // the address layer (owner and Gemini, 01.11.2026): a new concept may name its broad function, and lexical evolution pairs also
+    // the address layer: a new concept may name its broad function, and lexical evolution pairs also
     // join a claim with the records of change of its function (claims that state a change, or of declared change summaries)
     if a.sw("concept-functions") {
         q["concept_functions"] = json!(true);
@@ -1385,7 +1381,7 @@ fn bind_coverage(
     }
 }
 
-/// The measured v0.1 default (the owner, 2026-11-03: "download, run, get what was measured"): no graph builder, reading in circles
+/// The measured v0.1 default ("download, run, get what was measured"): no graph builder, reading in circles
 /// with dynamic roles, stale suspects and the temporal summary with its companions. An explicit `--build-scope` still applies.
 /// `--profile custom` takes every flag as given, the behaviour before v0.1 (the benchmark runner and the tests pass it).
 const V01_SWITCHES: [&str; 5] = ["dynamic-roles", "circles", "stale-suspect", "temporal-summary", "summary-companions"];
@@ -1521,7 +1517,7 @@ pub fn cmd_audit_serve(a: &Args) {
     if build_backlog == Some(0) {
         fail("--build-backlog must be positive");
     }
-    // the owner's control runs of 2026-10-30, to see what the graph adds to the answers: `none` runs the swarm and the kernel without
+    // the control runs, to see what the graph adds to the answers: `none` runs the swarm and the kernel without
     // the graph builder (no concepts, no term mapping, no links), `concepts` keeps the builder's concepts and term mapping and turns
     // links off; `full` is the ordinary run
     let build_scope: &'static str = match a.get("build-scope").unwrap_or("full") {
@@ -1576,7 +1572,7 @@ pub fn cmd_audit_serve(a: &Args) {
         fail(&format!("--build-scope {build_scope} has no graph builder: the subjects name a builder"));
     }
     let circle_mode = a.sw("circles");
-    // circles +1 (the owner, 2026-10-27): the swarm's independent graph builder, a fixed role outside the ring, refines every circle
+    // circles +1: the swarm's independent graph builder, a fixed role outside the ring, refines every circle
     let refiner = a.get("circles-refiner").map(|id| id.to_string());
     if let Some(id) = &refiner {
         if !circle_mode {
@@ -1722,7 +1718,7 @@ pub fn cmd_audit_serve(a: &Args) {
     let backpressure_records: usize = a.num("backpressure-records", 0);
     let backpressure_per_task: usize = a.num("backpressure-per-task", DispatchConfig::default().backpressure_per_task);
     let stall = Duration::from_millis(a.num("backpressure-stall-ms", 120_000));
-    // the lines one answer may hold: a strong reader of a whole report writes more than the swarm's 32 (the owner, 2026-10-25)
+    // the lines one answer may hold: a strong reader of a whole report writes more than the swarm's 32
     let max_lines: usize = a.num("max-lines", DispatchConfig::default().max_lines);
     // the records a summary is shown (run S1.2: 0, the summary cites its agent's own records only, with --own-refs)
     let summary_records: usize = a.num("summary-records", DispatchConfig::default().summary_records);
@@ -1788,7 +1784,7 @@ pub fn cmd_audit_serve(a: &Args) {
     mcp::run_bound(server, listener, max_connections, Some(note), json!({"audit": hello}));
 }
 
-/// A build scope without the graph builder: `none`, and `hints` (the owner, 2026-10-31: no build phase; a reading task gets one more
+/// A build scope without the graph builder: `none`, and `hints` (no build phase; a reading task gets one more
 /// turn with the claims of other report dates that share its claims' words).
 fn no_builder(scope: &str) -> bool {
     matches!(scope, "none" | "hints" | "versions")
