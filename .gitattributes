@@ -3,6 +3,8 @@
 crates/sbgk-core/tests/private_run_replay.rs export-ignore
 crates/sbgk-core/tests/data/refused_refiner_map_adb94d9.wal export-ignore
 crates/sbgk-core/examples/audit_offline.rs export-ignore
+# sources keep LF on every system: a test reads them, and a checkout on Windows would otherwise turn them into CRLF
+*.rs text eol=lf
 # journals are hash-chained bytes: never convert their line endings
 *.wal -text
 # open corpora are pinned upstream bytes: never convert their line endings
