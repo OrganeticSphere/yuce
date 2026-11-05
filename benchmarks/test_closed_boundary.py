@@ -1,6 +1,6 @@
-"""The open runner without the closed layer (sbgk_bench.closed, which the public snapshot leaves out): each option or model that
-needs it stops with one message, the DeepSeek key comes from the environment, the Antigravity CLI from AGY_BIN or PATH. Offline:
-no model or provider is called."""
+"""The open runner without the closed layer (sbgk_bench.closed, which the public snapshot leaves out): an option it does not know
+fails cleanly, each model that needs the package stops with one message, a run takes the plain steps, the DeepSeek
+key comes from the environment, the Antigravity CLI from AGY_BIN or PATH. Offline: no model or provider is called."""
 from __future__ import annotations
 
 import contextlib
@@ -16,6 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from sbgk_bench import pilot_ac as P  # noqa: E402
+from sbgk_bench.model_policy import PlainPolicy, RunHook  # noqa: E402
 import run_pilot_ac as R  # noqa: E402
 
 
@@ -31,8 +32,8 @@ class Boundary(unittest.TestCase):
         present = (pathlib.Path(P.__file__).parent / "closed" / "__init__.py").is_file()
         self.assertEqual(P.closed_layer() is not None, present)
         if not present:
-            with self.assertRaisesRegex(P.ClosedLayerMissing, r"^Jev needs the closed layer \(benchmarks/sbgk_bench/closed\)"):
-                P.closed_layer("Jev")
+            with self.assertRaisesRegex(P.ClosedLayerMissing, r"^a feature needs the closed layer \(benchmarks/sbgk_bench/closed\)"):
+                P.closed_layer("a feature")
 
     def test_only_a_missing_package_is_absent(self):
         # on temporary packages in place of sbgk_bench.closed: an error inside the package surfaces; a directory without its
@@ -43,20 +44,20 @@ class Boundary(unittest.TestCase):
             (root / broken).mkdir()
             (root / broken / "__init__.py").write_text("raise ImportError('a defect inside the closed layer')\n", encoding="utf-8")
             (root / leftover / "__pycache__").mkdir(parents=True)
-            (root / leftover / "__pycache__" / "jev.cpython-313.pyc").write_bytes(b"stale")
+            (root / leftover / "__pycache__" / "module.cpython-313.pyc").write_bytes(b"stale")
             (root / whole).mkdir()
             (root / whole / "__init__.py").write_text("MODELS = {}\n", encoding="utf-8")
             sys.path.insert(0, tmp)
             importlib.invalidate_caches()
             try:
                 with mock.patch.object(P, "CLOSED_PACKAGE", broken):
-                    for feature in (None, "Jev"):
+                    for feature in (None, "a feature"):
                         with self.assertRaisesRegex(ImportError, "a defect inside the closed layer"):
                             P.closed_layer(feature)
                 with mock.patch.object(P, "CLOSED_PACKAGE", leftover):
                     self.assertIsNone(P.closed_layer())
-                    with self.assertRaisesRegex(P.ClosedLayerMissing, "^Jev needs the closed layer"):
-                        P.closed_layer("Jev")
+                    with self.assertRaisesRegex(P.ClosedLayerMissing, "^a feature needs the closed layer"):
+                        P.closed_layer("a feature")
                 with mock.patch.object(P, "CLOSED_PACKAGE", whole):
                     self.assertEqual(P.closed_layer().__name__, whole)
             finally:
@@ -75,14 +76,28 @@ class Boundary(unittest.TestCase):
                 R.main()
         return stop.exception.code, err.getvalue()
 
-    def test_an_option_of_the_closed_layer_stops_with_one_message(self):
-        for args in (["--jev"], ["--jev-key-file", "key.txt"], ["--jev-mode", "footer"], ["--jev-mode=footer"]):
+    def test_an_unknown_option_fails_cleanly(self):
+        for args in (["--no-such-option"], ["--no-such-option", "value"], ["--no-such-option=value"]):
             with self.subTest(args=args):
                 code, err = self.main("--model", "stub", *args)
-                option = args[0].split("=")[0]
                 self.assertEqual(code, 2)
-                self.assertIn(f"{option} needs the closed layer (benchmarks/sbgk_bench/closed)", err)
-                self.assertNotIn("unrecognized arguments", err)
+                self.assertIn("unrecognized arguments", err)
+                self.assertNotIn("Traceback", err)
+
+    def test_a_run_without_the_package_takes_the_plain_steps(self):
+        seen = []
+
+        def run(*args, **kw):
+            seen.append((P.RUN_HOOK, P.Log().policy))
+            return {"measures": {}}
+
+        argv = ["pilot", "--manifest", "m", "--repo", "r", "--model", "stub"]
+        with mock.patch.object(P, "closed_layer", side_effect=absent), mock.patch.dict(P.__dict__), mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(R.C, "BIN", pathlib.Path(__file__)), mock.patch.object(R, "corpus_choice", return_value=(["x"], {"steps": []}, "")), \
+                mock.patch.object(R, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+            R.main()
+        self.assertIs(type(seen[0][0]), RunHook)
+        self.assertIsInstance(seen[0][1], PlainPolicy)
 
     def test_a_model_of_the_closed_layer_stops_before_any_work(self):
         for args in (["--model", "gemini-lite"], ["--model", "stub", "--builder-model", "gemini-lite-openclaw"],

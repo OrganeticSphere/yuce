@@ -39,7 +39,7 @@ class Stream(unittest.TestCase):
             self.assertEqual(list(pathlib.Path(tmp).iterdir()),[])
         self.assertEqual(len(launched),1,"no hidden retry")
         self.assertIsNotNone(launched[0].poll(),"the owned process has exited")
-        self.assertEqual([r for kind,r in records if kind=="call"][0],dataclasses.asdict(call))
+        self.assertEqual([r for kind,r in records if kind=="call"][0],P.call_record(call))
         return call,log
 
     def test_human_tool_is_killed_early_and_recorded_then_uses_circle_failover(self):
@@ -95,21 +95,19 @@ time.sleep(30)
         self.assertEqual(human_request({"event":"permission_request","tool_name":"new_tool"}),"new_tool")
 
 class Card(unittest.TestCase):
-    def test_two_leases_of_one_card_have_distinct_builder_and_selector_call_ids(self):
+    def test_two_leases_of_one_card_have_distinct_call_ids(self):
         rpc=mock.Mock()
         rpc.call.side_effect=lambda tool,**kw: {"status":"RENEWED"} if tool=="audit_renew" else {"status":"CARD_DONE","results":[]}
         card={"card_id":"C1-2-same","records":[{"id":"@r","author":"w1","terms":["term"]}],"neighbors":[],"prompt":"card"}
         model=SimpleNamespace(name="mock-builder",complete=lambda prompt:("[]",{},None))
-        jev=SimpleNamespace(name="mock-selector",complete=lambda prompt:("{}",{},None),
-                            request=lambda card:({"items":[]},{"term":("@r","term")}),ops=lambda answers,index,card:[])
-        log=P.Log()
-        with mock.patch.object(P,"CIRCLES",True),mock.patch.object(P,"PAIRS_ONLY",False),mock.patch.object(P,"WHOLE_READER",False):
+        with mock.patch.object(P,"CIRCLES",True),mock.patch.object(P,"PAIRS_ONLY",False),mock.patch.object(P,"WHOLE_READER",False),mock.patch.object(P,"RUN_HOOK",P.RunHook()):
+            log=P.Log()
             for task in ("TB1","TB2"):
-                self.assertTrue(P.build_card(rpc,card,model,log,1,threading.Event(),jev,agent="w2",task_id=task,
+                self.assertTrue(P.build_card(rpc,card,model,log,1,threading.Event(),agent="w2",task_id=task,
                                              circle_context={"circle":1,"circle_phase":"BUILD"}))
         ids=[c.call_id for c in log.calls]
-        self.assertEqual(len(ids),4)
-        self.assertEqual(len(set(ids)),4)
+        self.assertEqual(len(ids),2)
+        self.assertEqual(len(set(ids)),2)
         self.assertTrue(any("TB1" in cid for cid in ids) and any("TB2" in cid for cid in ids))
         self.assertEqual(log.in_flight,{})
         measured=P.measures({"calls":[],"events":[]},{"calls":[dataclasses.asdict(c) for c in log.calls],"events":log.events})
@@ -121,6 +119,45 @@ class Card(unittest.TestCase):
         self.assertTrue(all(e["explicit_empty"] and e["closed_without_operations"] for e in ends))
         self.assertEqual(P.AgyModel("mock").timeout_s,240)
         self.assertEqual((P.AGY_TIMEOUT_S,P.AGENT_TIMEOUT_S),(240,300))
+
+    def test_the_run_hook_shapes_the_prompt_the_submission_and_the_last_event(self):
+        prompts=[];submitted=[]
+        rpc=mock.Mock()
+        def call(tool,**kw):
+            if tool=="audit_renew":return {"status":"RENEWED"}
+            submitted.append(kw["lines"])
+            return {"status":"CARD_DONE","results":[]}
+        rpc.call.side_effect=call
+        def complete(prompt):
+            prompts.append(prompt)
+            return "[]",{},None
+        more={"op":"request"}
+        class Hook(P.RunHook):
+            def before(self,card,ctx):
+                return ctx.render(card)+"\nMORE",{"noted":1}
+            def after(self,card,operations,submit,ctx):
+                return operations+[more],submit(operations+[more],lambda fields:fields.update(annotated=True)),None
+        model=SimpleNamespace(name="mock-builder",complete=complete)
+        card={"card_id":"C1-2-hook","records":[{"id":"@r","author":"w1","terms":["term"]}],"neighbors":[],"prompt":"card"}
+        with mock.patch.object(P,"PAIRS_ONLY",False),mock.patch.object(P,"WHOLE_READER",False),mock.patch.object(P,"RUN_HOOK",Hook()):
+            log=P.Log()
+            self.assertTrue(P.build_card(rpc,card,model,log,1,threading.Event(),agent="w2",task_id="TB"))
+        self.assertTrue(prompts[0].endswith("\nMORE"))
+        self.assertEqual(submitted,[[more]])
+        self.assertTrue(next(e for e in log.events if e.get("outcome")=="CARD_SUBMITTED")["annotated"])
+        self.assertEqual(log.events[-1]["noted"],1)
+
+    def test_a_card_stops_when_the_run_hook_says_so(self):
+        rpc=mock.Mock()
+        model=SimpleNamespace(name="mock-builder",complete=mock.Mock(side_effect=AssertionError("no builder call")))
+        class Hook(P.RunHook):
+            def before(self,card,ctx):
+                return None
+        card={"card_id":"C1-2-stop","records":[{"id":"@r","author":"w1","terms":["term"]}],"neighbors":[],"prompt":"card"}
+        with mock.patch.object(P,"PAIRS_ONLY",False),mock.patch.object(P,"WHOLE_READER",False),mock.patch.object(P,"RUN_HOOK",Hook()):
+            log=P.Log()
+            self.assertFalse(P.build_card(rpc,card,model,log,1,threading.Event(),agent="w2",task_id="TB"))
+        self.assertEqual(log.calls,[])
 
     def test_unknown_concept_repair_can_add_a_preceding_proposal(self):
         mapping={"op":"map_term","record":"@o","term":"topic","concept":"scoped topic"}
@@ -148,11 +185,11 @@ class Card(unittest.TestCase):
         submits=[c.kwargs["lines"] for c in rpc.call.call_args_list if c.args[0]=="audit_submit"]
         self.assertEqual(submits,[[mapping],[proposal,mapping]])
 
-    def test_empty_model_answers_are_separate_from_selector_ops_and_automatic_closes(self):
+    def test_empty_model_answers_are_separate_from_automatic_closes(self):
         base={"circle":2,"circle_phase":"BUILD","kind":"BUILD","builder_model":"flash"}
         events=[dict(base,outcome="CARD_ASSIGNED",task="T1"),dict(base,outcome="CARD_ASSIGNED",task="T2"),
                 dict(base,outcome="CARD_DONE",model_invoked=True,explicit_empty=True,closed_without_operations=True),
-                dict(base,outcome="CARD_DONE",model_invoked=True,explicit_empty=True,closed_without_operations=False,jev_ops=1),
+                dict(base,outcome="CARD_DONE",model_invoked=True,explicit_empty=True,closed_without_operations=False),
                 dict(base,outcome="CARD_DONE",model_invoked=False),
                 dict(base,circle_phase="FINAL",outcome="CARD_DONE",model_invoked=True,explicit_empty=True)]
         c=builder_empty_counts(events,2)["flash"]

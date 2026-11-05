@@ -1,6 +1,6 @@
 //! Durable once-per-circle anomaly reviews. The frozen catalog owns identity, reviewer and shown capabilities.
 use super::*;
-/// The decision a review card asks for (the owner, 2026-10-27). The cautions of the revision prompt alone let a reviewer keep a
+/// The decision a review card asks for. The cautions of the revision prompt alone let a reviewer keep a
 /// catch-all whose shown records it saw were about different things: offline on the 26 live review prompts of runs C1n_r2 and
 /// H1c_r1, Sonnet 5.5 narrowed 0 of 15 catch-all reviews; with this rule Sonnet 15 of 15 (and narrowed one of 11 correct
 /// concepts), Haiku 5.5 15 of 15 (none of the 11).

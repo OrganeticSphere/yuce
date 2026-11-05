@@ -1,4 +1,4 @@
-"""The address layer (owner and Gemini, 2026-11-01): the runner's flag rules and the stub builder's placement."""
+"""The address layer: the runner's flag rules and the stub builder's placement."""
 import json
 import pathlib
 import subprocess

@@ -36,7 +36,7 @@ class Phase2Cap(unittest.TestCase):
             self.assertIn("--phase2-max-calls", self.main("--phase2-max-calls", refused)[0], refused)
 
     def test_the_acquire_wait_is_a_flag_up_to_the_kernel_cap(self):
-        # the owner, 2026-10-29: agents wait inside the kernel for a signal instead of asking every 500 ms
+        # agents wait inside the kernel for a signal instead of asking every 500 ms
         wait = lambda: P.ACQUIRE_WAIT_MS  # noqa: E731
         self.assertEqual(self.main(read=wait)[1], 10000)
         self.assertEqual(self.main("--acquire-wait-ms", "500", read=wait)[1], 500)

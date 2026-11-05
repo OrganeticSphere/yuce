@@ -1,10 +1,10 @@
-//! Typed requests of the graph builder (U1, the owner's decision of 2026-10-24): on a sign its card shows, the builder asks for
+//! Typed requests of the graph builder (U1): on a sign its card shows, the builder asks for
 //! more reading, never with words of its own for the swarm. A request is one of a closed set of types in two families, a report
 //! section and two records with their link, and is checked as strictly as a swarm answer. The kernel writes the task from its own
 //! neutral template and leases it like any other. Records written under such a task carry its `TR<n>-` directive; a request never
 //! rests on them (no chains), and the analysis tells them apart.
 //!
-//! The control group of the same run (the owner's addition of 2026-10-24): for every accepted `reread_gap` the kernel itself picks
+//! The control group of the same run: for every accepted `reread_gap` the kernel itself picks
 //! another saturated section, deterministically, and leases one second reading of it with the same template and no focus terms
 //! (`TC<n>-`, key `control:<n>`). Builder-chosen and kernel-chosen second readings are then compared.
 

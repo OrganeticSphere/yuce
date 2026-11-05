@@ -193,7 +193,7 @@ fn states_change(text: &str) -> bool {
         }
     })
 }
-/// The address layer's channel (owner and Gemini, 01.11.2026): per new claim and per function of the concepts mapped in its cone,
+/// The address layer's channel: per new claim and per function of the concepts mapped in its cone,
 /// the best `evolution_pairs_per_function` earlier claims of the same function that are records of change: claims that state a
 /// change, or claims of the documents the corpus declares as change summaries. A later detail meets the item that introduced or
 /// changed its whole (offline on MCPstrong_r1: 9 to 10 of 21 read gold changes paired, against 1 by words alone; with the function

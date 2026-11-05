@@ -5,11 +5,11 @@ quote, 2B a load-bearing one) withdraw a source text and ask both arms to update
 
 Every model call goes through one adapter (contract v0.1 R9): one task -> one fresh call without history, and the call's text,
 id, outcome, usage, cost (None = unknown, never 0) and latency are recorded. `StubModel` is deterministic and free: it checks
-the mechanics. `DeepSeekModel` calls the DeepSeek API directly (owner's go of 2026-10-22, cap $2): one chat completion per task,
+the mechanics. `DeepSeekModel` calls the DeepSeek API directly: one chat completion per task,
 the provider's token usage priced at DEEPSEEK_RATES, and the provider balance before and after the run as the actual spend.
 
-The closed layer (`sbgk_bench.closed`: Jev, the private corpus set of the first pilot, the owner's subscription transports) is a
-separate package that the public snapshot leaves out; this runner works without it (closed_layer).
+An optional closed package (`sbgk_bench.closed`, see closed_layer) adds options to this runner; without it argparse simply does
+not know them.
 """
 from __future__ import annotations
 
@@ -33,19 +33,20 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 from typing import Callable, Protocol
 
 from . import common as C
 from . import executors
 from . import answer_guidance as G
+from .model_policy import RunHook
 
 # Test-only question metadata. ContextVar isolates concurrent tasks and supports StubModel subclasses without changing the
 # production Model.complete signature or sending hidden topics in a provider request. Set/reset at the actual call boundary.
 _stub_about = contextvars.ContextVar("r2r_stub_about", default=())
 
-# What needs the closed layer: its options of run_pilot_ac.py and its models. Without the package each of them stops with one
-# message (closed_missing) instead of an unknown option or model.
-CLOSED_OPTIONS = ("--jev", "--jev-key-file", "--jev-mode")
+# The models of the closed package. Without the package each of them stops with one message (closed_missing) instead of an unknown
+# model.
 CLOSED_MODELS = ("gemini-lite", "gemini-lite-openclaw")
 CLOSED_PACKAGE = f"{__package__}.closed"
 
@@ -83,21 +84,21 @@ QUESTIONS = [
      "stances": ["open"], "concept_types": ["Limitation", "Issue"]},
 ]
 SECTION_BYTES = 6000
-# the graph builder's typed requests per run (U1, the owner's decision of 2026-10-24; 0: off, the kernel's default)
+# the graph builder's typed requests per run (U1; 0: off, the kernel's default)
 BUILDER_REQUESTS = 0
 # backpressure (run 10A-17): first readings wait while the builder's backlog plus BACKPRESSURE_PER_TASK per reading in flight would
 # exceed BACKPRESSURE_RECORDS (0: off, the kernel's default); the owner's status sample every STATUS_SAMPLE_S seconds draws its curve
 BACKPRESSURE_RECORDS = 0
 BACKPRESSURE_PER_TASK = 20
 STATUS_SAMPLE_S = 30.0
-# The comparison of one strong model with the kernel against the same model without it (the owner, 2026-10-25: drop the swarm, see
+# The comparison of one strong model with the kernel against the same model without it (drop the swarm, see
 # what one strong model does through the kernel, then give the same task to one agent without the kernel). MAX_LINES: the lines one
 # answer of the kernel may hold (None: the kernel's default; a strong reader of a whole report writes more than the swarm's 32).
 # PAIRS_ONLY: the graph builder judges only the pairs the kernel finds, a record card is closed without a model. LINK_CHECKER: a
 # second agent of the same model checks the links and does nothing else (the single reader wrote every claim, so it may check none
 # of the links between them). ARM_A_MODE "single": arm A is one agent of the same model without the kernel.
-# ARM_A_MODE "team": a team of agents of different vendors with the kernel against the same team without it (the owner, 2026-10-25:
-# R2R is for several agents working together; how would Opus and an independent GPT agent work without it?). The team's first agent
+# ARM_A_MODE "team": a team of agents of different vendors with the kernel against the same team without it
+# (R2R is for several agents working together; how would Opus and an independent GPT agent work without it?). The team's first agent
 # leads and alone writes the answers in both arms; the others read and check (TEAM_READER_KINDS).
 MAX_LINES: int | None = None
 PAIRS_ONLY = False
@@ -105,7 +106,7 @@ LINK_CHECKER = False
 LINK_CHECKER_ID = "wv"
 LINK_CHECKER_KINDS = ["VERIFY_LINK", "RESOLVE_CONFLICT"]
 TEAM_READER_KINDS = ["RESOLVE_CONFLICT", "VERIFY_LINK", "REQUEST", "INVESTIGATE", "EXTEND", "CHANGE"]
-# Run S1.2 (the owner, 2026-10-25): one strong agent reads every report in one zone task of the kernel and hands in its records,
+# Run S1.2: one strong agent reads every report in one zone task of the kernel and hands in its records,
 # their relations and its answers in one answer. The kernel checks and stores them, the link checker checks the relations, the
 # summaries are handed in from that answer (the kernel shows them no records, --summary-records 0, and they cite the agent's own
 # observes, --own-refs), a withdrawal is the kernel's alone, without a model call, and the builder runs no model. Arm A takes the
@@ -123,12 +124,12 @@ WHOLE_RULES = (
     "at most 40 for a question, each a short text that merges related findings and rests on all their quotes, then for each "
     'question one {"kind":"answer_done","rq_id":"<RQ id>","text":"<at most 240 characters: what the reports do not settle>"}. '
     "Cover every report that bears on the question.")
-# Run S1.3 (the owner, 2026-10-25): S1.2 with four changes. The records are atomic (one fact a claim, every quote necessary), so a
+# Run S1.3: S1.2 with four changes. The records are atomic (one fact a claim, every quote necessary), so a
 # withdrawal takes out only what rests on the withdrawn text; the answers come in a call of their own after the zone (the same for
 # both arms); a line the kernel refuses goes back to the agent once with the kernel's reasons; after a withdrawal the rows the kernel
 # took out that still have quotes go back to the agent with those quotes only, not the reports.
 WHOLE_STEPS = False
-# Run S1.3 without link checks (the owner's step 2, 2026-10-25: the full cost of the arms without the checker that cost $2.6-3.7 a
+# Run S1.3 without link checks (the full cost of the arms without the checker that cost $2.6-3.7 a
 # run and changed no answer): the agent's relation lines are kept aside, not handed in, so no link waits for a check.
 WHOLE_LINKS = True
 WHOLE_STEP_RULES = (
@@ -145,12 +146,12 @@ WHOLE_ANSWER_RULES = (
     "qualified, say what replaced it.")
 ARM_A_MODE = "notes"
 DYNAMIC_ROLES = False
-# arm C's graph builder (the owner's control runs, 2026-10-30): full, concepts (links off) or none (no builder)
+# arm C's graph builder: full, concepts (links off) or none (no builder)
 BUILD_SCOPE = "full"
 VERSION_LINEAGE = None  # explicit snapshot/doc_id/SHA256 JSON; no inference from paths or dates
 BUILD_BACKLOG = 16
 CIRCLES = False
-# Circles +1 (the owner, 2026-10-27): the model of the swarm's independent graph builder "gb", a fixed role outside the ring that
+# Circles +1: the model of the swarm's independent graph builder "gb", a fixed role outside the ring that
 # refines the graph after the swarm's BUILD of every circle; None keeps circles as they were
 CIRCLES_REFINER = None
 # The longest REFINE of a circle; past it the swarm goes on and the refiner keeps its cursor (None: wait for the refiner)
@@ -162,21 +163,21 @@ WAVE_SECTIONS: int | None = None
 AGY_TIMEOUT_S = 240.0
 AGENT_TIMEOUT_S = 300.0
 ANSWER_TIMEOUT_S = 900.0
-ANOMALY_EFFORT = None
 ONTOLOGY_REVIEW = False
 AGENT_ATTEMPTS = None
 AGENT_RETRY_PAUSE_S = 1.0
 ARM_A_ANSWER = "direct"
 ARM_A_REDUCE = "single"  # map-reduce reduction: one call, or "tree" (pairwise merges in report order)
 ARM_A_ORCHESTRATION = "runner"  # the team arm on the runner's threads, "langgraph-native" (arm_a_langgraph) or "temporal-native" (arm_a_temporal)
-# arm A (no kernel) frozen: a run makes the kernel's arm only (the owner, 2026-10-27: how the swarm works without the kernel is
+# arm A (no kernel) frozen: a run makes the kernel's arm only (how the swarm works without the kernel is
 # known; the comparisons come back later)
 ARM_A_FROZEN = False
 # an earlier run whose finished arm C this run takes as it ended, to run only arm A (run_pilot_ac --reuse-arm-c)
 REUSE_ARM_C: pathlib.Path | None = None
 UNATTESTED_AT_END = False
 GRAPH_QUALITY = {}
-PHASE_EFFORT: dict[str,str] | None = None
+# the steps of a run around its calls and cards (model_policy.RunHook; run_pilot_ac sets it)
+RUN_HOOK = RunHook()
 CHECKER_MODEL: Model | None = None
 WORKERS = 10
 # The repair rounds of a refused submission, the same in both arms (--repairs, --summary-repairs)
@@ -185,7 +186,7 @@ REPAIRS = 2
 SUMMARY_REPAIRS = 4
 # A link check given back this often stops the run (a task that cannot be done must not loop at the price of model calls).
 MAX_RELEASES = 5  # a safety net: the dispatcher gives a key up as unresolved after 3 failed leases
-MAX_CALLS = 1500  # quality first (owner, 2026-10-22): arm C must reach its answers; money is held by the budget brake
+MAX_CALLS = 1500  # quality first: arm C must reach its answers; money is held by the budget brake
 # The kernel serves every client under one lock and a call costs O(state) (0.3 s at 808 records in live run 4): ten agents
 # submitting at once queue for seconds, so a client waits for its answer this long (bounded, as before). Late in a run a call queues
 # far longer (live run MCPsfun_r1: an acquire at the last circle's FINAL waited 112 s, and the owner's poll gave up at 120 s).
@@ -215,7 +216,7 @@ PHASE2_CAP_RULE = "fixed"
 ANSWER_TIMEOUT_RETRIES = 1
 # How long an agent's audit_acquire waits inside the kernel for work (--acquire-wait-ms; the kernel caps it at 30 s): the kernel
 # answers as soon as a call frees or creates work, and each wake renews the agent's contact with its circle. 500 ms made each agent
-# ask about 4000 times a phase (run MCPpair2_r1: 35 000 idle waits; the owner, 2026-10-29: wait for a signal instead of polling).
+# ask about 4000 times a phase (run MCPpair2_r1: 35 000 idle waits): wait for a signal instead of polling.
 ACQUIRE_WAIT_MS = 10000
 # replies.jsonl keeps a submission's whole reply up to this many characters of its JSON (a refusal of 32 lines with their hints is
 # a few thousand); a longer one keeps this prefix, marked, and the SHA-256 of all of it
@@ -282,9 +283,7 @@ class Call:
     error: str | None = None
     usage: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
-    effort: str | None = None
     model_family: str | None = None
-    effort_reason: str | None = None
     cost_usd: float | None = None  # None: the provider reported no cost (unknown, never counted as 0)
     latency_s: float = 0.0
     model: str = ""
@@ -298,6 +297,13 @@ class Call:
     finished_at: float = 0.0
     circle: int | None = None
     circle_phase: str | None = None
+    extra: dict = field(default_factory=dict)  # more fields of this call's record, from the run's policy
+
+
+def call_record(c: Call) -> dict:
+    record = asdict(c)
+    record.update(record.pop("extra"))
+    return record
 
 
 class Model(Protocol):
@@ -521,12 +527,12 @@ CLAUDE_MODEL = "claude-sonnet-5-5"
 # which the brake counts as a measure of the plan's limits used.
 CLAUDE_RATES = (2.00, 0.20, 10.00)
 CLAUDE_RATES_SOURCE = "claude-sonnet-5-5 Claude API list prices (model table cached 2026-10-06); billed to the Max plan's limits"
-# Claude Haiku 5.5 as the swarm in place of DeepSeek (the owner, 2026-10-24). $ per 1M tokens (input, output) of each Claude model the
+# Claude Haiku 5.5 as the swarm in place of DeepSeek. $ per 1M tokens (input, output) of each Claude model the
 # runner calls, the same list prices; Haiku's hold for prompts up to 100K tokens, far above the pilot's. Only the brake's reservation
 # reads them (a Sonnet-priced reserve for Haiku would be twenty times too high and hold up parallel calls): the cost the brake counts
 # is the one Claude Code reports.
 CLAUDE_HAIKU = "claude-haiku-5-5"
-# Claude Opus 5.5 as the one strong reader in place of the swarm (the owner, 2026-10-25): $4 / $20 per MTok (the Claude API model
+# Claude Opus 5.5 as the one strong reader in place of the swarm: $4 / $20 per MTok (the Claude API model
 # table, claude-api skill models.md).
 CLAUDE_OPUS = "claude-opus-5-5"
 CLAUDE_MODEL_RATES = {CLAUDE_MODEL: (CLAUDE_RATES[0], CLAUDE_RATES[2]), CLAUDE_HAIKU: (0.10, 0.50), CLAUDE_OPUS: (4.00, 20.00)}
@@ -543,15 +549,15 @@ CLAUDE_ENV_DROPPED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BA
 # Errors worth a retry after a pause: the plan's rate limits, an overloaded or failing API, a dropped connection.
 CLAUDE_TRANSIENT = ("rate limit", "rate_limit", "overloaded", "529", "500", "502", "503", "504", "timed out", "connection")
 # An answer that ran past the output the brake reserved (CLAUDE_RESERVED_OUTPUT) is an agent that did not answer within its limits,
-# as a timeout is (agent_failed): its task is released at once and given out again, at an effort one level lower (live run
-# MCPctl_none_r2: a summary's second repair at high effort ran 617 s past it and stopped the run; claude-reviewer's RV-01 of
-# 87b54b2b: a retry inside the call made the task's fate depend on how fast the model overran)
+# as a timeout is (agent_failed): its task is released at once and given out again (live run MCPctl_none_r2: a summary's second
+# repair ran 617 s past it and stopped the run; claude-reviewer's RV-01 of 87b54b2b: a retry inside the call made the task's fate
+# depend on how fast the model overran)
 CLAUDE_OVERRUN = "output token maximum"
 OUTPUT_OVERRUN = "OUTPUT_OVERRUN"
 
 
 class ClaudeCliModel:
-    """One fresh `claude -p` session per task (contract v0.1 R9) with the owner's Claude Code login (the owner, 2026-10-23: Sonnet 5.5
+    """One fresh `claude -p` session per task (contract v0.1 R9) with the owner's Claude Code login (Sonnet 5.5
     while DeepSeek is at its peak hours, to find the remaining defects). A short system prompt in place of Claude Code's, no tools, no
     MCP servers, no user settings or hooks, no session saved, an empty temporary working directory. The environment of an enclosing
     Claude Code session is not passed on: the child signs in with the stored login, not the host's. Usage and the API-equivalent cost
@@ -583,8 +589,7 @@ class ClaudeCliModel:
         return "claude:" + self.name
 
     def for_role(self, effort, *, timeout_s=None):
-        """The same model at a phase's effort, for the effort ladder (the owner, 2026-10-27: the swarm moves from Gemini Flash to
-        Claude Haiku 5.5, the graph builder to Sonnet 5.5)."""
+        """The same model at another effort or call deadline."""
         result = ClaudeCliModel(self.name, effort=effort or self.effort, timeout_s=timeout_s if timeout_s is not None else self.timeout_s,
                                 exe=self._exe, billed=self.billed)
         result.config.update(model_family=self.model_family, effort=effort or self.effort)
@@ -1003,7 +1008,7 @@ class StubModel:
 
     @staticmethod
     def _builder(prompt: str) -> str:
-        # the card is the first JSON after CARD:, as for an evolution card; with --jev the runner appends what Jev already mapped
+        # the card is the first JSON after CARD:, as for an evolution card
         card, _ = json.JSONDecoder().raw_decode(prompt.split("\nCARD:\n", 1)[1])
         ops, proposed = [], set()
         for r in card["records"]:
@@ -1384,18 +1389,16 @@ class Log:
         # every idle agent at once when the next phase begins
         self.exporting = threading.Event()
         self.wake_gen = 0
-        from .phase_effort import EffortPolicy
-        self.effort_policy = EffortPolicy(PHASE_EFFORT,ANOMALY_EFFORT,failure_ladder=AGENT_ATTEMPTS is not None)
+        self.policy = RUN_HOOK.policy()
 
     def preview_model(self, model, arm, role, phase, context):
         with self.lock:
-            return self.effort_policy.select(model,arm,role,phase,context,ANSWER_TIMEOUT_S)[0]
+            return self.policy.select(model,arm,role,phase,context,ANSWER_TIMEOUT_S)[0]
 
-    def adjust_effort(self, arm, role, phase, context, cause):
+    def after_call(self, arm, role, phase, context, call=None, reply=None):
         with self.lock:
-            change=self.effort_policy.change(arm,role,phase,context,cause)
-            if change:
-                self.event(kind="EFFORT_CHANGED",outcome="EFFORT_CHANGED",**change)
+            for event in self.policy.after_call(arm,role,phase,context,call,reply):
+                self.event(**event)
 
     def _emit(self, kind: str, payload: dict) -> None:
         if self.evidence:
@@ -1416,12 +1419,12 @@ class Log:
             if not self.active():
                 return None
             snapshot = dict(context or {})
-            model, effort_meta = self.effort_policy.select(model,arm,role,phase,snapshot,ANSWER_TIMEOUT_S)
+            model, policy_meta = self.policy.select(model,arm,role,phase,snapshot,ANSWER_TIMEOUT_S)
             if self.started >= self.max_calls or (phase >= 2 and self.phase_calls.get(phase, 0) >= PHASE2_MAX_CALLS):
                 self.stopped = f"CALL_CAP: total={self.max_calls}, per withdrawal phase={PHASE2_MAX_CALLS}"
                 return None
             # a model the brake does not bill (a subscription builder next to a paid swarm) reserves and settles nothing: the brake
-            # bounds the money of the paid calls only (the owner, 2026-10-23: a DeepSeek swarm with a Sonnet builder)
+            # bounds the money of the paid calls only (a DeepSeek swarm with a Sonnet builder)
             billed = getattr(model, "billed", True)
             reserve = model.estimate(prompt) if self.budget is not None and hasattr(model, "estimate") and billed else 0.0
             if self.budget is not None and not self.budget.reserve(reserve):
@@ -1429,7 +1432,7 @@ class Log:
                 return None
             self.started += 1
             self.phase_calls[phase] = self.phase_calls.get(phase, 0) + 1
-            snapshot.update({k:v for k,v in effort_meta.items() if v is not None})
+            snapshot.update({k:v for k,v in policy_meta.items() if v is not None})
             snapshot["model"] = getattr(model,"name","unknown")
             if role in ("BUILD","BUILDER"):
                 snapshot["builder_model"] = getattr(model,"name","unknown")
@@ -1439,7 +1442,7 @@ class Log:
                         context_rev=snapshot.get("notes_revision"), prompt_chars=len(prompt), prompt_bytes=len(prompt.encode("utf-8")),
                         prompt_sha256=digest, started_at=time.time(), cost_usd=None, reserve=reserve, billed=billed)
             meta.update({k: snapshot[k] for k in ("circle", "circle_phase") if k in snapshot})
-            meta.update(effort_meta)
+            meta.update(policy_meta)
             meta["model"] = getattr(model,"name","unknown")
             meta["work_context"] = {k:v for k,v in (context or {}).items() if k in ("card_id","key","rq_id","task_id","report","section","agent","ontology_anomaly","ontology_review","hint_kinds")}
             self._emit("context", dict(snapshot, call_id=call_id, context_id=ref, arm=arm, phase=phase, prompt=prompt, prompt_sha256=digest))
@@ -1470,29 +1473,29 @@ class Log:
         except BaseException as exc:
             c = Call(call_id=call_id, arm=arm, role=role, phase=phase, prompt_chars=len(prompt), ok=False,
                      error=f"{type(exc).__name__}: {exc}", model=getattr(model,"name","unknown"))
-            self._finish(c, meta)
+            self._finish(c, meta, policy_meta)
             raise
-        return self._finish(c, meta)
+        return self._finish(c, meta, policy_meta)
 
-    def _finish(self, c: Call, meta: dict) -> Call:
+    def _finish(self, c: Call, meta: dict, policy_meta: dict) -> Call:
         if self.budget is not None and meta.get("billed", True):
             self.budget.settle(meta.get("reserve", 0.0), c.cost_usd)
         for key in ("sequence", "context_id", "context_rev", "prompt_bytes", "prompt_sha256", "started_at"):
             setattr(c, key, meta[key])
-        for key in ("circle", "circle_phase", "effort", "model_family", "effort_reason"):
+        for key in ("circle", "circle_phase"):
             if key in meta:
                 setattr(c, key, meta[key])
+        for key, value in policy_meta.items():
+            if hasattr(c, key):
+                setattr(c, key, value)
+            else:
+                c.extra[key] = value
         c.finished_at = time.time()
         with self.lock:
             self.calls.append(c)
             self.in_flight.pop(c.call_id, None)
-            self._emit("call", asdict(c))
-            work=meta.get("work_context") or {}
-            if c.role in ("BUILD","BUILDER") and work.get("ontology_anomaly"):
-                self.event(arm=c.arm,phase=c.phase,kind="ANOMALY_BUILD",outcome="ANOMALY_BUILD",card=work.get("card_id"),agent=work.get("agent"),
-                    call_id=c.call_id,model=c.model,effort=c.effort,**{k:meta[k] for k in ("circle","circle_phase") if k in meta})
-            if agent_failed(c):
-                self.adjust_effort(c.arm,c.role,c.phase,meta.get("work_context") or {},"timeout")
+            self._emit("call", call_record(c))
+            self.after_call(c.arm,c.role,c.phase,meta.get("work_context") or {},call=c)
         return c
 
     def add(self, c: Call) -> Call:
@@ -1501,7 +1504,7 @@ class Log:
             self.started += 1
             c.sequence = self.started
             self.calls.append(c)
-            self._emit("call", asdict(c))
+            self._emit("call", call_record(c))
             if self.started >= self.max_calls and not self.stopped:
                 self.stopped = f"CALL_CAP: {self.max_calls} model calls"
         return c
@@ -1553,7 +1556,7 @@ class Log:
         with self.lock:
             if self.in_flight:
                 raise RuntimeError(f"unfinished model invocations: {sorted(self.in_flight)}")
-            return {"calls": [asdict(c) for c in sorted(self.calls, key=lambda c: c.sequence)], "events": list(self.events), "stopped": self.stopped}
+            return {"calls": [call_record(c) for c in sorted(self.calls, key=lambda c: c.sequence)], "events": list(self.events), "stopped": self.stopped}
 
 
 def model_refused(c: "Call") -> bool:
@@ -1716,7 +1719,7 @@ def idle_wait(log: Log, stop: threading.Event, pause: float) -> None:
         stop.wait(min(0.25, left))
 
 
-def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], stop: threading.Event, jev: Model | None = None) -> None:
+def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], stop: threading.Event) -> None:
     rpc = k.connect(agent)
 
     def cycle() -> bool:
@@ -1749,7 +1752,7 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
             log.event(**circle_context, arm="C", phase=phase[0], agent=agent, task=t["task_id"], kind=t["kind"],
                       outcome="TASK_ASSIGNED", at_unix_s=time.time())
         if t["kind"] == "BUILD":
-            closed = build_card(rpc, t["card"], model, log, phase[0], stop, jev, agent=agent, task_id=t["task_id"], circle_context=circle_context)
+            closed = build_card(rpc, t["card"], model, log, phase[0], stop, agent=agent, task_id=t["task_id"], circle_context=circle_context)
             if closed is False and log.active() and not stop.is_set():
                 rpc.call("audit_release", task_id=t["task_id"])
             return True
@@ -1791,7 +1794,7 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
             r = log.reply(local, **circle_context, arm="C", phase=ph, agent=agent, task=task, kind=t["kind"], call_id=c.call_id,
                           lines_submitted=0) if local else submit(lines, c.call_id)
             accepted = [] if r.get("local") else note_observes(log, lines, r)
-        # the owner's measure (2026-10-23): of the lines the agent offered, how many the graph got
+        # the measure: of the lines the agent offered, how many the graph got
         offered = {ln["local_id"] for ln in lines if isinstance(ln.get("local_id"), str)}
         stored = set(r.get("accepted_locals") or {})
         tries = 0
@@ -1813,7 +1816,7 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
                     # pre-flight of 8d771feb: it came after this loop, and the turn the kernel opened was released unasked)
                     abandoned_reading = r
                     r = submit(fallback(t, stored), None)
-                # the hint profile (the owner, 2026-10-31): the kernel stored the reading answer and shows each of its claims with the
+                # the hint profile: the kernel stored the reading answer and shows each of its claims with the
                 # claims of other report dates that share its words; one more call may write the change on both quotes
                 if r.get("status") != "RELATE" or timed_out or stop.is_set() or not log.active():
                     break
@@ -1853,8 +1856,7 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
                             raise RuntimeError(f"task renewal failed: {renewed}")
                         timed_out=True
                         break
-                if not r.get("local"):
-                    log.adjust_effort("C",t["kind"],ph,context,"kernel_repair")
+                log.after_call("C",t["kind"],ph,context,reply=r)
                 next_call = log.invoke(model, repair_prompt(prompt, r, "lines", c.text, accepted), call_id=f"C{ph}-{task}-{'r' if relate_turn else ''}{tries}",
                                arm="C", role=t["kind"], phase=ph, context=dict(context, repair=tries))
                 if next_call is None:
@@ -1916,7 +1918,7 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
         log.event(**circle_context, arm="C", phase=ph, agent=agent, task=task, kind=t["kind"], key=t.get("key"), outcome=r.get("status"),
                   **measures, parse_failure=parse_failure, error=error, abandoned=abandoned,
                   lines_offered=len(offered), lines_stored=len(stored & offered),
-                  model=c.model, effort=c.effort, model_family=c.model_family, link_authors=t.get("link_authors"), verdict=r.get("verdict"))
+                  model=c.model, model_family=c.model_family, **c.extra, link_authors=t.get("link_authors"), verdict=r.get("verdict"))
         if r.get("status") != "COMMITTED" and log.active() and not stop.is_set():
             rpc.call("audit_release", task_id=task)
             log.released(t.get("key", task))
@@ -1929,8 +1931,8 @@ def c_worker(k: Kernel, agent: str, model: Model, log: Log, phase: list[int], st
 
 
 def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: threading.Event,
-               jev: Model | None = None, *, agent: str = "gb", task_id: str | None = None, circle_context: dict | None = None) -> bool | None:
-    """The same card, selector, parsing and repairs for dedicated and leased builders."""
+               *, agent: str = "gb", task_id: str | None = None, circle_context: dict | None = None) -> bool | None:
+    """The same card, parsing and repairs for dedicated and leased builders."""
     role = "BUILD" if task_id else "REFINER" if CIRCLES_REFINER is not None and agent == "gb" else "BUILDER"
     circle_context = circle_context or {}
     attempt_id = f"{card['card_id']}-{task_id}" if task_id else card["card_id"]
@@ -1941,7 +1943,7 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
                  "ontology_review":card.get("kind")=="ONTOLOGY_REVIEW_CARD"}
     actual_model = getattr(log.preview_model(model,"C",role,phase,{**circle_context,**card_signal}),"name","unknown")
 
-    def submit_ops(cid: str, ph: int, ops: list[dict], call_id: str | None, sources: list[str] | None = None) -> dict:
+    def submit_ops(cid: str, ph: int, ops: list[dict], call_id: str | None, annotate: Callable | None = None) -> dict:
         nonlocal submitted_ops
         submitted_ops += sum(op.get("op") != "request" for op in ops)
         try:
@@ -1954,7 +1956,9 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
         extra={}
         if CIRCLES:
             from .agent_matrix import operation_decisions
-            extra["operation_decisions"]=operation_decisions(card,ops,r,sources)
+            extra["operation_decisions"]=operation_decisions(card,ops,r)
+        if annotate is not None:
+            annotate(extra)
         log.event(**circle_context,arm="C", phase=ph, agent=agent, card=cid, task=task_id, kind=role, call_id=call_id,
                   ontology_anomaly=bool(hint_kinds),ontology_review=card_signal["ontology_review"],builder_model=actual_model, outcome="CARD_SUBMITTED", operation_results=r.get("results") or [], operations=ops, **extra)
         if r.get("requests"):
@@ -1962,7 +1966,10 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
         return r
 
     response_rule = "\nAn explicit grounded review is required; [] leaves this review open." if card.get("kind")=="ONTOLOGY_REVIEW_CARD" else ("" if card.get("kind")=="EVOLUTION_LINK_CARD" else EMPTY_RESPONSE_RULE)
-    prompt = card["prompt"] + response_rule + "\nCARD:\n" + json.dumps({k_: v for k_, v in card.items() if k_ != "prompt"})
+    def card_prompt(shown: dict) -> str:
+        return shown["prompt"] + response_rule + "\nCARD:\n" + json.dumps({k_: v for k_, v in shown.items() if k_ != "prompt"})
+
+    prompt = card_prompt(card)
     cid, ph = card["card_id"], phase
     context = {**card_signal,"task_id":task_id,"builder_model":getattr(model,"name",None),**circle_context}
     log.event(**circle_context,arm="C", phase=ph, agent=agent, card=cid, task=task_id, kind=role, outcome="CARD_ASSIGNED",
@@ -2001,49 +2008,17 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
             log.fail(f"EMPTY_CARD_REFUSED: {r.get('code') or (r.get('error') or {}).get('code')}", arm="C", phase=ph, agent=agent, card=cid)
             return False
         return True
-    # A term selector first, when one is set (the closed layer's Jev; the owner, 2026-10-22): the terms it is sure of are mapped
-    # by it; the builder maps the others and proposes the new concepts and the links. A failed selector call leaves every term to
-    # the builder. The selector brings its own questions and decision rule: request(card) -> (its request, the record and term of
-    # each question) and ops(answers, index, card) -> the map_term operations it is sure of.
-    decided: list[dict] = []
-    index = {}
-    suggested=[]
-    if jev is not None:
-        request, index = jev.request(card)
-        if index:
-            if not renew():
-                return False
-            jc = log.invoke(jev, json.dumps(request), call_id=f"J{ph}-{attempt_id}", arm="C", role="JEV", phase=ph, context=context)
-            if jc is None:
-                return False
-            if jc.ok:
-                selected = jev.ops(json.loads(jc.text or "{}"), index, card)
-                if GRAPH_QUALITY.get("jev_mode")=="footer":
-                    suggested=selected
-                elif GRAPH_QUALITY.get("jev_mode")=="inline-flag":
-                    suggested=selected
-                elif GRAPH_QUALITY.get("jev_mode")=="already-mapped":
-                    decided=selected
-                elif card.get("ontology_revision"):
-                    provisional={c["id"] for cs in card["candidates"].values() for c in cs if c.get("status")=="provisional"}
-                    suggested=[op for op in selected if op["concept"] in provisional]
-                    decided=[op for op in selected if op["concept"] not in provisional]
-                else:
-                    decided=selected
-    if CIRCLES:
-        material_keys=[] if card.get("kind") in ("PAIR_CARD","EVOLUTION_LINK_CARD") else [(r["id"],term) for r in card["records"] for term in dict.fromkeys(r.get("terms") or [])]
-        log.event(**circle_context,arm="C",phase=ph,agent=agent,card=cid,outcome="JEV_COVERAGE",builder_model=actual_model,
-                  material_keys=material_keys,eligible_keys=list(index.values()),selected_keys=[(o["record"],o["term"]) for o in decided],
-                  provisional_suggested_keys=[(o["record"],o["term"]) for o in suggested])
-    if GRAPH_QUALITY.get("jev_mode")=="inline-flag":
-        from .graph_quality import inline_card
-        shown=inline_card(card,suggested)
-        prompt=card["prompt"]+response_rule+"\nCARD:\n"+json.dumps({k:v for k,v in shown.items() if k!="prompt"})
-    elif suggested:
-        prompt += "\nPROVISIONAL CONCEPT SUGGESTIONS by Jev (not stored, not established; independently choose, revise or leave unmapped):\n"+json.dumps(suggested)
-    if decided:
-        prompt += ("\nALREADY MAPPED by a fast selector (do not map these record terms again; map only the other terms):\n"
-                   + "\n".join(json.dumps(o) for o in decided))
+    def card_event(**fields) -> None:
+        log.event(**circle_context,arm="C",phase=ph,agent=agent,card=cid,builder_model=actual_model,**fields)
+
+    def card_call(called: Model, text: str, *, call_id: str, role: str) -> Call | None:
+        return log.invoke(called, text, call_id=call_id, arm="C", role=role, phase=ph, context=context)
+
+    ctx = SimpleNamespace(phase=ph, attempt_id=attempt_id, role=role, renew=renew, render=card_prompt, event=card_event, invoke=card_call)
+    prepared = RUN_HOOK.before(card, ctx)
+    if prepared is None:
+        return False
+    prompt, card_fields = prepared
     if not renew():
         return False
     c = log.invoke(model, prompt, call_id=f"B{ph}-{attempt_id}-0", arm="C", role=role, phase=ph, context=context)
@@ -2059,39 +2034,14 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
     if refused:
         log.event(**circle_context,arm="C", phase=ph, agent=agent, card=cid, call_id=c.call_id, outcome="MODEL_REFUSED", error=c.error)
     accepted = []
-    has_submitted, overridden, jev_refused = False, 0, 0
 
     def submit_answer(call: Call) -> tuple[list[dict], dict, str, bool]:
-        nonlocal has_submitted, overridden, jev_refused, decided
         text = call.text
         operations, local, empty = check_answer(call, allow_empty=True, bound=card.get("max_ops"))
         if local:
             return [], local, text, empty
-        first = not has_submitted
-        sources = None
-        if first:
-            revising={o.get("concept") for o in operations if o.get("op")=="revise_concept"}
-            decided=[o for o in decided if o["concept"] not in revising]
-            if CIRCLES and (decided or suggested):
-                from .agent_matrix import jev_comparison
-                compared=jev_comparison(card,decided+suggested,operations)
-                log.event(**circle_context,arm="C",phase=ph,agent=agent,card=cid,outcome="JEV_AGENT_COMPARISON",
-                          builder_model=actual_model,jev_comparison=compared,
-                          jev_agent_absent=len({(o["record"],o["term"]) for o in decided}-{(o["record"],o["term"]) for o in operations
-                                                  if o.get("op")=="map_term" and "record" in o and "term" in o}))
-            taken = {(o["record"], o["term"]) for o in decided}
-            own_ops = [o for o in operations if not (o.get("op") == "map_term" and (o.get("record"), o.get("term")) in taken)]
-            overridden = len(operations) - len(own_ops)
-            operations = own_ops + decided
-            sources = ["BUILDER"] * len(own_ops) + ["JEV"] * len(decided)
-        result = submit_ops(cid, ph, operations, call.call_id, sources)
-        has_submitted = True
-        if first and decided:
-            refused = [x.get("index") for x in result.get("refused") or [] if isinstance(x, dict)]
-            jev_refused = sum(1 for i in refused if isinstance(i, int) and i >= len(own_ops))
-        # Server indexes refer to the combined first submission; local refusals refer to raw model output.
-        previous = "\n".join(json.dumps(o) for o in operations) if first and decided else text
-        return operations, result, previous, empty
+        operations, result, previous = RUN_HOOK.after(card, operations, lambda ops, annotate=None: submit_ops(cid, ph, ops, call.call_id, annotate), ctx)
+        return operations, result, previous or text, empty
 
     if refused:
         operations, r, previous, explicit_empty = [], {"status": "MODEL_REFUSED"}, "", False
@@ -2106,8 +2056,7 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
         tries += 1
         if not renew():
             return False
-        if not r.get("local"):
-            log.adjust_effort("C",role,ph,context,"kernel_repair")
+        log.after_call("C",role,ph,context,reply=r)
         c = log.invoke(model, repair_prompt(prompt, r, "operations", previous, accepted), call_id=f"B{ph}-{attempt_id}-{tries}",
                        arm="C", role=role, phase=ph, context=dict(context, repair=tries))
         if c is None:
@@ -2134,12 +2083,12 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
     log.event(**circle_context,arm="C", phase=ph, agent=agent, card=cid, task=task_id, kind=role, card_authors=sorted({x["author"] for x in card["records"] if x.get("author")}), builder_model=actual_model, records=len(card["records"]), outcome=r.get("status"), repairs=tries,
               broken_lines=broken, parse_failure=parse_failure, explicit_empty=explicit_empty, model_invoked=True,
               abandoned=abandoned, first_try=(tries == 0 and not abandoned),
-              jev_ops=len(decided), jev_provisional_suggestions=len(suggested), jev_refused=jev_refused, jev_overridden=overridden,
+              **card_fields,
               operations_submitted=submitted_ops, closed_without_operations=r.get("status") == "CARD_DONE" and submitted_ops == 0)
     return r.get("status") == "CARD_DONE"
 
 
-def c_builder(k: Kernel, model: Model, log: Log, phase: list[int], stop: threading.Event, jev: Model | None = None) -> None:
+def c_builder(k: Kernel, model: Model, log: Log, phase: list[int], stop: threading.Event) -> None:
     rpc = k.connect("gb")
     try:
         while not stop.is_set() and log.active():
@@ -2154,7 +2103,7 @@ def c_builder(k: Kernel, model: Model, log: Log, phase: list[int], stop: threadi
                 idle_wait(log, stop, pause)
                 continue
             circle_context={k:card[k] for k in ("circle","circle_phase","sync_step") if k in card}
-            closed=build_card(rpc, card, model, log, phase[0], stop, jev, circle_context=circle_context or None)
+            closed=build_card(rpc, card, model, log, phase[0], stop, circle_context=circle_context or None)
             if closed is None:continue
             if not closed:break
     finally:
@@ -2394,7 +2343,7 @@ def frozen_arm_a() -> dict:
 def run_arm_c(model: Model, builder_model: Model, work: pathlib.Path, manifest: pathlib.Path, repo: pathlib.Path, reports: list[str],
               docs: dict[str, str], withdraw: dict, workers: int = WORKERS, timeout_s: float = 1800, *,
               evidence: Evidence | None = None, max_calls: int = MAX_CALLS, budget: Budget | None = None,
-              builder_card: dict | None = None, jev: Model | None = None, team: list[Model] | None = None) -> dict:
+              builder_card: dict | None = None, team: list[Model] | None = None) -> dict:
     """`team`: the readers' models, one agent each (w1 the lead, who alone summarizes; the link checker reads with `model`); else
     `workers` agents of `model`."""
     document_paths = source_document_paths(manifest.read_bytes(), docs)
@@ -2437,15 +2386,14 @@ def run_arm_c(model: Model, builder_model: Model, work: pathlib.Path, manifest: 
             if WHOLE_READER and agent == "w1":
                 fn = lambda a=agent, m=agent_model: c_whole_worker(k, a, m, log, phase, stop, whole)
             else:
-                fn = lambda a=agent, m=agent_model: (c_worker(k, a, m, log, phase, stop, jev) if DYNAMIC_ROLES else c_worker(k, a, m, log, phase, stop))
+                fn = lambda a=agent, m=agent_model: c_worker(k, a, m, log, phase, stop)
             threads.append(threading.Thread(target=guarded_worker, args=(fn, log, stop), kwargs={"arm": "C", "agent": agent},
                                             name=f"audit-{agent}", daemon=True))
         if not DYNAMIC_ROLES and BUILD_SCOPE not in ("none", "hints", "versions"):
-            fn = lambda: c_builder(k, builder_model, log, phase, stop, jev)
+            fn = lambda: c_builder(k, builder_model, log, phase, stop)
             threads.append(threading.Thread(target=guarded_worker, args=(fn, log, stop), kwargs={"arm": "C", "agent": "gb"}, name="audit-gb", daemon=True))
         elif CIRCLES_REFINER is not None:
-            # the refiner works without Jev's suggestions: its additions are its own
-            fn = lambda: c_builder(k, CIRCLES_REFINER, log, phase, stop, None)
+            fn = lambda: c_builder(k, CIRCLES_REFINER, log, phase, stop)
             threads.append(threading.Thread(target=guarded_worker, args=(fn, log, stop), kwargs={"arm": "C", "agent": "gb"}, name="audit-gb", daemon=True))
         t0 = time.monotonic()
         log.deadline = t0 + timeout_s
@@ -3080,13 +3028,13 @@ def team_corpus(notes: list[str], docs: dict[str, str]) -> str:
 
 def run_arm_team(team: list[Model], docs: dict[str, str], withdraw: dict, timeout_s: float = 1800, *, evidence: Evidence | None = None,
                  max_calls: int = MAX_CALLS, budget: Budget | None = None, chosen: list[dict] | None = None) -> dict:
-    """Arm A as the same team without the kernel (the owner, 2026-10-25): the agents read the report sections from one queue into one
+    """Arm A as the same team without the kernel: the agents read the report sections from one queue into one
     shared notes file, each with the notes so far, as a team shares a document; then the lead (the team's first agent, who alone
     summarizes in the kernel's arm too) answers each research question from the notes alone, its quotes checked by the kernel's byte
     rule as the single agent's are; each withdrawal step told to the lead."""
     if ARM_A_ORCHESTRATION in ("langgraph-native", "temporal-native"):
         # the same team, prompts and checks as one LangGraph graph or one Temporal workflow with their own checkpoints, retries and
-        # native means (the owner, 2026-10-30)
+        # native means
         if ARM_A_ORCHESTRATION == "langgraph-native":
             from .arm_a_langgraph import run as run_native
         else:
@@ -3552,7 +3500,7 @@ def measures(a: dict, c: dict, docs: dict[str, str] | None = None) -> dict:
         "builder": {"cards": len(cards), "empty_cards": sum(1 for e in c["events"] if e.get("card") and e.get("empty")),
                     "first_try": sum(1 for e in cards if e["first_try"]), "repairs": sum(e["repairs"] for e in cards),
                     "abandoned": sum(1 for e in cards if e["abandoned"]), "parse_failures": sum(1 for e in cards if e.get("parse_failure")),
-                    "jev": {k: sum(e.get(f"jev_{k}") or 0 for e in cards) for k in ("ops", "refused", "overridden")},
+                    **RUN_HOOK.measures(cards),
                     "by_model": {name: {"cards": sum(e.get("builder_model") == name for e in cards),
                                        "first_try": sum(e.get("builder_model") == name and e["first_try"] for e in cards),
                                        "repairs": sum(e["repairs"] for e in cards if e.get("builder_model") == name)}

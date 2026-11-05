@@ -3,7 +3,7 @@ def enrich(snapshot, models):
     models=dict(models)
     models["kernel"]={"model":None,"nature":"deterministic_kernel"}
     models["base"]={"model":None,"nature":"genesis_seed"}
-    snapshot["model_attribution"]="Configured agent model/nature; exact per-call effort remains in the call journal."
+    snapshot["model_attribution"]="Configured agent model/nature; the exact model of each call remains in the call journal."
     snapshot["models"]=models
     events=snapshot.get("events") or []
     mappings=snapshot.get("current_mappings")

@@ -680,7 +680,7 @@ pub struct AuditState {
     journal: Option<AuditJournal>,
     // Read-only projection of committed checkpoint frames; not part of the audit root or WAL format.
     telemetry_frames: Vec<Value>,
-    // The control profiles `--build-scope concepts|none` (the owner, 2026-10-30): no link between records is created by any path.
+    // The control profiles `--build-scope concepts|none`: no link between records is created by any path.
     // A run policy set by the server from its bound coverage configuration; not part of the audit root or WAL format.
     links_off: bool,
 }
@@ -1283,7 +1283,7 @@ impl Core {
                 }
                 let by = command.get("subject").and_then(Value::as_str).unwrap_or(actor);
                 let mut view = self.data.ontology.propose(by, string(command, "type")?, string(command, "name")?, &strings(command, "aliases")?, &basis)?;
-                // the address layer (owner and Gemini, 01.11.2026): the first proposal that names a function places the concept
+                // the address layer: the first proposal that names a function places the concept
                 if command.get("function").is_some() {
                     self.data.ontology.place(&view.id, string(command, "function")?)?;
                     view = self.data.ontology.concept(&view.id).expect("proposed concept");

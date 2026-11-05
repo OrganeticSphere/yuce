@@ -8,7 +8,7 @@ impl Core {
         self.data.checkpoints.get("audit:mcp:coverage").is_some_and(|c| c["context"]["unattested_at_end"] == true)
     }
     /// Seeds the reports never name. A seed is attested when its name or an alias stands in the text of a loaded report as whole
-    /// words (the owner, 2026-10-27). A stored mapping does not attest it: a shared word maps terms to a concept the reports never
+    /// words. A stored mapping does not attest it: a shared word maps terms to a concept the reports never
     /// name (run C0n_r1: 'database migration' got three mappings, 'unrelated migration requirements' among them, so nothing was
     /// ever unattested). Offline on that run the text names 22 of its 24 seeds: of the other two, one is a planted absent
     /// concept and one a planted stance; one correct seed, 'out of scope', is named nowhere either. Without the rule: seeds nothing

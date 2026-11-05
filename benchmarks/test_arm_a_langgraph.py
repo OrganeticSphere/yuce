@@ -1,4 +1,4 @@
-"""Arm A as a LangGraph-native team (the owner, 2026-10-30: a run with LangGraph's own checkpoints and native means, for a real
+"""Arm A as a LangGraph-native team (a run with LangGraph's own checkpoints and native means, for a real
 comparison with LangGraph): the stub team on the synthetic corpus. No provider is called; skipped without langgraph (the system
 Python), run in the baselines venv."""
 from __future__ import annotations

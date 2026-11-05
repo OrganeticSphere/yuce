@@ -301,7 +301,7 @@ fn a_run_completes_on_the_wire_and_resumes_from_the_journal_after_a_kill() {
 
 #[test]
 fn a_closed_run_tells_every_agent_done_and_accepts_nothing_more_until_a_restart() {
-    // R27 package 2 (the owner, 2026-10-28): COMPLETE is not the end, the owner may still withdraw a source and reopen work, so
+    // R27 package 2: COMPLETE is not the end, the owner may still withdraw a source and reopen work, so
     // the agents kept polling; DONE tells them the owner closed the run
     let fx = Fixture::new("close");
     let server = Server::start(&fx.args(true));
@@ -797,44 +797,41 @@ fn concept_functions_are_taken_and_their_summaries_need_them() {
 
 #[test]
 fn graph_quality_modes_are_pinned_and_legacy_inventory_is_preserved() {
-    for mode in ["footer", "already-mapped", "inline-flag"] {
-        let f = Fixture::new(mode);
-        let extra = vec![
-            "--term-hygiene".into(),
-            "--candidate-match".into(),
-            "strict".into(),
-            "--known-concepts".into(),
-            "all".into(),
-            "--jev-mode".into(),
-            mode.into(),
-            "--link-both-sides".into(),
-            "--stale-suspect".into(),
-            "--evolution-cards".into(),
-        ];
-        let mut args = f.args(true);
-        args.extend(extra.clone());
-        let server = Server::start(&args);
-        let mut owner = Client::connect(server.port, OWN);
-        let st = owner.call("audit_status", json!({}));
-        assert_eq!(st["graph_quality"]["config"]["jev_mode"], mode, "{st}");
-        let root = st["audit_root"].clone();
-        let tools = owner.tools();
-        drop(owner);
-        drop(server);
-        let bad = Command::new(BIN).args(["audit-serve", "--profile", "custom"]).args(f.args(false)).output().unwrap();
-        assert!(!bad.status.success());
-        let mut args = f.args(false);
-        args.extend(extra);
-        let server = Server::start(&args);
-        let mut owner = Client::connect(server.port, OWN);
-        assert_eq!(owner.call("audit_status", json!({}))["audit_root"], root);
-        assert_eq!(owner.tools(), tools);
-    }
+    let f = Fixture::new("graph_quality_modes");
+    let extra = vec![
+        "--term-hygiene".into(),
+        "--candidate-match".into(),
+        "strict".into(),
+        "--known-concepts".into(),
+        "all".into(),
+        "--link-both-sides".into(),
+        "--stale-suspect".into(),
+        "--evolution-cards".into(),
+    ];
+    let mut args = f.args(true);
+    args.extend(extra.clone());
+    let server = Server::start(&args);
+    let mut owner = Client::connect(server.port, OWN);
+    let st = owner.call("audit_status", json!({}));
+    assert_eq!(st["graph_quality"]["config"]["candidate_match"], "strict", "{st}");
+    assert_eq!(st["graph_quality"]["config"]["known_concepts"], "all", "{st}");
+    let root = st["audit_root"].clone();
+    let tools = owner.tools();
+    drop(owner);
+    drop(server);
+    let bad = Command::new(BIN).args(["audit-serve", "--profile", "custom"]).args(f.args(false)).output().unwrap();
+    assert!(!bad.status.success());
+    let mut args = f.args(false);
+    args.extend(extra);
+    let server = Server::start(&args);
+    let mut owner = Client::connect(server.port, OWN);
+    assert_eq!(owner.call("audit_status", json!({}))["audit_root"], root);
+    assert_eq!(owner.tools(), tools);
 }
 
 #[test]
 fn without_flags_audit_serve_runs_the_measured_v01_profile() {
-    // the owner, 2026-11-03: "download, run, get what was measured" - no graph builder, reading in circles with dynamic roles
+    // "download, run, get what was measured": no graph builder, reading in circles with dynamic roles
     let fx = Fixture::new("profile");
     let readers = |n: usize| {
         let mut s: Vec<Value> = [(W1, "w1"), (W2, "w2"), (GB, "w3")][..n].iter().map(|(t, id)| json!({"token":t,"role":"swarm","id":id})).collect();

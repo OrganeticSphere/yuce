@@ -136,7 +136,7 @@ pub struct ConceptView {
     pub aliases: Vec<String>,
     /// `accepted` / `proposed` / `retired`.
     pub status: String,
-    /// The broad function of the system the concept belongs to (owner and Gemini, 01.11.2026: the graph's "address" layer). An
+    /// The broad function of the system the concept belongs to (the graph's "address" layer). An
     /// address, never an identity: two concepts of one function are not the same thing, and ending one ends neither the other nor
     /// the function. Set once, by the first proposal that names it.
     pub function: Option<String>,

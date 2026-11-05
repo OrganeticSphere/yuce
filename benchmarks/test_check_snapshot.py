@@ -1,6 +1,7 @@
 """scripts/check_snapshot.py on small snapshots built in a temporary folder (Codex's review of the 0.1.0 package, D03 and P3):
 a secret-looking value is a placeholder only when the whole value has a placeholder's shape; the internal report family is
-found by its glob; the version is read from Cargo.toml and Cargo.lock, not from a comment. Offline, standard library only."""
+found by its glob; the version is read from Cargo.toml and Cargo.lock, not from a comment; a word of what stays out of a snapshot is
+refused in any case. Offline, standard library only."""
 from __future__ import annotations
 
 import importlib.util
@@ -61,6 +62,20 @@ class CheckSnapshot(unittest.TestCase):
         found = self.problems({"run/arm_c/subjects.json": "{}\n", "notes.md": home + "\n"})
         self.assertTrue(any("subjects file" in p for p in found), found)
         self.assertTrue(any("home path" in p for p in found), found)
+
+    def test_a_listed_word_is_refused_in_any_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            snapshot(root, {"notes.md": "x\nsee a Secret-Word here\n"})
+            found, _, _ = CS.check(root, "0.1.0", ["secret-word"])
+        self.assertEqual(found, ["notes.md:2: a word of what stays out of a snapshot"])
+
+    def test_a_word_in_capitals_is_refused_only_in_that_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            snapshot(root, {"notes.md": "a Word here\nand a word here\nand a WORD here\n"})
+            found, _, _ = CS.check(root, "0.1.0", ["WORD"])
+        self.assertEqual(found, ["notes.md:3: a word of what stays out of a snapshot"])
 
 
 if __name__ == "__main__":

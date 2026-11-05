@@ -1,4 +1,4 @@
-"""Arm A as a Temporal-native team (the owner, 2026-10-30: the same as the LangGraph-native team for Temporal before its run): the
+"""Arm A as a Temporal-native team (the same as the LangGraph-native team, for Temporal): the
 stub team on the synthetic corpus, on the test's own local dev server. No provider is called; skipped without temporalio or the
 Temporal CLI (the system Python), run in the baselines venv."""
 from __future__ import annotations

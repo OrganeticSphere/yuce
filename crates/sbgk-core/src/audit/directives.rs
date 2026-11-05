@@ -53,7 +53,7 @@ pub struct DispatchConfig {
     /// Live run 10A-2: shown 76..85 claims, the summaries restated them in 70+ lines and ran into the model's output limit (8192
     /// tokens) mid-line, three times, so the answer was lost. A summary condenses: 40 lines of about 120 tokens fit.
     pub summary_lines: usize,
-    /// The graph builder's typed requests (U1, the owner's decision of 2026-10-24): at most this many in a run (0: off) and this
+    /// The graph builder's typed requests (U1): at most this many in a run (0: off) and this
     /// many per card.
     pub max_requests: usize,
     pub requests_per_card: usize,
@@ -64,7 +64,7 @@ pub struct DispatchConfig {
     /// exceed `backpressure_records` (0: off). Link checks, conflicts and requests are never held.
     pub backpressure_records: usize,
     pub backpressure_per_task: usize,
-    /// Reading zones (the owner, 2026-10-25, run S1.2): each a set of documents one EXTEND task reads whole, every section of
+    /// Reading zones (run S1.2): each a set of documents one EXTEND task reads whole, every section of
     /// them in one directive, so its records may be related across them. A document of no zone is read section by section as
     /// before. Empty: no zones.
     pub zones: Vec<Vec<String>>,
@@ -74,17 +74,17 @@ pub struct DispatchConfig {
     pub own_refs: bool,
     /// Explicit read/build waves, off for both historical modes.
     pub circles: Option<circles::CircleConfig>,
-    /// Circles +1 (the owner, 2026-10-27): the subject of the swarm's independent graph builder with a fixed role. It refines the
+    /// Circles +1: the subject of the swarm's independent graph builder with a fixed role. It refines the
     /// swarm's graph in a REFINE phase after the swarm's BUILD of every circle; None keeps circles as they were.
     pub circle_refiner: Option<String>,
-    /// The longest REFINE of a circle: past it the swarm goes on and the refiner keeps its cursor for the next circle (the
-    /// owner, 2026-10-27: one slow refiner call must not hold a circle). None waits for the refiner.
+    /// The longest REFINE of a circle: past it the swarm goes on and the refiner keeps its cursor for the next circle (one
+    /// slow refiner call must not hold a circle). None waits for the refiner.
     pub refine_budget_ms: Option<u64>,
     /// The swarm may write relation lines, which become links the swarm checks. Off in the owner's control profiles
     /// `--build-scope concepts|none` (2026-10-30): records are not connected, the prompts offer no relation line, and one is
     /// refused before the store.
     pub relation_lines: bool,
-    /// The hint profile `--build-scope hints` (the owner, 2026-10-31: no build phase; the reader gets related records with its
+    /// The hint profile `--build-scope hints` (no build phase; the reader gets related records with its
     /// directive): once a reading task's answer is stored, the task has one more turn, RELATE, which shows each of its claims with
     /// claims of other report dates that share its words (hints, not evidence) and takes only claims of a change on both quotes.
     pub relate_hints: bool,
@@ -1540,8 +1540,8 @@ impl Dispatcher {
     }
 
     /// `acquire_paced` for an agent that does only the given kinds of task (`None`: any). A single strong reader writes every
-    /// claim, so it can check no link between them: a second agent checks the links and does nothing else (the owner, 2026-10-25:
-    /// one strong model in place of the swarm).
+    /// claim, so it can check no link between them: a second agent checks the links and does nothing else (one
+    /// strong model in place of the swarm).
     pub fn acquire_for<S: AuditStore>(
         &mut self,
         s: &S,
@@ -1584,7 +1584,7 @@ impl Dispatcher {
             work.insert(at, (TaskKind::Build, key, None, None, None));
         }
         let mut pick = None;
-        // variant D (Gemini and the owner, 2026-10-22): questions are investigated once every section is read and the builder has
+        // variant D: questions are investigated once every section is read and the builder has
         // caught up, so an investigation sees the whole corpus in the graph
         let reading = work.iter().any(|w| w.0 == TaskKind::Extend);
         // the first reader of an idle builder is never held, so a misconfigured bound cannot stop the run
@@ -3129,7 +3129,7 @@ impl Dispatcher {
         if lease.kind == TaskKind::Extend && refusals > 0 && !lease.relate {
             self.strained.insert(lease.key.clone(), loss);
         }
-        // the hint profile: a stored reading answer opens the task's RELATE turn instead of closing it (the owner, 2026-10-31)
+        // the hint profile: a stored reading answer opens the task's RELATE turn instead of closing it
         if self.cfg.relate_hints && lease.kind == TaskKind::Extend && !lease.relate {
             let own: Vec<RecordId> = self.leases.get(task_id).map(|l| l.own.clone()).unwrap_or_default();
             let claims: Vec<RecordId> = own.into_iter().filter(|id| s.record(id).is_some_and(|r| r.kind == RecordKind::Claim)).collect();
@@ -3669,7 +3669,7 @@ mod tests {
 
     #[test]
     fn an_agent_limited_to_link_checks_gets_no_reading_and_no_summary() {
-        // one strong reader in place of the swarm (the owner, 2026-10-25): a second agent only checks the links between its claims
+        // one strong reader in place of the swarm: a second agent only checks the links between its claims
         let (mut s, mut d, mut b) = setup();
         let checker = [TaskKind::VerifyLink, TaskKind::ResolveConflict];
         assert_eq!(d.acquire_for(&s, "w2", true, None, Some(&checker), 0)["status"], "WAIT", "no reading for the checker");
@@ -4202,7 +4202,7 @@ mod tests {
 
     #[test]
     fn with_hints_a_stored_reading_answer_opens_a_relate_turn_that_takes_only_a_claim_of_the_change() {
-        // the owner's hint profile (31.10): a reader is shown the claims of other report dates that share its claim's words, and
+        // the hint profile: a reader is shown the claims of other report dates that share its claim's words, and
         // writes the change itself on both quotes
         let (mut s, mut d, relate) = hint_reading(true);
         let (t, r, agent, doc) = relate.expect("the second batching claim opens a RELATE turn");

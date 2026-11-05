@@ -5,8 +5,8 @@
       --checklist <checklist.md> --withdrawal-plan <plan.json> --model stub
                                                         # a corpus (benchmarks/corpora/...) with the stub model: the mechanics ($0)
 
-A corpus is given by --reports with its own --checklist and --withdrawal-plan. The options and models of the closed layer
-(pilot_ac.CLOSED_OPTIONS, pilot_ac.CLOSED_MODELS) need the package benchmarks/sbgk_bench/closed.
+A corpus is given by --reports with its own --checklist and --withdrawal-plan. The optional package benchmarks/sbgk_bench/closed adds
+options and models (pilot_ac.CLOSED_MODELS); without it argparse simply does not know its options.
 """
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def write_circle_artifacts(out: pathlib.Path, models: dict[str, str], *, stage: 
     from sbgk_bench.circle_metrics import circle_metrics, acceptance_svg, matrix_markdown, jsonl_prefix
     warnings = []
     events = list(jsonl_prefix(out / "events.jsonl", warnings))
-    metrics = circle_metrics(out / "arm_c" / "run.wal", events, models, frames=telemetry["frames"] if telemetry is not None else None)
+    metrics = P.RUN_HOOK.metrics(circle_metrics(out / "arm_c" / "run.wal", events, models, frames=telemetry["frames"] if telemetry is not None else None), events)
     metrics["input_source"]={"kind":"authenticated_committed_checkpoints","through_sequence":telemetry.get("through_sequence"),"wal_head":telemetry.get("wal_head")} if telemetry is not None else {"kind":"closed_wal"}
     metrics["source_warnings"].extend(warnings)
     metrics["export"] = {"stage": stage, "interrupted": error is not None, "error": error, "generated_unix_ms": round(time.time()*1000),
@@ -181,7 +181,7 @@ def write_circle_artifacts(out: pathlib.Path, models: dict[str, str], *, stage: 
     from sbgk_bench.atomic_output import write_text
     errors=[]
     for name,render in (("circle_acceptance.svg",lambda:acceptance_svg(metrics)),
-                        ("circle_model_matrix.md",lambda:matrix_markdown(metrics))):
+                        ("circle_model_matrix.md",lambda:matrix_markdown(metrics,P.RUN_HOOK.markdown))):
         try:
             write_text(out/name,render())
         except Exception as exc:
@@ -218,7 +218,7 @@ def safe_graph_shape(path):
         return {"status":"UNAVAILABLE","error":f"{type(exc).__name__}: {exc}"}
 
 def reuse_arm_c(src: pathlib.Path, out: pathlib.Path, corpus: dict, withdraw: dict) -> tuple[dict, dict]:
-    """Arm C of an earlier finished run on the same inputs, taken as it ended (the owner, 2026-10-29: arm C of MCPpair2_r1 finished
+    """Arm C of an earlier finished run on the same inputs, taken as it ended (arm C of MCPpair2_r1 finished
     every phase, and arm A lost its withdrawals to a runner defect: run only arm A again). The earlier run's corpus, questions and
     withdrawal plan must be this run's; its arm C result, WAL and circle files are copied, and where they came from is recorded."""
     status = json.loads((src / "status.json").read_text(encoding="utf-8"))
@@ -256,7 +256,7 @@ def reuse_arm_c(src: pathlib.Path, out: pathlib.Path, corpus: dict, withdraw: di
 
 def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pathlib.Path, model: P.Model, workers: int, withdraw: dict | None,
         budget_usd: float | None = None, builder: P.Model | None = None, phase_timeout_s: float = 1800, builder_card: dict | None = None,
-        jev: P.Model | None = None, checklist: str | None = None, team: list[P.Model] | None = None, max_calls: int = P.MAX_CALLS) -> dict:
+        checklist: str | None = None, team: list[P.Model] | None = None, max_calls: int = P.MAX_CALLS) -> dict:
     builder = builder or model
     if type(max_calls) is not int or max_calls < 1:
         raise ValueError("max_calls must be a positive integer")
@@ -320,7 +320,7 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
         if reused is None:
             before = evidence.mark()
             c = P.run_arm_c(model, builder, out / "arm_c", pinned_manifest, staged_repo, reports, docs, withdraw,
-                            workers=workers, timeout_s=phase_timeout_s, evidence=evidence, budget=budgets["C"], builder_card=builder_card, jev=jev,
+                            workers=workers, timeout_s=phase_timeout_s, evidence=evidence, budget=budgets["C"], builder_card=builder_card,
                             team=team, max_calls=max_calls)
             evidence.progress = None
             evidence.reconcile(c, before)
@@ -362,7 +362,7 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
                  # DeepSeek settles the balance minutes after the calls: read at the end of a run it showed 0.36 for 10A-14, whose
                  # hourly usage export billed 0.472065, the brake's sum; the rest left the balance before the next run
                  "spend_note": "budget.spent_usd_estimate is usage x configured rates (an unknown cost keeps its reservation); it matched "
-                               "DeepSeek's hourly usage export for 10A-11..10A-14 (the owner's export of 2026-10-23), a calibration, not "
+                               "DeepSeek's hourly usage export for 10A-11..10A-14, a calibration, not "
                                "this run's invoice. balance_spent_usd is read at the end of the run and lags the provider's settlement"}
         if reused is not None and spend.get("budget"):
             spend["budget"]["C"] = reused["spend_c"]  # the earlier run's brake of arm C
@@ -373,13 +373,12 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
         summary = {"provenance": ran, "arm_c_reused": None if reused is None else {k: v for k, v in reused.items() if k != "circles"},
                    "executor": P.executors.describe(), "corpus": corpus, "model": model.name, "model_config": getattr(model, "config", None), "builder_model": "per-card" if P.DYNAMIC_ROLES else builder.name,
                    "builder_model_config": None if P.DYNAMIC_ROLES else getattr(builder, "config", None), "builder_card": builder_card or "kernel defaults",
-                   "jev_config": getattr(jev, "config", None),
                    "phase_timeout_s": phase_timeout_s, "workers": len(team) if team else workers, "builder_requests": P.BUILDER_REQUESTS,
                    "dynamic_roles": {"enabled": P.DYNAMIC_ROLES, "build_backlog": P.BUILD_BACKLOG,
                                      "checker": getattr(P.CHECKER_MODEL, "name", None), "max_calls_per_arm": max_calls,
                                      "circles": P.CIRCLES, "wave_sections": P.WAVE_SECTIONS,
                                      **({"circles_refiner":{"model":P.CIRCLES_REFINER.name,"refine_budget_s":P.REFINE_BUDGET_S,"timeout_s":getattr(P.CIRCLES_REFINER,"timeout_s",None)}} if P.CIRCLES_REFINER is not None else {}), "agy_timeout_s": P.AGY_TIMEOUT_S, "agent_timeout_s": P.AGENT_TIMEOUT_S,
-                                     **({"graph_quality":P.GRAPH_QUALITY} if P.GRAPH_QUALITY else {}),"ontology_revisions":P.ONTOLOGY_REVISIONS,"ontology_review":P.ONTOLOGY_REVIEW,**({"unattested_at_end":True} if P.UNATTESTED_AT_END else {}),"anomaly_effort":P.ANOMALY_EFFORT,"ontology_thresholds":P.ONTOLOGY_THRESHOLDS, "phase_effort": P.PHASE_EFFORT, "answer_timeout_s": P.ANSWER_TIMEOUT_S,**({"agent_attempts":P.AGENT_ATTEMPTS} if P.AGENT_ATTEMPTS is not None else {}),**({"arm_a_answer":P.ARM_A_ANSWER} if P.ARM_A_ANSWER!="direct" else {}),**({"arm_a_reduce":P.ARM_A_REDUCE} if P.ARM_A_REDUCE!="single" else {}),**({"arm_a_orchestration":P.ARM_A_ORCHESTRATION} if P.ARM_A_ORCHESTRATION!="runner" else {}),**({"build_scope":P.BUILD_SCOPE} if P.BUILD_SCOPE!="full" else {})},
+                                     **({"graph_quality":P.GRAPH_QUALITY} if P.GRAPH_QUALITY else {}),"ontology_revisions":P.ONTOLOGY_REVISIONS,"ontology_review":P.ONTOLOGY_REVIEW,**({"unattested_at_end":True} if P.UNATTESTED_AT_END else {}),"ontology_thresholds":P.ONTOLOGY_THRESHOLDS, "answer_timeout_s": P.ANSWER_TIMEOUT_S,**({"agent_attempts":P.AGENT_ATTEMPTS} if P.AGENT_ATTEMPTS is not None else {}),**({"arm_a_answer":P.ARM_A_ANSWER} if P.ARM_A_ANSWER!="direct" else {}),**({"arm_a_reduce":P.ARM_A_REDUCE} if P.ARM_A_REDUCE!="single" else {}),**({"arm_a_orchestration":P.ARM_A_ORCHESTRATION} if P.ARM_A_ORCHESTRATION!="runner" else {}),**({"build_scope":P.BUILD_SCOPE} if P.BUILD_SCOPE!="full" else {})},
                    "strong_reader": {"arm_a": P.ARM_A_MODE, "max_lines": P.MAX_LINES, "pairs_only": P.PAIRS_ONLY, "link_checker": P.LINK_CHECKER,
                                      "whole_reader": P.WHOLE_READER, "whole_steps": P.WHOLE_STEPS, "whole_links": P.WHOLE_LINKS},
                    "team": [{"agent": f"w{i}", "model": m.name, "config": getattr(m, "config", None)} for i, m in enumerate(team, start=1)] if team else None,
@@ -390,6 +389,7 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
                    "arm_a": {k: a.get(k) for k in (*phases, "stopped")}}
         if P.CIRCLES:
             summary["measures"]["circles"] = circle_data
+        P.RUN_HOOK.summary(summary)
         save_json(out / "summary.json", summary)
         def blind_step():
             blind,key=P.answers_md(a,c)
@@ -462,7 +462,7 @@ def selftest_circles() -> None:
             self.name = name
         def complete(self, prompt):
             if "\nCARD:\n" in prompt:
-                card = json.loads(prompt.split("\nCARD:\n", 1)[1].split("\nALREADY MAPPED", 1)[0])
+                card, _ = json.JSONDecoder().raw_decode(prompt.split("\nCARD:\n", 1)[1])
                 if card["records"]:
                     barrier.wait(timeout=15)
             return super().complete(prompt)
@@ -632,16 +632,6 @@ def selftest_run(workers: int, team: list[P.Model] | None = None) -> None:
                           "phase2_calls": {k: v["calls"] for k, v in m["phase2"].items()}, "builder": m["builder"]["cards"]}))
 
 
-class ClosedOption(argparse.Action):
-    """An option of the closed layer when the package is absent: one message instead of argparse's unrecognized argument."""
-
-    def __init__(self, option_strings, dest, **kwargs):
-        super().__init__(option_strings, dest, nargs="?", default=None, help=argparse.SUPPRESS)
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.exit(2, f"{parser.prog}: {P.closed_missing(option_string)}\n")
-
-
 def main() -> None:
     closed = P.closed_layer()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -650,7 +640,7 @@ def main() -> None:
     ap.add_argument("--agent-attempts",type=int,help="opt-in 1..1000 failed agent attempts per work key before durable unresolved")
     ap.add_argument("--arm-a-answer",choices=("direct","map-reduce"),default="direct",help="per-report A answers followed by reduction; team/single only")
     ap.add_argument("--arm-a-reduce",choices=("single","tree"),default="single",help="map-reduce reduction: one call, or pairwise merges in report order")
-    # the owner, 2026-10-30: a run of arm A with LangGraph's own checkpoints and native means, for a real comparison with LangGraph
+    # a run of arm A with LangGraph's own checkpoints and native means, for a real comparison with LangGraph
     ap.add_argument("--arm-a-orchestration",choices=("runner","langgraph-native","temporal-native"),default="runner",
                     help="arm A's team: the runner's threads; one LangGraph graph with its checkpointer, Send fan-out, interrupt/resume and "
                          "RetryPolicy; or one Temporal workflow with activities, RetryPolicy, updates and a durable history")
@@ -697,10 +687,10 @@ def main() -> None:
                     help="backpressure: first readings wait while the builder's backlog and readings in flight would exceed this (0: off)")
     ap.add_argument("--backpressure-per-task", type=int, default=P.BACKPRESSURE_PER_TASK, help="records counted per first reading in flight")
     ap.add_argument("--strong-reader", action="store_true",
-                    help="the comparison of one strong model with the kernel against it without (the owner, 2026-10-25): one reader and "
+                    help="the comparison of one strong model with the kernel against it without: one reader and "
                          "a link checker, the builder on the kernel's pairs only, arm A one agent without the kernel")
     ap.add_argument("--team", metavar="PARTNER",
-                    help="the team comparison (the owner, 2026-10-25): the --model agent leads and PARTNER reads and checks beside it, "
+                    help="the team comparison: the --model agent leads and PARTNER reads and checks beside it, "
                          "with the kernel against the same two without it (shared notes, the lead answers); PARTNER is a Codex model such "
                          "as gpt-6.1-sol, or opus, sonnet, haiku or stub; the strong-reader settings otherwise, --workers is not used")
     ap.add_argument("--team-effort", default="medium", help="reasoning effort of a Codex partner")
@@ -723,12 +713,12 @@ def main() -> None:
     ap.add_argument("--evolution-cards",action="store_true")
     ap.add_argument("--version-lineage", type=pathlib.Path, help="explicit ordered snapshot doc_id/SHA256 map; requires --build-scope versions")
     ap.add_argument("--build-scope",choices=("full","concepts","none","hints","versions"),default="full",
-                    help="arm C's graph builder (the owner's control runs, 2026-10-30): full; concepts (names concepts and maps terms, links "
+                    help="arm C's graph builder: full; concepts (names concepts and maps terms, links "
                          "off: no link, duplicate, conflict or pair card); none (no builder: no concepts, no term mapping, no links); hints (as none, and each reading task gets one more turn with the claims of other report dates that share its claims' words); versions (no graph builder, explicit version-map CHANGE reading tasks and independently verified links)")
     ap.add_argument("--temporal-summary",action="store_true",help="R30 step 2: summaries show report dates, keep supersedes/contradicts pairs whole, warn on superseded claims")
     ap.add_argument("--summary-companions",action="store_true",help="with --temporal-summary: a summary claim brings the claim of a later report it is most like by words (31.10: later states read but cut from the window)")
     ap.add_argument("--evolution-document-order",type=str,help="JSON file of chronological document ids for undated reports")
-    ap.add_argument("--concept-functions",action="store_true",help="the address layer (owner and Gemini, 2026-11-01): a new concept may name the broad function of the system it belongs to; with --evolution-pairing lexical, pairs also join a claim with the records of change of its function")
+    ap.add_argument("--concept-functions",action="store_true",help="the address layer: a new concept may name the broad function of the system it belongs to; with --evolution-pairing lexical, pairs also join a claim with the records of change of its function")
     ap.add_argument("--change-summary-documents",type=str,help="with --concept-functions and --evolution-pairing lexical: JSON file of the document ids or labels that are change summaries; their claims count as records of change besides the claims that state one")
     ap.add_argument("--evolution-pairs-per-function",type=int,default=None,help="with --concept-functions: earlier records of change per claim and function (kernel default 3)")
     ap.add_argument("--evolution-pairs-per-concept",type=int,default=None)
@@ -737,13 +727,11 @@ def main() -> None:
                     help="how evolution cards find their pairs: concepts (pairs of claims sharing a stored concept, the default) or lexical (step 3a of 31.10: by the claims' own words, the best earlier claim of the same page and of the whole corpus)")
     ap.add_argument("--unattested-at-end",action="store_true",help="kernel marks zero-mapping seed concepts unattested after complete reading/building")
     ap.add_argument("--ontology-review",action="store_true",help="one mandatory anomaly review per concept/circle; keep or grounded revision")
-    ap.add_argument("--anomaly-effort",choices=("medium","high"),help="initial effort for ontology anomaly cards")
     ap.add_argument("--ontology-revisions", action="store_true", help="grounded revisions confirmed by the next nonproposer in a circle")
     ap.add_argument("--ontology-unmapped-circles",type=int,default=3)
     ap.add_argument("--ontology-catchall-mappings",type=int,default=8)
     ap.add_argument("--ontology-catchall-reports",type=int,default=2)
     ap.add_argument("--base-ontology", help="a seed ontology file (r2r-audit-ontology/1 with concepts) for arm C's kernel")
-    ap.add_argument("--phase-effort", help="READ=medium,BUILD=low,VERIFY=medium,ANSWER=medium; opt-in same-family ladder")
     ap.add_argument("--answer-timeout-s", type=float, default=900.0, help="Antigravity transport deadline of A and C answer calls")
     ap.add_argument("--agent-timeout-s", type=float, default=300.0, help="circle response/readiness deadline; timeout permits failover")
     ap.add_argument("--agy-timeout-s", type=float, default=240.0, help="timeout of each Antigravity CLI call")
@@ -768,19 +756,16 @@ def main() -> None:
                     help="run S1.3 with --whole-reader: atomic records, the answers in a call of their own, a refused answer line asked "
                          "about once, a withdrawal restated on the remaining quotes")
     ap.add_argument("--whole-reader", action="store_true",
-                    help="run S1.2 (the owner, 2026-10-25): one strong agent reads every report in one zone task of the kernel and hands in "
+                    help="run S1.2: one strong agent reads every report in one zone task of the kernel and hands in "
                          "its records, relations and answers in one answer; arm A takes the same answer without the kernel")
     ap.add_argument("--max-lines", type=int, help="the lines one answer of the kernel may hold (default: the kernel's)")
     ap.add_argument("--section-bytes", type=int, default=P.SECTION_BYTES,
                     help="upper bound of a report section, the same for both arms and the kernel (registry R1a'': 3000 tested against 6000)")
     if closed is not None:
         closed.add_arguments(ap)
-    else:
-        for option in P.CLOSED_OPTIONS:
-            ap.add_argument(option, action=ClosedOption)
     a = ap.parse_args()
     if closed is None:
-        # a model of the closed layer stops before any work, with the same one message
+        # a model of the closed layer stops before any work, with one message
         for name in (a.model, a.builder_model, a.checker_model, a.circles_refiner, a.team, *(a.team_models or "").split(",")):
             if name and name.strip() in P.CLOSED_MODELS:
                 sys.exit(P.closed_missing(f"the model {name.strip()}"))
@@ -856,11 +841,7 @@ def main() -> None:
         sys.exit("--agy-timeout-s must be finite and positive")
     if not math.isfinite(a.agent_timeout_s) or a.agent_timeout_s < 0.001:
         sys.exit("--agent-timeout-s must be finite and at least 0.001")
-    from sbgk_bench.phase_effort import parse_phase_effort
-    try:
-        P.PHASE_EFFORT = parse_phase_effort(a.phase_effort)
-    except ValueError as exc:
-        sys.exit(str(exc))
+    P.RUN_HOOK = closed.configure(a) if closed is not None else P.RunHook()
     if not math.isfinite(a.answer_timeout_s) or a.answer_timeout_s <= 0:
         sys.exit("--answer-timeout-s must be finite and positive")
     P.ANSWER_TIMEOUT_S = a.answer_timeout_s
@@ -885,7 +866,7 @@ def main() -> None:
         sys.exit("--change-summary-documents requires --concept-functions and --evolution-pairing lexical")
     if a.evolution_pairs_per_function is not None and not a.concept_functions:
         sys.exit("--evolution-pairs-per-function requires --concept-functions")
-    P.GRAPH_QUALITY={k:getattr(a,k) for k in ("term_hygiene","term_max_words","candidate_match","jev_mode","known_concepts","ring_rotate","link_both_sides","stale_suspect","temporal_summary","summary_companions","evolution_cards","evolution_pairs_per_concept","evolution_pairs_per_card","evolution_pairing","evolution_document_order","concept_functions","change_summary_documents","evolution_pairs_per_function") if getattr(a,k,None) is not None and getattr(a,k) is not False}
+    P.GRAPH_QUALITY={k:getattr(a,k) for k in ("term_hygiene","term_max_words","candidate_match","known_concepts","ring_rotate","link_both_sides","stale_suspect","temporal_summary","summary_companions","evolution_cards","evolution_pairs_per_concept","evolution_pairs_per_card","evolution_pairing","evolution_document_order","concept_functions","change_summary_documents","evolution_pairs_per_function") if getattr(a,k,None) is not None and getattr(a,k) is not False}
     if a.build_scope!="full":
         clash=[f for f,v in (("--evolution-cards",a.evolution_cards),("--evolution-document-order",a.evolution_document_order),
                              ("--evolution-pairs-per-concept",a.evolution_pairs_per_concept),("--evolution-pairs-per-card",a.evolution_pairs_per_card),("--evolution-pairing",a.evolution_pairing),("--change-summary-documents",a.change_summary_documents),
@@ -894,7 +875,7 @@ def main() -> None:
         if clash:sys.exit(f"--build-scope {a.build_scope} makes no links: drop {', '.join(clash)}")
     if a.build_scope in ("none","hints","versions"):
         clash=[f for f,v in (("--builder-max-records",a.builder_max_records),("--builder-max-neighbors",a.builder_max_neighbors),
-                             ("--builder-max-ops",a.builder_max_ops),("--builder-requests",a.builder_requests),("--jev",getattr(a,"jev",None))) if v]
+                             ("--builder-max-ops",a.builder_max_ops),("--builder-requests",a.builder_requests)) if v]
         if clash:sys.exit(f"--build-scope {a.build_scope} has no graph builder: drop {', '.join(clash)}")
     P.BUILD_SCOPE=a.build_scope
     if a.build_scope=="versions" and a.whole_reader:
@@ -905,7 +886,6 @@ def main() -> None:
     for k in ("term_max_words","evolution_pairs_per_concept","evolution_pairs_per_card"):
         if k in P.GRAPH_QUALITY and not 1<=P.GRAPH_QUALITY[k]<=64:sys.exit("--"+k.replace("_","-")+" must be 1..64")
     P.UNATTESTED_AT_END=a.unattested_at_end
-    P.ANOMALY_EFFORT=a.anomaly_effort
     if a.ontology_review and not (a.circles and a.ontology_revisions):sys.exit("--ontology-review requires --circles --ontology-revisions")
     P.ONTOLOGY_THRESHOLDS={"unmapped_circles":a.ontology_unmapped_circles,"catchall_mappings":a.ontology_catchall_mappings,"catchall_reports":a.ontology_catchall_reports}
     if any(not 1<=v<=100000 for v in P.ONTOLOGY_THRESHOLDS.values()): sys.exit("ontology thresholds must be in 1..100000")
@@ -1010,7 +990,6 @@ def main() -> None:
             if v is not None}
     if any(v <= 0 for v in card.values()) or not (math.isfinite(a.phase_timeout_s) and a.phase_timeout_s > 0):
         sys.exit("--builder-max-* and --phase-timeout-s must be positive")
-    jev = closed.term_selector(a) if closed is not None else None
     priced = [model, builder] + (team or []) + ([P.CHECKER_MODEL] if P.CHECKER_MODEL else [])
     if any(isinstance(m, P.AgyModel) for m in priced + ([P.CIRCLES_REFINER] if P.CIRCLES_REFINER else [])):
         try:
@@ -1030,7 +1009,7 @@ def main() -> None:
         sys.exit("agy has no monetary price: omit --budget-usd and use --max-calls")
     try:
         with closed.model_session(a.model) if closed is not None else contextlib.nullcontext():
-            s = run(a.manifest, a.repo, reports, a.out, model, a.workers, w, budget, builder, a.phase_timeout_s, card or None, jev, checklist,
+            s = run(a.manifest, a.repo, reports, a.out, model, a.workers, w, budget, builder, a.phase_timeout_s, card or None, checklist,
                     team=team, max_calls=a.max_calls)
     finally:
         P.executors.close()

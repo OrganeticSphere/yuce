@@ -123,7 +123,6 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "evolution-pairs-per-card",
     "evolution-pairs-per-concept",
     "evolution-pairs-per-function",
-    "jev-mode",
     "known-concepts",
     "link-both-sides",
     "listen",
@@ -1070,7 +1069,7 @@ mod flag_tests {
             assert!(all.contains(&flag.as_str()), "--{flag} is read by the code but no command lists it");
         }
         // the switches and the flags read through a list rather than a literal call
-        for flag in SWITCHES.iter().chain(["candidate-match", "jev-mode", "known-concepts", "evolution-pairs-per-concept"].iter()) {
+        for flag in SWITCHES.iter().chain(["candidate-match", "known-concepts", "evolution-pairs-per-concept"].iter()) {
             assert!(all.contains(flag), "--{flag} is known to the parser but no command lists it");
         }
     }

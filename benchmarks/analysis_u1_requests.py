@@ -1,6 +1,6 @@
 """U1 results, offline and model-free: what the graph builder's typed requests and their control readings did in one run.
 
-The measures of the owner's decision of 2026-10-24 (note 2026-10-24_claude_owner_decision_builder_requests_L1_typed.md):
+The measures of the builder's typed requests (note 2026-10-24_claude_owner_decision_builder_requests_L1_typed.md):
   requests      by type: lines the builder wrote, accepted, refused (with the kernel's reasons)
   tasks         request and control tasks by outcome (committed / given back) and by type
   origin        accepted records: first reading, written under a request (TR<n>-), under a control reading (TC<n>-)

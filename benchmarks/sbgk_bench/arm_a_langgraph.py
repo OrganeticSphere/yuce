@@ -1,4 +1,4 @@
-"""Arm A as a LangGraph-native team (the owner, 2026-10-30: such a run is needed with LangGraph's own checkpoints and native means, so
+"""Arm A as a LangGraph-native team (such a run is needed with LangGraph's own checkpoints and native means, so
 that we can claim a real comparison with LangGraph). The same agents, models, prompt templates and checks as the runner's team arm
 with --arm-a-answer map-reduce (the prompts actually sent differ where the orchestration does: which agent reads which section with
 which notes; every call keeps its context and prompt hash), built the way a LangGraph application is built:

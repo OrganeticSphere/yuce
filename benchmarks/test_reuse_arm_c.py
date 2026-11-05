@@ -1,5 +1,5 @@
-"""--reuse-arm-c: a run takes the finished arm C of an earlier run on the same inputs and runs only arm A (the owner, 2026-10-29:
-arm C of MCPpair2_r1 finished every phase, arm A lost its withdrawals to a runner defect). No model, pilot or provider is executed."""
+"""--reuse-arm-c: a run takes the finished arm C of an earlier run on the same inputs and runs only arm A
+(arm C of MCPpair2_r1 finished every phase, arm A lost its withdrawals to a runner defect). No model, pilot or provider is executed."""
 from __future__ import annotations
 
 import json

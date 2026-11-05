@@ -1,4 +1,4 @@
-//! Circles +1 (the owner, 2026-10-27): after the swarm's BUILD of every circle, the swarm's independent graph builder, a fixed
+//! Circles +1: after the swarm's BUILD of every circle, the swarm's independent graph builder, a fixed
 //! role outside the ring, refines the one graph. Its card is an ordinary record card from its own cursor, shown with what the
 //! swarm already mapped and linked for those records, so it adds and corrects instead of building again.
 use super::builder::Card;
