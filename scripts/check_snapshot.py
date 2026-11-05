@@ -92,7 +92,7 @@ def check(root: pathlib.Path, version: str, words: list[str] | None = None) -> t
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("snapshot", type=pathlib.Path)
-    ap.add_argument("--version", default="0.1.4")
+    ap.add_argument("--version", default="0.1.5")
     ap.add_argument("--words", type=pathlib.Path, help="a file of words no snapshot file may hold, one per line, in any case; a word in capitals in exactly that case")
     a = ap.parse_args()
     root = a.snapshot.resolve()
