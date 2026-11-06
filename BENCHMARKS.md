@@ -91,6 +91,9 @@ The tables are what was measured. What they do not show:
 * **The naming rule is a label, not a test.** Its 7 points were fixed before the runs. T moved by 8.7 to 10.9 points between the
   two DeepSeek series, which differ only in the output limit, so "better than T" at +8.4 to +10.6 is within what T did from run
   to run (K moved by 2.1, L by 2.0 to 3.8).
+* **A wider quote in series 1.** These runs refused only the exact span of a withdrawn quote. In DeepSeek series 1 a reader, refused,
+  widened the withdrawn sentence by 15 bytes and the kernel stored it as a new record (entry 937 of the journal of `deepseek1-K`). No
+  answer cited it, so the gradings stand. Since 0.1.6 a withdrawal closes the bytes (LIMITATIONS.md).
 * **What stage 1 shows.** No source has been withdrawn yet, so the cascade and the journal play no part in it: a difference there
   comes from how the reading is organized, which can be built without the kernel. Nor did the cascade change K's answers in 2A,
   which are the same text as in stage 1: a difference there comes from what the other side changed.

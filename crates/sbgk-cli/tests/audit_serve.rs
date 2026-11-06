@@ -217,7 +217,7 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 8);
+    assert_eq!(own.tools().len(), 9);
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims

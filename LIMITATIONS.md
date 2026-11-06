@@ -36,9 +36,18 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
   `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
 * `audit_close` is not journaled: a server restarted on the same journal is open again.
-* **What a withdrawal reaches.** In the journal, no claim stays grounded on a withdrawn quote: that holds by construction. The
-  text an agent writes is another matter: a later answer can repeat withdrawn content in other words, and how often it does is
-  measured, not prevented.
+* **What a withdrawal reaches.** A withdrawal closes text of one document: those bytes wherever they stand in it, in any version.
+  Every stored quote that overlaps them goes with it, and a new quote that overlaps them is refused, even when most of it is other
+  text. So no claim stays grounded on those bytes of that document. The owner names a stored quote (`audit_revoke`) or the text
+  itself, quoted or not (`audit_withdraw_text`); to withdraw a sentence that repeats in a document, name the sentence, as a quote
+  with its list number closes those bytes and not the other line. The same sentence in another document is another source and
+  is not touched. The text an agent writes is another matter: a later answer can repeat withdrawn content in other words, and how
+  often it does is measured, not prevented. A note that a claim lost its later quote speaks for that claim: another record may
+  still show the later state.
+* **Journals before 0.1.6 keep a narrower rule.** They refused only the exact span, so a wider quote could bring withdrawn text
+  back as a new record, with its support. A recorded outcome has to replay as it was recorded, so those journals keep that rule
+  and verify as before. In the published runs it happened once: in DeepSeek series 1 a reader widened the refused sentence by 15
+  bytes, and no answer cited it. The first run of four makers found the gap: there an answer did.
 * **`CURRENT_UNCERTAIN` needs one claim on both dates.** In the default profile the mark falls on a claim that rested on an earlier
   and a later report, and on the next summary. A reader's claim on the earlier quote alone stays `LATEST_KNOWN`, and a summary written
   as one claim per quote gets no mark. With accepted `supersedes` links, off by default, the earlier claim itself is marked.

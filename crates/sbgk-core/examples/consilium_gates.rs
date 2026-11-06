@@ -37,7 +37,7 @@ fn main() {
         let input = run.join("arm_c/run.wal");
         let raw = std::fs::read(&input).unwrap();
         let frames = String::from_utf8(raw.clone()).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>();
-        let first = frames.iter().position(|e| e["payload"]["command"]["kind"] == "revoke");
+        let first = frames.iter().position(|e| matches!(e["payload"]["command"]["kind"].as_str(), Some("revoke" | "revoke_text")));
         let phase1_frames = first.unwrap_or(frames.len());
         let prefix_bytes = raw.split_inclusive(|b| *b == b'\n').take(phase1_frames).flatten().copied().collect::<Vec<_>>();
         let copy = scratch.join(format!("{i}_phase1.wal"));

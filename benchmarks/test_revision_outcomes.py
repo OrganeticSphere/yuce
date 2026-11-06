@@ -42,6 +42,33 @@ class Outcomes(unittest.TestCase):
         self.assertEqual((row["bytes_sent"], row["bytes_received"]), (120, 7))
         self.assertEqual((row["quotes_before"], row["quotes_touched"], row["quotes_untouched_not_cited_after"], row["touched_still_cited"]), (3, 1, 1, 0))
 
+    def test_a_quote_stored_after_the_withdrawal_that_touches_its_text_is_counted(self):
+        def submit(records, *quotes):
+            lines = [{"kind": "observe", "doc_id": "d1", "exact_quote": q} for q in quotes]
+            return {"payload": {"actor": "w1", "command": {"kind": "submit", "lines": lines}, "outcome": {"result": {"accepted": records}}}}
+
+        def journal(*frames):
+            return [{"payload": {"source_documents": {"d1": {"path": PAGE}}}}, *frames]
+
+        step = {"report": PAGE, "quote": "The withdrawn sentence."}
+        revoke = {"payload": {"command": {"kind": "revoke", "record": "r1"}}}
+        with tempfile.TemporaryDirectory(prefix="revision-") as tmp:
+            folder = pathlib.Path(tmp)
+            (folder / "arm_c").mkdir()
+            wal = folder / "arm_c" / "run.wal"
+
+            def count(*frames):
+                wal.write_text("\n".join(json.dumps(f) for f in journal(*frames)), encoding="utf-8")
+                return R.stored_after_withdrawal(folder, step, None)
+
+            first = submit(["r1"], "The withdrawn sentence.")
+            self.assertEqual(count(first, revoke, submit(["r2"], "1. The withdrawn sentence.")), 1)
+            self.assertEqual(count(first, revoke, submit(["r2"], "Another sentence.")), 0)
+            self.assertEqual(count(first, submit(["r2"], "1. The withdrawn sentence."), revoke), 0, "before the withdrawal")
+            self.assertIsNone(count(submit(["r2"], "Another sentence.")), "nothing was withdrawn")
+            text = {"payload": {"command": {"kind": "revoke_text", "doc_id": "d1", "exact_quote": "The withdrawn sentence."}}}
+            self.assertEqual(count(text, submit(["r2"], "1. The withdrawn sentence.")), 1, "a text nobody had quoted")
+
     def test_lines_and_refused_quotes_are_counted_by_reader_and_model(self):
         with tempfile.TemporaryDirectory(prefix="revision-") as tmp:
             folder = self.run_folder(tmp)

@@ -203,6 +203,10 @@ class Client:
         """Withdraw an observation: its source no longer holds, and what rested on it loses that ground."""
         return self.call("audit_revoke", record=record)
 
+    def withdraw_text(self, doc_id: str, exact_quote: str) -> dict:
+        """Withdraw text of a document, quoted or not: stored quotes overlapping it go with it, and new ones are refused."""
+        return self.call("audit_withdraw_text", doc_id=doc_id, exact_quote=exact_quote)
+
     def links(self, status: str | None = None) -> dict:
         return self.call("audit_links", **({} if status is None else {"status": status}))
 

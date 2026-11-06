@@ -33,7 +33,9 @@ fn main() {
     std::fs::create_dir_all(&out).unwrap();
     let raw = std::fs::read(run.join("arm_c/run.wal")).unwrap();
     let lines: Vec<&[u8]> = raw.split_inclusive(|b| *b == b'\n').collect();
-    let first_revoke = lines.iter().position(|l| serde_json::from_slice::<Value>(l).is_ok_and(|e| e["payload"]["command"]["kind"] == "revoke"));
+    let first_revoke = lines
+        .iter()
+        .position(|l| serde_json::from_slice::<Value>(l).is_ok_and(|e| matches!(e["payload"]["command"]["kind"].as_str(), Some("revoke" | "revoke_text"))));
     // --frames N: the first N frames, e.g. the state before a summary's first answer line was stored
     let frames = args.iter().position(|a| a == "--frames").map(|i| args[i + 1].parse::<usize>().expect("--frames N"));
     let take = frames.unwrap_or(if phase1 { first_revoke.unwrap_or(lines.len()) } else { lines.len() }).min(lines.len());

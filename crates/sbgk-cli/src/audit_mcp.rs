@@ -14,7 +14,7 @@
 //!   the directive and the repair hint (status, error code, field, message, expected form), not counters of the run.
 //! - builder (at most one subject; the store actor is `builder`): `audit_next_card`, `audit_submit_ops`.
 //! - owner: `audit_status`, `audit_links`, `audit_link_status`, `audit_concept_status`, `audit_record`, `audit_revoke`,
-//!   `audit_terminal_receipt`, `audit_close`, and the
+//!   `audit_withdraw_text`, `audit_terminal_receipt`, `audit_close`, and the
 //!   `shutdown` method.
 //!
 //! `COMPLETE` (and the builder's `IDLE`) means nothing is left to do now: the owner may still withdraw a source and reopen work,
@@ -89,6 +89,7 @@ impl Role {
                 "audit_concept_status",
                 "audit_record",
                 "audit_revoke",
+                "audit_withdraw_text",
                 "audit_terminal_receipt",
                 "audit_close",
             ],
@@ -479,8 +480,13 @@ fn tool_defs() -> Vec<Value> {
         t("audit_record", "One record with its basis and grounding (full or short @id).", schema(json!({"record": s("record id")}), &["record"])),
         t(
             "audit_revoke",
-            "Withdraw an observation (its source no longer holds): the answers resting on it are reopened.",
+            "Withdraw an observation (its source no longer holds): its text closes in that document, every stored quote overlapping it goes with it, new ones are refused, and the answers resting on them are reopened.",
             schema(json!({"record": s("full id of an observe record")}), &["record"]),
+        ),
+        t(
+            "audit_withdraw_text",
+            "Withdraw text of a document, quoted or not, with the effect of audit_revoke.",
+            schema(json!({"doc_id": s("document id"), "exact_quote": s("the text, byte for byte")}), &["doc_id", "exact_quote"]),
         ),
         t("audit_terminal_receipt", "The terminal receipt when the run is complete (contract v0.1 R7), else NOT_COMPLETE.", schema(json!({}), &[])),
         t(
@@ -769,10 +775,17 @@ impl AuditServer {
             },
             "audit_revoke" => match record_arg(&g.state, args) {
                 Ok(r) => match g.state.revoke_observation(&who.id, &r) {
-                    Ok(()) => json!({"status": "REVOKED", "record": r.short()}),
+                    Ok(also) => json!({"status": "REVOKED", "record": r.short(), "also_revoked": also}),
                     Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
                 },
                 Err(e) => e,
+            },
+            "audit_withdraw_text" => match (args.get("doc_id").and_then(|x| x.as_str()), args.get("exact_quote").and_then(|x| x.as_str())) {
+                (Some(doc), Some(text)) => match g.state.withdraw_text(&who.id, doc, text) {
+                    Ok(also) => json!({"status": "REVOKED", "doc_id": doc, "also_revoked": also}),
+                    Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+                },
+                _ => bad_arg("give 'doc_id' and 'exact_quote'"),
             },
             "audit_terminal_receipt" | "audit_close" => {
                 let r = &mut *g;
