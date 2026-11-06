@@ -46,18 +46,23 @@ correct statements, graded blind; after reading (stage 1) and after each of two 
 | Claude Haiku 5.5 (Fable 5.1) | 89.9 / 79.3 / 84.9 | 90.5 / 86.6 / 88.8 | 88.7 / 86.7 / 85.8 |
 | DeepSeek Flash, series 1 (Opus 5.5) | 91.8 / 83.3 / 83.0 | 91.8 / 74.6 / 81.4 | 91.7 / 91.9 / 86.7 |
 | DeepSeek Flash, series 2 (Opus 5.5) | 89.6 / 92.1 / 84.9 | 89.6 / 83.8 / 85.2 | 89.7 / 81.0 / 88.9 |
+| Four makers, run 1, before the fix of 0.1.6 (Opus 5.5) | 87.8 / 86.6 / 84.0 | 83.6 / 93.7 / 67.1 | 87.0 / 92.5 / 82.3 |
+| Four makers, run 2 (Opus 5.5) | 88.2 / 50.0 / 81.8 | 85.9 / 80.5 / 77.5 | 82.2 / 70.4 / 76.9 |
 
-**We claim no gain in answer quality.** The samples are small: one corpus, one or two runs per side, 45 to 121 graded statements
-each. The 95% interval of a difference is about 10 to 12 points either way; one difference of the 18 clears it (DeepSeek series 1,
-2A, against T: +17.2), none after correcting for 18 comparisons, and they are not independent: the kernel's answers of stage 1
-and 2A are the same text. The advantage of DeepSeek series 1 did not repeat in series 2. The kernel's side was at worst 2.4 points
-below another side.
+**We claim no gain in answer quality.** The samples are small: one corpus, one or two runs per side, 45 to 158 graded statements
+each. The 95% interval of a difference is about 10 to 12 points either way; on the single-model runs one difference of the 18
+clears it (DeepSeek series 1, 2A, against T: +17.2), none after correcting for 18 comparisons, and they are not independent: the
+kernel's answers of stage 1 and 2A are the same text. The advantage of DeepSeek series 1 did not repeat in series 2. Agents of four
+makers show how far two runs can fall apart: the kernel's side was 10.1 points below T in 2A of run 1, and T fell by 36.6 points in
+stage 1 of run 2 with nothing changed on its side.
 
 **What the kernel adds is the record, not the score.** Every accepted quote is byte-exact and every claim names what it rests on,
 so what a withdrawal touches is read from those links rather than asked of a model, and a journal can be checked against its
-receipt by anyone. Every grading found that the kernel's side kept both withdrawals. The sides without it kept them fully in
-10 (T) and 8 (L) of 12 gradings and partly in the rest. A withdrawal touched an answer of the kernel's side three times in all,
-once per run, on this one corpus.
+receipt by anyone. On the single-model runs every grading found that the kernel's side kept both withdrawals, and the sides without
+it kept them fully in 10 (T) and 8 (L) of 12 gradings and partly in the rest. On four makers the grader found a real gap: a reader
+stored a withdrawn sentence again, three bytes wider, the kernel took it as a new record, and an answer cited it. Since 0.1.6 a
+withdrawal closes the bytes, and in the second run no grounded record rests on the withdrawn text. Its answer was still graded
+partly kept after the second withdrawal, for dropping a conclusion another page supports. T kept all 8 gradings there, L 6.
 
 **The price.** 2.3 to 2.5 times the wall time and 1.4 times the cost on Haiku; 1.2 to 1.3 and 1.5 to 1.6 on DeepSeek. Its side also
 makes 1.8 to 2.6 times the model calls in stage 1, and no side with an equal budget of calls was run, so what the kernel adds to
