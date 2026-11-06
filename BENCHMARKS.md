@@ -80,6 +80,49 @@ It took 1.2 to 1.3 times the wall time and 1.5 to 1.6 times the cost of the side
 often wrote a closing line over its length limit, which the runner then refused (their pages were marked incomplete; since 0.1.4
 such a line is cut, with a mark); their claims were kept (in series 1, 6 of about 2,000 were refused).
 
+### Agents of four makers, grader Opus 5.5
+
+The same four readers on every side: `deepseek-flash`, Claude Haiku 5.5, GPT-5.6 Luna and Gemini 3.8 Flash, as
+`benchmarks/PREREGISTRATION_0.1.5.md` and `PREREGISTRATION_0.1.6.md` fixed them before each run. Run 1 is from the tag v0.1.5, run 2
+from v0.1.6. Run 1 found a defect of the kernel, which v0.1.6 fixes, so its K is not the kernel of today.
+
+| Stage | Run | K | T | L | Named by the rule |
+|---|---|---|---|---|---|
+| 1 | 1 | 87.8% | 86.6% | 84.0% | on par (+1.2, +3.8) |
+| 1 | 2 | 88.2% | 50.0% | 81.8% | K better than T (+38.2); on par with L (+6.4) |
+| 2A | 1 | 83.6% | 93.7% | 67.1% | T better than K (−10.1); K better than L (+16.5) |
+| 2A | 2 | 85.9% | 80.5% | 77.5% | on par with T (+5.4, the grader's two orders 16 points apart for T); K better than L (+8.4) |
+| 2B | 1 | 87.0% | 92.5% | 82.3% | on par (−5.5, +4.7) |
+| 2B | 2 | 82.2% | 70.4% | 76.9% | K better than T (+11.8, the grader's two orders 20 points apart for T); on par with L (+5.3, 16 points apart for L) |
+
+| | K | T | L |
+|---|---|---|---|
+| Withdrawal kept (2A and 2B, two orders, per run: 4 gradings) | run 1: 2, 2 partly; run 2: 2, 2 partly | 4 and 4 | run 1: 4; run 2: 2, 2 partly |
+| Statements graded (stage 1, 2A, 2B) | 82, 119, 158; 85, 85, 118 | 67, 79, 60; 72, 77, 71 | 78, 76, 65; 77, 71, 80 |
+| Model calls after 2A and after 2B | 5 and 5; 0 and 1 | 13 and 9; 24 and 10 | 24 and 16; 22 and 8 |
+| Cited quotes the withdrawal did not touch and the next answer dropped (2A, 2B) | 0 and 0; 0 and 1 | 31 and 71; 71 and 30 | 37 and 65; 54 and 26 |
+| Wall time | 35.0, 33.6 min | 22.0, 25.6 min | 23.1, 23.4 min |
+| Cost of the seats with a price | $0.45, $0.60 | $0.29, $0.46 | $0.37, $0.48 |
+
+* **What run 1 found.** After the second withdrawal a reader went back to the page and stored the withdrawn sentence with its list
+  number, three bytes wider. The kernel refused only the exact span, so that quote was a new record with its support, and the answer
+  of K cited it. Counted by record, the graph-level outcome of the pre-registration was 0; counted by text it was not. The grader
+  marked the withdrawal partly kept in both orders. The numbers of that run were held until this was explained and fixed.
+* **Run 2 on the graph.** After each withdrawal no record the kernel reports as grounded rests on a quote overlapping the withdrawn
+  text: 0 of 897 and 0 of 895 grounded claims, with 2 and then 3 stored quotes touched and 9 records resting on them, and 0 quotes
+  touching the text stored afterwards. Read from the journal, no model.
+* **Run 2 in the answers.** K's 2B was again graded partly kept, for the opposite reason: the answer cites no withdrawn text, but it
+  drops a conclusion that another page supports on its own. L was partly kept once in 2A and once in 2B.
+* **The grader's control.** Two lines restating the withdrawn content in other words were planted in a copy of T's answer of 2A and
+  of 2B, fixed before the answers were read, in a separate packet. The grader found all four and changed its verdict from `ok` to
+  `failed` and `partly`.
+* **A run is not a measure.** Nothing on T's side changed between the runs, and its stage 1 moved by 36.6 points: in run 2 its second
+  answer listed gaps of the earliest revision as open, and the grader marked 17 and 18 statements as stale in its two orders. K moved by at most 4.8 points
+  in a stage, on two runs. This says how far apart two runs can fall, not which side is better.
+* **By model, on K (lines sent, refused).** `deepseek-flash` 1,703 and 190, then 1,523 and 163; Haiku 688 and 77, then 705 and 105;
+  Luna 444 and 57, then 406 and 55; Gemini 335 and 13, then 358 and 14. A faster reader takes more of the work. These numbers
+  describe this corpus and these runs, not the models.
+
 ### How far these numbers go
 
 The tables are what was measured. What they do not show:
@@ -190,8 +233,8 @@ was. Recommended for 0.1: runs of **a few thousand records** and up to **8 agent
 
 ## The recorded runs
 
-The runs of section 1 are release assets of v0.1.0: one archive per run and per grading, each with a manifest of its files
-(sizes and SHA-256), and `SHA256SUMS` over all of them.
+The runs of section 1 are release assets of v0.1.0, and the two runs on four makers of v0.1.6: one archive per run and per grading,
+each with a manifest of its files (sizes and SHA-256), and `SHA256SUMS` over all of them (`SHA256SUMS-runs.txt` in v0.1.6).
 
 | Archive | What it holds |
 |---|---|
@@ -199,6 +242,8 @@ The runs of section 1 are release assets of v0.1.0: one archive per run and per 
 | `haiku-grading-fable` | its blind packets, the grader's prompts and replies, the tables |
 | `deepseek1-K`, `-T`, `-L`, `deepseek1-grading-opus` | DeepSeek, series 1, and its grading |
 | `deepseek2-K`, `-T`, `-L`, `deepseek2-grading-opus` | DeepSeek, series 2, and its grading |
+| `makers1-K`, `-T`, `-L`, `makers1-grading-opus` | four makers, run 1 (v0.1.5), and its grading |
+| `makers2-K`, `-T`, `-L`, `makers2-grading-opus` | four makers, run 2 (v0.1.6), its grading and the grader's control |
 
 A run folder holds the journal (`arm_c/run.wal`), the calls and replies, the answers, the inputs (corpus copy, checklist,
 withdrawal plan) and the summary. Left out: the agents' tokens (`arm_c/subjects.json`; replaying the journal needs none)
