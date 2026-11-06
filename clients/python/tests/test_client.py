@@ -204,9 +204,11 @@ class RealServer(unittest.TestCase):
         quote, claim = done["accepted_locals"][p + "o1"], done["accepted_locals"][p + "c1"]
         self.assertTrue(owner.record(claim)["grounded"])
 
-        owner.revoke(quote)
+        self.assertEqual(owner.revoke(quote)["also_revoked"], 0)
         self.assertFalse(owner.record(claim)["grounded"])
         self.assertEqual(owner.call("audit_status")["records"], owner.status()["records"])
+        again = owner.withdraw_text(doc, QUOTE)
+        self.assertEqual((again["status"], again["error"]["code"]), ("error", "ALREADY_REVOKED"))
 
     def test_who_the_server_says_this_is(self):
         agent = self.connect("reader-1")
@@ -235,7 +237,7 @@ class RealServer(unittest.TestCase):
         self.assertEqual(named - served, set())
         self.assertEqual({t for t in served if t in {"audit_" + n for n in ("acquire", "submit", "renew", "release", "next_card", "submit_ops",
                                                                             "builder_failure", "status", "links", "link_status", "concept_status",
-                                                                            "record", "revoke", "terminal_receipt", "close")}} - named, set())
+                                                                            "record", "revoke", "withdraw_text", "terminal_receipt", "close")}} - named, set())
 
 
 if __name__ == "__main__":

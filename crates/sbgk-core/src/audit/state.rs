@@ -16,7 +16,7 @@ use crate::error::{Code, KResult};
 use crate::hash::{from_hex, sha256, sha256_parts, sha256_stream, ZERO_HASH};
 use crate::jcs::to_jcs;
 use crate::merkle::KeyedIdBuild;
-use crate::node::EV_ACTIVE;
+use crate::node::{EV_ACTIVE, EV_REVOKED};
 use crate::ontology::Ontology;
 use crate::session::{Session, MAX_REFS, MAX_STR};
 use serde_json::json;
@@ -37,7 +37,12 @@ mod ontology_review;
 mod revisions;
 mod versions;
 
-const GENESIS_FORMAT: &str = "r2r-audit-genesis/1";
+/// Format 2: a withdrawal closes text of a document, wherever those bytes stand in it, in any version. Every stored quote overlapping
+/// them loses its support with it and a new quote overlapping them is refused. Format 1 refused only the exact span, so a wider quote
+/// brought the text back as a new record (series of 06.11.2026): its journals keep that rule, because a recorded outcome has to
+/// replay as it was recorded.
+const GENESIS_FORMAT: &str = "r2r-audit-genesis/2";
+const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
 const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
 /// The rule a map_term names when the circles +1 refiner maps a term under ontology reviews; the builder sets it, not the model.
 pub const REFINER_MAP_RULE: &str = "refiner_map_term/1";
@@ -48,7 +53,7 @@ fn bad(field: &str, message: impl Into<String>) -> KernelError {
 
 /// The quote rule of an observe record: the document is one of the directive's, the whole document holds the quote byte for byte
 /// exactly once, and that occurrence lies inside the issued byte ranges. One rule for the commit path and for the dispatcher's
-/// read-only diagnostics of a refused answer, which never decide what is stored.
+/// read-only diagnostics of a refused answer, which never decide what is stored; the commit path also refuses withdrawn text.
 pub fn quote_span(scope: &Scope, doc_id: &str, doc: Option<&[u8]>, quote: &str) -> KResult<Occurrence> {
     if !scope.docs.iter().any(|d| d == doc_id) {
         return Err(bad("doc_id", "document is outside the directive"));
@@ -216,6 +221,10 @@ struct Data {
     decisions: Vec<Value>,
     receipts: BTreeMap<(String, String), Receipt>,
     checkpoints: BTreeMap<String, Value>,
+    /// The journal's rule, from its genesis; neither this nor `withdrawn` enters `audit_root`: both follow from the genesis and the commands.
+    withdrawal_closes_bytes: bool,
+    /// The text withdrawn under that rule, by document.
+    withdrawn: BTreeMap<String, BTreeSet<Vec<u8>>>,
 }
 
 struct Core {
@@ -588,6 +597,20 @@ impl Core {
             let span = quote_span(scope, &doc_id, self.session.arena.doc(&doc_id).map(|d| d.bytes.as_slice()), &quote)?;
             let doc = self.session.arena.doc(&doc_id).expect("quote_span found the document");
             let version = doc.version_id;
+            if let Some(hit) = self
+                .data
+                .withdrawn
+                .get(&doc_id)
+                .into_iter()
+                .flatten()
+                .flat_map(|text| find_all(&doc.bytes, text))
+                .find(|o| o.start < span.end && span.start < o.end)
+            {
+                return Err(KernelError::new(Code::EvidenceRevoked, "this quote overlaps withdrawn text: quote other text or drop the line")
+                    .field("exact_quote")
+                    .expected(json!({"withdrawn_span":[hit.start,hit.end]}))
+                    .obligation(json!({"action":"quote_other_text_or_drop_the_line"})));
+            }
             let mut fork = None;
             if self.in_place {
                 self.session.reset_transients();
@@ -833,6 +856,8 @@ impl AuditState {
                     decisions: Vec::new(),
                     receipts: BTreeMap::new(),
                     checkpoints: BTreeMap::new(),
+                    withdrawal_closes_bytes: true,
+                    withdrawn: BTreeMap::new(),
                 },
             },
             journal: None,
@@ -852,7 +877,8 @@ impl AuditState {
 
     fn attach_new_journal(&mut self, path: &Path, base_ontology: &Value) -> KResult<()> {
         let container = build_container(&mut self.core.session);
-        let genesis = json!({"format":GENESIS_FORMAT,"run_id":self.core.data.run_id,"manifest_hash":to_hex(&self.core.data.manifest_hash),"source_mode":self.core.data.source_mode,"base_ontology":base_ontology,
+        let format = if self.core.data.withdrawal_closes_bytes { GENESIS_FORMAT } else { GENESIS_FORMAT_EXACT_SPAN };
+        let genesis = json!({"format":format,"run_id":self.core.data.run_id,"manifest_hash":to_hex(&self.core.data.manifest_hash),"source_mode":self.core.data.source_mode,"base_ontology":base_ontology,
             "source_documents":self.core.data.source_documents,
             "engine_container_hex":to_hex(&container),"engine_root":to_hex(&self.engine_root()),"audit_root":to_hex(&self.audit_root())});
         self.journal = Some(AuditJournal::create(path, &genesis)?);
@@ -928,10 +954,11 @@ impl AuditState {
     /// Semantic replay of the journal's payloads (genesis first) into a state with no journal attached.
     fn replay(payloads: &[Value], visit: &mut dyn FnMut(usize, &mut AuditState, &Value) -> KResult<()>) -> KResult<Self> {
         let genesis = payloads.first().ok_or_else(|| bad("wal", "genesis is required"))?;
-        if genesis["format"] != GENESIS_FORMAT {
+        if genesis["format"] != GENESIS_FORMAT && genesis["format"] != GENESIS_FORMAT_EXACT_SPAN {
             return Err(bad("wal", "unsupported audit genesis"));
         }
         let mut state = Self::new(&genesis["base_ontology"], &[])?;
+        state.core.data.withdrawal_closes_bytes = genesis["format"] == GENESIS_FORMAT;
         state.core.data.run_id = string(genesis, "run_id")?.into();
         state.core.data.manifest_hash = hash_field(genesis, "manifest_hash")?;
         state.core.data.source_mode = string(genesis, "source_mode")?.into();
@@ -1302,9 +1329,16 @@ impl AuditState {
         Ok(())
     }
 
-    pub fn revoke_observation(&mut self, actor: &str, record: &RecordId) -> KResult<()> {
-        self.value_command(actor, json!({"kind":"revoke","record":to_hex(&record.0)}))?;
-        Ok(())
+    /// Withdraws text of a document, quoted or not; the count is of the stored quotes that went with it.
+    pub fn withdraw_text(&mut self, actor: &str, doc_id: &str, text: &str) -> KResult<u64> {
+        let value = self.value_command(actor, json!({"kind":"revoke_text","doc_id":doc_id,"exact_quote":text}))?;
+        Ok(value["also_revoked"].as_u64().unwrap_or(0))
+    }
+
+    /// Withdraws the quote of an observation; the count is of the other stored quotes that went with it.
+    pub fn revoke_observation(&mut self, actor: &str, record: &RecordId) -> KResult<u64> {
+        let value = self.value_command(actor, json!({"kind":"revoke","record":to_hex(&record.0)}))?;
+        Ok(value["also_revoked"].as_u64().unwrap_or(0))
     }
 
     /// Administrative in-process API; the server must authorize the caller before exposing it.
@@ -1545,6 +1579,11 @@ impl Core {
                     return Err(bad("doc_id", "manifest DocumentId is immutable; load a new version under its new identity"));
                 }
                 self.session.put_document(id, text.as_bytes());
+                // quotes of an earlier version come back with that version: what was withdrawn meanwhile stays withdrawn
+                for closed in self.data.withdrawn.get(id).cloned().unwrap_or_default() {
+                    let hit = self.quotes_on(id, &closed);
+                    self.close_text(id, closed, hit, None)?;
+                }
                 if self.data.source_documents.get(id).is_none_or(|d| d["kind"] == "opaque") {
                     self.data.source_documents.insert(id.into(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(text.as_bytes()))}));
                 }
@@ -1553,10 +1592,37 @@ impl Core {
             "revoke" => {
                 check_keys(command, &["kind", "record"])?;
                 let record = RecordId(hash_field(command, "record")?);
-                let binding = self.data.evidence.get(&record).ok_or_else(|| bad("record", "record is not an observe"))?;
-                let event = json!({"seq":self.session.last_seq+1,"op":"revoke_evidence","target_evidence":format!("@{}",to_hex(&binding.evidence))});
-                self.session.apply_line(&to_jcs(&event))?;
-                json!({"revoked":true})
+                let evidence = self.data.evidence.get(&record).ok_or_else(|| bad("record", "record is not an observe"))?.evidence;
+                let quoted = self.record(&record).and_then(|r| Some((r.doc_id.clone()?, r.quote.clone()?)));
+                let closing = quoted.filter(|(doc, text)| self.data.withdrawal_closes_bytes && !self.is_withdrawn(doc, text.as_bytes()));
+                // a quote that went with a withdrawal can still be withdrawn itself: the rest of its text closes now
+                let went_with_another = closing.is_some() && self.session.engine.status_of(&evidence) == Some(EV_REVOKED);
+                let hit = closing.as_ref().map(|(doc, text)| self.quotes_on(doc, text.as_bytes())).unwrap_or_default();
+                if !went_with_another {
+                    self.revoke_evidence(evidence)?;
+                }
+                match closing {
+                    Some((doc, text)) => json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, Some(record))?}),
+                    None if self.data.withdrawal_closes_bytes => json!({"revoked":true,"also_revoked":0}),
+                    None => json!({"revoked":true}),
+                }
+            }
+            // a journal of the first format has no such command, and answers as it always did
+            "revoke_text" if self.data.withdrawal_closes_bytes => {
+                check_keys(command, &["kind", "doc_id", "exact_quote"])?;
+                let doc = string(command, "doc_id")?.to_string();
+                // the text of a quote, not an identifier: soft line breaks and long sentences belong to it
+                let text =
+                    command["exact_quote"].as_str().filter(|t| t.len() <= MAX_DOC_BYTES).ok_or_else(|| bad("exact_quote", "expected UTF-8 text"))?.to_string();
+                let bytes = self.session.arena.doc(&doc).ok_or_else(|| KernelError::new(Code::UnknownDoc, "document was not loaded").field("doc_id"))?;
+                if find_all(&bytes.bytes, text.as_bytes()).is_empty() {
+                    return Err(KernelError::new(Code::QuoteNotFoundInBytes, "the text has no byte-exact occurrence").field("exact_quote"));
+                }
+                if self.is_withdrawn(&doc, text.as_bytes()) {
+                    return Err(KernelError::new(Code::AlreadyRevoked, "this text is already withdrawn").field("exact_quote"));
+                }
+                let hit = self.quotes_on(&doc, text.as_bytes());
+                json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, None)?})
             }
             "checkpoint" => {
                 check_keys(command, &["kind", "key", "from", "to", "context"])?;
@@ -1574,6 +1640,46 @@ impl Core {
             _ => return Err(KernelError::new(Code::UnknownOp, "unknown audit operation").field("kind")),
         };
         Ok(Outcome::Value(value))
+    }
+
+    fn revoke_evidence(&mut self, evidence: Hash) -> KResult<()> {
+        let event = json!({"seq":self.session.last_seq+1,"op":"revoke_evidence","target_evidence":format!("@{}",to_hex(&evidence))});
+        self.session.apply_line(&to_jcs(&event)).map(|_| ())
+    }
+
+    fn is_withdrawn(&self, doc_id: &str, text: &[u8]) -> bool {
+        self.data.withdrawn.get(doc_id).is_some_and(|closed| closed.contains(text))
+    }
+
+    /// The live quotes of the document's present version that overlap an occurrence of `text`, in span order: a replay repeats the
+    /// engine's operations. Records are walked, as evidence is keyed by a digest and two documents can have the same version.
+    fn quotes_on(&self, doc_id: &str, text: &[u8]) -> Vec<(usize, usize, Hash, RecordId)> {
+        let Some(doc) = self.session.arena.doc(doc_id) else { return Vec::new() };
+        let occurrences = find_all(&doc.bytes, text);
+        let mut hit: Vec<_> = self
+            .data
+            .records
+            .iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .filter_map(|r| self.data.evidence.get(&r.id).map(|b| (b, r.id)))
+            .filter(|(b, _)| b.version == doc.version_id && self.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
+            .filter(|(b, _)| occurrences.iter().any(|o| b.start < o.end && o.start < b.end))
+            .map(|(b, id)| (b.start, b.end, b.evidence, id))
+            .collect();
+        hit.sort_unstable();
+        hit
+    }
+
+    /// The rest of a withdrawal: the quotes found before it go, and the text stays closed. The count leaves out the record named.
+    fn close_text(&mut self, doc_id: &str, text: Vec<u8>, hit: Vec<(usize, usize, Hash, RecordId)>, named: Option<RecordId>) -> KResult<u64> {
+        let also = hit.iter().filter(|(_, _, _, id)| Some(*id) != named).count() as u64;
+        for (_, _, evidence, _) in hit {
+            if self.session.engine.status_of(&evidence) != Some(EV_REVOKED) {
+                self.revoke_evidence(evidence)?;
+            }
+        }
+        self.data.withdrawn.entry(doc_id.to_string()).or_default().insert(text);
+        Ok(also)
     }
 
     /// `base`: the state the batch is staged on, when it is the staged command itself (`stage`). A refused first operation rolls

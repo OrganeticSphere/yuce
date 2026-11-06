@@ -161,7 +161,7 @@ class OwnerOpensAndClosesTheWindow(unittest.TestCase):
 
         class Owner:
             def call(self, tool, **kw):
-                return revoked if tool == "audit_revoke" else {}
+                return revoked if tool == "audit_withdraw_text" else {}
 
             def close(self):
                 pass
@@ -184,7 +184,7 @@ class OwnerOpensAndClosesTheWindow(unittest.TestCase):
                            {"name": "2B", "report": "r", "candidates": [{"quote": "q"}]}]}
         with tempfile.TemporaryDirectory() as name, \
              mock.patch.object(P, "Kernel", return_value=kernel), \
-             mock.patch.object(P, "source_document_paths", return_value={}), \
+             mock.patch.object(P, "source_document_paths", return_value={"d": "r"}), \
              mock.patch.object(P, "c_worker", return_value=None), \
              mock.patch.object(P, "c_builder", return_value=None), \
              mock.patch.object(P, "c_until_terminal", side_effect=terminal), \

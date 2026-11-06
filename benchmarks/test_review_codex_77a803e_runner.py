@@ -26,7 +26,7 @@ class Owner:
         if self.kernel.stopped:
             raise OSError("kernel is stopped")
         self.kernel.order.append(tool)
-        if tool == "audit_revoke":
+        if tool == "audit_withdraw_text":
             return {"status": "REVOKED"}
         if tool == "audit_terminal_receipt":
             return {"status": "NOT_COMPLETE", "accepted_outcomes": self.kernel.accepted_outcomes}
@@ -72,7 +72,7 @@ class WithdrawalPhaseStops(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as name, \
              mock.patch.object(P, "Kernel", return_value=kernel), \
-             mock.patch.object(P, "source_document_paths", return_value={}), \
+             mock.patch.object(P, "source_document_paths", return_value={"d": "r"}), \
              mock.patch.object(P, "c_worker", return_value=None), \
              mock.patch.object(P, "c_builder", return_value=None), \
              mock.patch.object(P, "c_until_terminal", side_effect=terminal), \

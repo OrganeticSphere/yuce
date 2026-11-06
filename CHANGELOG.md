@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.6 (2026-11-06)
+
+A withdrawal closes text of a document. The blind grading of the first run on four makers found the gap: after a
+withdrawal a reader went back to the page and stored the withdrawn sentence with its list number, three bytes wider, and the
+answer of the kernel's side cited it.
+
+* **A wider quote no longer brings withdrawn text back.** The kernel refused only the exact span, so any quote that contained it was
+  a new record with its support. Now a new quote that overlaps the withdrawn bytes is refused with `EVIDENCE_REVOKED`, which names
+  the span. The text stays closed wherever those bytes stand in the document, in any version.
+* **A withdrawal takes every stored quote that overlaps it.** It reached one record: the others were found only by the benchmark's
+  runner. The answer now says how many other records went with it (`also_revoked`). A quote that went with another can still be
+  withdrawn itself, which closes the rest of its text.
+* **`audit_withdraw_text` withdraws text nobody has quoted yet,** so a withdrawal no longer depends on a stored record. The Python
+  client has it as `withdraw_text`.
+* **Old journals keep their rule.** New journals record the rule in their genesis (`r2r-audit-genesis/2`). A journal of an earlier
+  release replays under the rule it was written with, so the published runs verify with the same roots. An earlier binary refuses
+  a new journal.
+* **`LIMITATIONS.md` said too much.** "No claim stays grounded on a withdrawn quote" held for the record, not for its text. It is
+  corrected, and `BENCHMARKS.md` names the one wider quote of the published runs.
+* **`benchmarks/revision_outcomes.py` counts the quotes taken after a withdrawal** that still touch its text, and the runner withdraws
+  the planned text itself.
+* **`benchmarks/PREREGISTRATION_0.1.6.md`** fixes the repeat of the run from this tag.
+
 ## 0.1.5 (2026-11-05)
 
 The Python client, and a fix of the runner for a team of several makers, found while preparing the run of

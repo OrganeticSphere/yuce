@@ -705,3 +705,177 @@ fn random_runs_replay_alike_on_the_state_and_on_copies() {
     }
     assert!(ok_commands > 80 && failed_commands > 100 && concepts > 0, "{ok_commands} clean, {failed_commands} failed, {concepts} concepts");
 }
+
+/// A claim of `withdrawal` tests, on the observation `on`.
+fn resting_on(local_id: &str, on: &str) -> Value {
+    json!({"kind":"claim","local_id":local_id,"text":"A witness stands.","subject":"witness","stance":"reported","based_on":[on]})
+}
+
+fn refused_as_withdrawn(s: &mut AuditState, id: &str, quote: &str) -> bool {
+    let r = s.submit_records_id(id, "worker", id, &scope(), &[observation("q", quote)]);
+    r.accepted.is_empty() && r.error.is_some_and(|e| e.to_json()["code"] == "EVIDENCE_REVOKED")
+}
+
+/// Series of 06.11.2026: a reader went back to the page after the withdrawal and stored the sentence with its list number, three
+/// bytes wider. The kernel refused only the exact span, so the withdrawn text came back as a new record with its support.
+#[test]
+fn a_wider_quote_does_not_bring_withdrawn_text_back() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &[observation("o1", "Prior witness."), resting_on("c1", "o1")]);
+    assert_eq!(r.accepted.len(), 2, "{:?}", r.error);
+    let (o1, c1) = (r.accepted[0], r.accepted[1]);
+    assert_eq!(s.revoke_observation("owner", &o1).unwrap(), 0);
+    assert!(!s.is_grounded(&c1));
+    for (id, quote) in [("exact", "Prior witness."), ("wider", "Prior witness.\nNew"), ("narrower", "Prior wit"), ("across", "witness.\nNew witness.")] {
+        assert!(refused_as_withdrawn(&mut s, id, quote), "{id}");
+    }
+    let other = s.submit_records_id("other", "worker", "other", &scope(), &[observation("o2", "New witness."), resting_on("c2", "o2")]);
+    assert_eq!(other.accepted.len(), 2, "text beside the withdrawn span stays open: {:?}", other.error);
+    assert!(s.is_grounded(&other.accepted[1]));
+    let roots = (s.engine_root(), s.audit_root(), s.wal_head());
+    drop(s);
+    let mut s = AuditState::open(&path.0).unwrap();
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head()), roots);
+    assert!(refused_as_withdrawn(&mut s, "after-restart", "Prior witness.\nNew"), "a restart keeps the span closed");
+}
+
+#[test]
+fn a_withdrawal_takes_every_stored_quote_that_overlaps_it() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let lines = [
+        observation("o1", "Prior witness."),
+        observation("o2", "witness.\nNew"),
+        observation("o3", "New witness."),
+        resting_on("c2", "o2"),
+        resting_on("c3", "o3"),
+    ];
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &lines);
+    assert_eq!(r.accepted.len(), 5, "{:?}", r.error);
+    let (o1, o2, o3, c2, c3) = (r.accepted[0], r.accepted[1], r.accepted[2], r.accepted[3], r.accepted[4]);
+    assert_eq!(s.revoke_observation("owner", &o1).unwrap(), 1, "the quote that overlaps it, and not the one that overlaps only that quote");
+    assert!(!s.is_grounded(&o2) && !s.is_grounded(&c2));
+    assert!(s.is_grounded(&o3) && s.is_grounded(&c3));
+    let roots = (s.engine_root(), s.audit_root(), s.wal_head());
+    drop(s);
+    let s = AuditState::open(&path.0).unwrap();
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head()), roots, "a replay repeats the withdrawal");
+}
+
+/// A recorded outcome has to replay as it was recorded: a journal of the first format, such as the published ones, keeps its rule.
+#[test]
+fn a_journal_of_the_first_format_keeps_the_exact_span_rule() {
+    let path = TempPath::new();
+    let base = AuditOntology::base();
+    let mut s = AuditState::new(&base, &[("policy".into(), b"Prior witness.\nNew witness.\n".to_vec())]).unwrap();
+    s.core.data.run_id = "first-format".into();
+    s.core.data.withdrawal_closes_bytes = false;
+    s.attach_new_journal(&path.0, &base).unwrap();
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &[observation("o1", "Prior witness.")]);
+    assert_eq!(s.revoke_observation("owner", &r.accepted[0]).unwrap(), 0);
+    assert!(refused_as_withdrawn(&mut s, "exact", "Prior witness."));
+    assert!(s.withdraw_text("owner", "policy", "New witness.").is_err(), "the rule of its release has no such command");
+    let wider = s.submit_records_id("wider", "worker", "wider", &scope(), &[observation("o2", "Prior witness.\nNew")]);
+    assert_eq!(wider.accepted.len(), 1, "{:?}", wider.error);
+    let roots = (s.engine_root(), s.audit_root(), s.wal_head());
+    drop(s);
+    assert!(std::fs::read_to_string(&path.0).unwrap().lines().next().unwrap().contains(GENESIS_FORMAT_EXACT_SPAN));
+    let s = AuditState::open(&path.0).unwrap();
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head()), roots);
+}
+
+#[test]
+fn a_new_journal_records_the_rule_of_closed_bytes() {
+    let path = TempPath::new();
+    drop(state(&path.0));
+    assert!(std::fs::read_to_string(&path.0).unwrap().lines().next().unwrap().contains(GENESIS_FORMAT));
+}
+
+/// The order of two withdrawals does not decide what stays open: a quote that went with a narrower one can still be withdrawn, and the
+/// rest of its text closes then (review of 06.11.2026, D02).
+#[test]
+fn a_quote_that_went_with_another_can_still_close_its_own_text() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &[observation("o1", "Prior w"), observation("o2", "Prior witness.")]);
+    assert_eq!(r.accepted.len(), 2, "{:?}", r.error);
+    assert_eq!(s.revoke_observation("owner", &r.accepted[0]).unwrap(), 1);
+    assert_eq!(s.revoke_observation("owner", &r.accepted[1]).unwrap(), 0);
+    assert!(refused_as_withdrawn(&mut s, "rest", "itness.\nNew"));
+    assert!(s.revoke_observation("owner", &r.accepted[1]).is_err(), "nothing is left to close");
+}
+
+/// A step of a withdrawal plan on text nobody quoted closed nothing (D01), and a new version of the document opened it again (D03).
+#[test]
+fn a_text_nobody_quoted_can_be_withdrawn_and_stays_closed_in_a_new_version() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    assert_eq!(s.withdraw_text("owner", "policy", "Prior witness.").unwrap(), 0);
+    assert!(s.withdraw_text("owner", "policy", "Prior witness.").is_err(), "already withdrawn");
+    assert!(s.withdraw_text("owner", "policy", "No such text.").is_err());
+    assert!(s.withdraw_text("owner", "no-such-document", "Prior witness.").is_err());
+    assert!(refused_as_withdrawn(&mut s, "wider", "Prior witness.\nNew"));
+    s.put_document("owner", "policy", b"Added line.\nPrior witness.\nNew witness.\n").unwrap();
+    assert!(refused_as_withdrawn(&mut s, "exact-in-new", "Prior witness."));
+    assert!(refused_as_withdrawn(&mut s, "wider-in-new", "line.\nPrior"));
+    let open = s.submit_records_id("open", "worker", "open", &scope(), &[observation("o", "Added line.")]);
+    assert_eq!(open.accepted.len(), 1, "{:?}", open.error);
+    let roots = (s.engine_root(), s.audit_root(), s.wal_head());
+    drop(s);
+    let mut s = AuditState::open(&path.0).unwrap();
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head()), roots);
+    assert!(refused_as_withdrawn(&mut s, "after-restart", "Prior witness."));
+}
+
+/// Two documents can have the same bytes and so the same version id: a withdrawal stays in its document (D04) and reaches every place
+/// of the text in it (D03).
+#[test]
+fn a_withdrawal_stays_in_its_document_and_reaches_every_place_in_it() {
+    let path = TempPath::new();
+    let bytes = b"One same.\nTwo same.\nThree.\n".to_vec();
+    let mut s =
+        AuditState::create(&path.0, &AuditOntology::base(), &[("a".into(), bytes.clone()), ("b".into(), bytes)], "two-documents", sha256(b"fixture")).unwrap();
+    let both = Scope { docs: vec!["a".into(), "b".into()], topic: Some("witnesses".into()), ranges: Vec::new() };
+    let quote = |id: &str, doc: &str, text: &str| json!({"kind":"observe","local_id":id,"doc_id":doc,"exact_quote":text,"terms":["witness"]});
+    let lines = [quote("o1", "a", "One same."), quote("o2", "a", "Two same."), quote("o3", "a", "Three."), quote("o4", "b", "One same.")];
+    let r = s.submit_records_id("seed", "worker", "seed", &both, &lines);
+    assert_eq!(r.accepted.len(), 4, "{:?}", r.error);
+    assert_eq!(s.withdraw_text("owner", "a", "same.").unwrap(), 2);
+    assert!(!s.is_grounded(&r.accepted[0]) && !s.is_grounded(&r.accepted[1]));
+    assert!(s.is_grounded(&r.accepted[2]) && s.is_grounded(&r.accepted[3]));
+    let other = s.submit_records_id("other", "worker", "other", &both, &[quote("o5", "b", "Two same."), quote("o6", "a", "One")]);
+    assert_eq!(other.accepted.len(), 2, "{:?}", other.error);
+}
+
+/// A quote of an earlier version comes back with that version, and what was withdrawn meanwhile must not come back with it (D08).
+#[test]
+fn a_document_that_returns_to_an_earlier_version_keeps_the_text_closed() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let lines = [observation("o1", "Prior witness."), observation("o2", "witness.\nNew"), resting_on("c1", "o1"), resting_on("c2", "o2")];
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &lines);
+    assert_eq!(r.accepted.len(), 4, "{:?}", r.error);
+    s.put_document("owner", "policy", b"Added line.\nPrior witness.\nNew witness.\n").unwrap();
+    assert_eq!(s.withdraw_text("owner", "policy", "Prior witness.").unwrap(), 0, "no quote of this version");
+    s.put_document("owner", "policy", b"Prior witness.\nNew witness.\n").unwrap();
+    for id in &r.accepted {
+        assert!(!s.is_grounded(id));
+    }
+    let roots = (s.engine_root(), s.audit_root(), s.wal_head());
+    drop(s);
+    let s = AuditState::open(&path.0).unwrap();
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head()), roots);
+}
+
+/// The text of a quote, not an identifier (D09).
+#[test]
+fn a_text_with_a_line_break_and_a_long_text_can_be_withdrawn() {
+    let path = TempPath::new();
+    let long = "Long line. ".repeat(200);
+    let bytes = format!("Prior witness.\nNew witness.\n{long}\n");
+    let mut s = AuditState::create(&path.0, &AuditOntology::base(), &[("policy".into(), bytes.into_bytes())], "text", sha256(b"fixture")).unwrap();
+    assert_eq!(s.withdraw_text("owner", "policy", "witness.\nNew").unwrap(), 0);
+    assert_eq!(s.withdraw_text("owner", "policy", long.trim_end()).unwrap(), 0);
+    assert!(refused_as_withdrawn(&mut s, "broken", "Prior witness."));
+}

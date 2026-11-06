@@ -77,9 +77,11 @@ The environment for agent teams is the audit server, `sbgk audit-serve`:
 * **Grounds.** A claim names the quotes it is based on (`based_on`), and every one of them is required. The kernel
   tracks whether each claim is still grounded: all its quotes must stand. A claim cannot rest on another claim here;
   chains of derivations belong to the engine below.
-* **Withdrawal with cascade.** The owner can withdraw an `observe` record (`audit_revoke`). Every record whose required
-  grounds include it loses its support at once; since all entries of `based_on` are required, one withdrawn quote is
-  enough. Records grounded independently of it stay available, and history is not rewritten. A claim in an answer also
+* **Withdrawal with cascade.** The owner can withdraw an `observe` record (`audit_revoke`) or a text of a document, quoted
+  or not (`audit_withdraw_text`). That closes those bytes in the document: every stored quote overlapping them goes with it,
+  and a new quote overlapping them is refused. Every record whose
+  required grounds include one of those quotes loses its support at once; since all entries of `based_on` are required,
+  one withdrawn quote is enough. Records grounded independently of it stay available, and history is not rewritten. A claim in an answer also
   carries a time label for its reader: `CURRENT_UNCERTAIN` (a claim that rested on an earlier and a later report lost the
   later quote; the kernel opens a task on that report and warns the next summary) or `LATEST_KNOWN` (no later state is known
   to the kernel, which is not proof that the state is current). With the
@@ -230,7 +232,7 @@ An MCP client joins as one agent through the bridge, for example with this `.mcp
 
 The bridge adds the token to every message, so the token stays in the bridge's environment and out of the model's prompt.
 It refuses `shutdown` unless started with `--allow-shutdown`, so a worker cannot stop the shared server. The agent calls `audit_acquire`, does what the directive asks, and sends its JSON lines with
-`audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_revoke` and `audit_close`.
+`audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_revoke`, `audit_withdraw_text` and `audit_close`.
 
 More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core/src/audit/README.md).
 

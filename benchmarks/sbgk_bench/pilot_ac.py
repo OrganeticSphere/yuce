@@ -2477,7 +2477,9 @@ def run_arm_c(model: Model, builder_model: Model, work: pathlib.Path, manifest: 
                 # the summaries of run S1.3 restate what rested on these observes as well as on others
                 whole.setdefault("revoked", []).extend(hit)
                 whole.setdefault("withdrawn_quotes", []).append({"quote": cand.get("quote"), "report": step["report"]})
-            revoked = [own.call("audit_revoke", record=rid) for rid in hit]
+            # the planned text itself, quoted or not: the kernel closes it and takes the quotes overlapping it
+            doc_id = next((doc for doc, path in document_paths.items() if path == step["report"]), None)
+            revoked = [own.call("audit_withdraw_text", doc_id=doc_id, exact_quote=cand["quote"]) if doc_id else {"status": "error", "code": "PAGE_NOT_IN_RUN"}]
             res["revoke"] += revoked
             # two observes quoting the same span share one evidence node: the second revoke finds it already revoked (run 5)
             withdrawn_ok = lambda r: r.get("status") == "REVOKED" or ((r.get("error") or {}).get("code") == "ALREADY_REVOKED")  # noqa: E731

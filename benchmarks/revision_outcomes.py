@@ -8,7 +8,8 @@ For each side of a run folder and each withdrawal:
   quotes          the quotes the answers of the stage before cited, split into those the withdrawal touched and the others;
                   of the others, how many the answers after it no longer cite: the collateral
 
-and, on the kernel's side, for each reader and its model, the lines it sent, the quotes stored and the quotes refused by reason.
+on the kernel's side, the quotes the journal took after the withdrawal that still touch the withdrawn text, which has to be 0,
+and for each reader and its model, the lines it sent, the quotes stored and the quotes refused by reason.
 
 A quote is touched when it is in the withdrawn page and overlaps the withdrawn text, partly or wholly: both are found in the page's bytes
 under the run's inputs, and a side whose page is missing there sees only containment, which `page_found` says. A call is on the withdrawn page when its context
@@ -103,7 +104,8 @@ def outcomes(folder: pathlib.Path) -> list[dict]:
             hit = {q for q in had if touched(q, step, page)}
             rows.append({"run": folder.name, "side": arm, "step": step["step"], "calls": sum(spent.values()), **spent, "tokens_by_model": dict(sorted(by_model.items())), "bytes_sent": sent, "bytes_received": received,
                          "page_found": page is not None, "quotes_before": len(had),
-                         "quotes_touched": len(hit), "quotes_untouched_not_cited_after": len((had - hit) - has), "touched_still_cited": len(hit & has)})
+                         "quotes_touched": len(hit), "quotes_untouched_not_cited_after": len((had - hit) - has), "touched_still_cited": len(hit & has),
+                         **({"withdrawn_text_stored_after": stored_after_withdrawal(folder, step, page)} if arm == "C" else {})})
     return rows
 
 
@@ -121,6 +123,34 @@ def quotes_stored(folder: pathlib.Path) -> dict[str, int] | None:
             quotes = sum(line.get("kind") == "observe" for line in (command.get("lines") or [])[:len(accepted)])
             stored[entry["actor"]] = stored.get(entry["actor"], 0) + quotes
     return stored
+
+
+def stored_after_withdrawal(folder: pathlib.Path, step: dict, page: str | None) -> int | None:
+    """The quotes the journal took after this withdrawal that touch its text: a wider quote must not bring it back. The withdrawal is
+    the first command that withdrew the text or a stored quote touching it; a journal that did neither has no after."""
+    journal = folder / "arm_c" / "run.wal"
+    if not journal.is_file():
+        return None
+    frames = rows_of(journal)
+    paths = {doc: identity.get("path") for doc, identity in (((frames[0].get("payload") or {}).get("source_documents") or {}).items())} if frames else {}
+    quotes: dict[str, tuple[str, str]] = {}
+    after: int | None = None
+    for frame in frames[1:]:
+        entry = frame.get("payload") or {}
+        command = entry.get("command") or {}
+        if command.get("kind") == "revoke" and after is None and command.get("record") in quotes and touched(quotes[command["record"]], step, page):
+            after = 0
+        if command.get("kind") == "revoke_text" and after is None and touched((paths.get(command.get("doc_id")), command.get("exact_quote") or ""), step, page):
+            after = 0
+        if command.get("kind") == "submit":
+            accepted = ((entry.get("outcome") or {}).get("result") or {}).get("accepted") or []
+            for line, record in zip(command.get("lines") or [], accepted):
+                if line.get("kind") == "observe":
+                    quote = (paths.get(line.get("doc_id"), line.get("doc_id")), line.get("exact_quote") or "")
+                    quotes[record] = quote
+                    if after is not None and touched(quote, step, page):
+                        after += 1
+    return after
 
 
 def by_reader(folder: pathlib.Path) -> list[dict]:
