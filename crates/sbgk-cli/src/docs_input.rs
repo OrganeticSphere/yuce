@@ -72,26 +72,27 @@ fn walk(dir: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>, skipped: &
     Ok(())
 }
 
-/// A path of a list, step by step: a link or a junction on the way leads out of the folder while the path still looks inside it.
-fn check_named(folder: &Path, parts: &[&str], line: &str) -> Result<(), String> {
+/// A path, step by step: a link or a junction on the way leads out of the folder while the path still looks inside it. Gives the
+/// file's real name in the folder, in the case the file system holds: on most Windows folders `Readme.txt` and `README.txt` are one file.
+fn check_inside(folder: &Path, parts: &[&str], line: &str) -> Result<String, String> {
     let mut at = folder.to_path_buf();
     for part in parts {
         at.push(part);
-        let meta = std::fs::symlink_metadata(&at).map_err(|e| format!("--select: cannot read {line}: {e}"))?;
+        let meta = std::fs::symlink_metadata(&at).map_err(|e| format!("--docs: cannot read {line}: {e}"))?;
         if meta.file_type().is_symlink() {
-            return Err(format!("--select: {line} goes through a link, and links are not followed"));
+            return Err(format!("--docs: {line} goes through a link, and links are not followed"));
         }
     }
-    let inside = std::fs::canonicalize(&at)
-        .and_then(|file| Ok(file.starts_with(std::fs::canonicalize(folder)?)))
-        .map_err(|e| format!("--select: cannot read {line}: {e}"))?;
-    if !inside {
-        return Err(format!("--select: {line} is not a path inside the folder"));
-    }
+    let unread = |e: std::io::Error| format!("--docs: cannot read {line}: {e}");
+    let (file, root) = (std::fs::canonicalize(&at).map_err(unread)?, std::fs::canonicalize(folder).map_err(unread)?);
+    let Ok(inside) = file.strip_prefix(&root) else {
+        return Err(format!("--docs: {line} is not a path inside the folder"));
+    };
     if !std::fs::metadata(&at).is_ok_and(|m| m.is_file()) {
-        return Err(format!("--select: {line} is not a file"));
+        return Err(format!("--docs: {line} is not a file"));
     }
-    Ok(())
+    let names: Option<Vec<&str>> = inside.components().map(|c| c.as_os_str().to_str()).collect();
+    names.map(|n| n.join("/")).ok_or_else(|| format!("--docs: the name of {line} is not UTF-8"))
 }
 
 /// The files of a `--select` list: one path inside the folder per line, as in a repository's list, `#` for a comment.
@@ -109,8 +110,7 @@ fn named(folder: &Path, list: &str, files: &mut Vec<(String, PathBuf)>) -> Resul
         if parts.is_empty() {
             return Err(format!("--select: {line} names no file"));
         }
-        check_named(folder, &parts, line)?;
-        let id = parts.join("/");
+        let id = check_inside(folder, &parts, line)?;
         let path = folder.join(&id);
         files.push((id, path));
     }
@@ -139,6 +139,8 @@ pub fn collect(folder: &Path, select: Option<&str>, own: &Own) -> Result<Taken, 
             continue;
         }
         let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {id}: {e}"))?;
+        // what was read is what was checked, unless the folder changed and changed back: nobody should write to it while the server starts
+        check_inside(folder, &id.split('/').collect::<Vec<_>>(), &id)?;
         if own.holds(&path, &bytes) {
             if select.is_some() {
                 return Err(format!("--select: {id} is a file of this server's own command, and it would stay in the journal"));
@@ -258,6 +260,16 @@ mod tests {
         assert!(collect(&f.0, Some("absent.txt\n"), &Own::default()).err().unwrap().contains("cannot read"));
         std::fs::create_dir_all(f.0.join("sub")).unwrap();
         assert!(collect(&f.0, Some("sub\n"), &Own::default()).err().unwrap().contains("not a file"));
+    }
+
+    /// On a folder that ignores case two spellings are one file, and a document has one name: the one the file has.
+    #[cfg(windows)]
+    #[test]
+    fn two_spellings_of_a_file_are_one_document() {
+        let f = Folder::new("case", &[("README.txt", b"one\n"), ("sub/Notes.txt", b"two\n")]);
+        assert!(collect(&f.0, Some("Readme.txt\nREADME.txt\n"), &Own::default()).err().unwrap().contains("twice"));
+        let t = collect(&f.0, Some("readme.TXT\nSUB/notes.txt\n"), &Own::default()).unwrap();
+        assert_eq!(ids(&t), ["README.txt", "sub/Notes.txt"]);
     }
 
     #[test]

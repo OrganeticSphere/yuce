@@ -155,6 +155,30 @@ fn the_words_of_a_kept_row_on_other_grounds_or_another_date_are_no_copy() {
     }
 }
 
+/// The grounds of a line read as the store reads a reference: a full id in either case is the quote, a near miss is no quote at all.
+#[test]
+fn a_copy_may_name_its_grounds_in_full_and_a_wrong_id_is_refused() {
+    for (name, full) in [("lower", false), ("upper", true)] {
+        let mut a = withdrawn_under(&[0, 1], false);
+        let t = a.d.acquire(&a.s, "repair", true, 100);
+        let task = t["task_id"].as_str().unwrap().to_string();
+        let hex = sbgk_core::hash::to_hex(&a.quotes[2].0);
+        let id = format!("@{}", if full { hex.to_uppercase() } else { hex });
+        let r = a.d.submit(&mut a.s, &task, "repair", &[claim("copy", &[&id], KEPT_TEXT), done(&t, &["copy"])], 101);
+        assert_eq!(r["dropped_copies"], json!(["copy"]), "{name}: {r}");
+    }
+    let mut a = withdrawn_under(&[0, 1], false);
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    let task = t["task_id"].as_str().unwrap().to_string();
+    let mut hex = sbgk_core::hash::to_hex(&a.quotes[2].0);
+    let last = if hex.ends_with('0') { "1" } else { "0" };
+    hex.replace_range(63.., last);
+    let wrong = format!("@{hex}");
+    let r = a.d.submit(&mut a.s, &task, "repair", &[claim("copy", &[&wrong], KEPT_TEXT), done(&t, &["copy"])], 101);
+    assert_eq!(r["status"], "REPAIR_REQUIRED", "{r}");
+    assert_eq!(r["error"]["code"], "UNKNOWN_LOCAL_ID", "{r}");
+}
+
 #[test]
 fn a_repair_takes_no_more_lines_than_it_was_told() {
     let mut a = withdrawn_under(&[0, 1], false);

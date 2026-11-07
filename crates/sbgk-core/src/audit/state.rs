@@ -815,11 +815,14 @@ pub struct VerifiedJournal {
     pub document_puts: usize,
 }
 
-/// The documents a committed command put, those inside a batch too.
-fn document_puts(command: &Value) -> usize {
+/// The documents a committed command put: a batch stops at a failed operation, and what follows it was not applied.
+fn document_puts(command: &Value, result: &Value) -> usize {
     match command["kind"].as_str() {
         Some("put_document") => 1,
-        Some("batch") => command["operations"].as_array().into_iter().flatten().map(document_puts).sum(),
+        Some("batch") => {
+            let (operations, results) = (command["operations"].as_array().into_iter().flatten(), result["results"].as_array().into_iter().flatten());
+            operations.zip(results).take(result["accepted_operations"].as_u64().unwrap_or(0) as usize).map(|(o, r)| document_puts(o, r)).sum()
+        }
         _ => 0,
     }
 }
@@ -946,7 +949,8 @@ impl AuditState {
             visit(n, state.audit_root(), state.engine_root(), heads[n - 1]);
             Ok(())
         })?;
-        let document_puts = scan.payloads.iter().skip(1).filter(|p| p["outcome"]["kind"] != "error").map(|p| document_puts(&p["command"])).sum();
+        let document_puts =
+            scan.payloads.iter().skip(1).filter(|p| p["outcome"]["kind"] != "error").map(|p| document_puts(&p["command"], &p["outcome"]["result"])).sum();
         let read =
             VerifiedJournal { bytes: scan.bytes, complete_bytes: scan.complete_bytes, sha256: scan.sha256, wal_head: heads[heads.len() - 1], document_puts };
         Ok((state, read))

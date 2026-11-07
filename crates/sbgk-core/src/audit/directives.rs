@@ -308,13 +308,26 @@ fn fallen_repair(fallen: &[Fallen], kept: &[RecordId]) -> String {
     out
 }
 
-/// What a claim says and what it rests on: its text, case and spacing aside, its other fields, and its grounds by short id.
-fn claim_stated(text: &str, claim: &Value, grounds: BTreeSet<String>) -> (String, Vec<String>, BTreeSet<String>) {
+/// What a claim says: its text, case and spacing aside, and its other fields.
+fn claim_stated(text: &str, claim: &Value) -> (String, Vec<String>) {
     let fields = ["subject", "predicate", "object", "stance", "as_of"]
         .iter()
         .map(|k| claim.get(*k).filter(|v| !v.is_null()).map(Value::to_string).unwrap_or_default())
         .collect();
-    (text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase(), fields, grounds)
+    (text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase(), fields)
+}
+
+/// Whether references name exactly these grounds, ids in hex. A reference reads as in the store: `@` and at least 16 digits of an id, in
+/// either case. Whatever else a line names is no ground of a kept row, and the store's own check answers for it.
+fn names_grounds(references: &[Value], grounds: &BTreeSet<String>) -> bool {
+    let named: Option<BTreeSet<&String>> = references
+        .iter()
+        .map(|r| {
+            let digits = r.as_str()?.strip_prefix('@').filter(|d| d.len() >= 16)?.to_ascii_lowercase();
+            grounds.iter().find(|g| g.starts_with(&digits))
+        })
+        .collect();
+    named.is_some_and(|n| n.len() == grounds.len())
 }
 
 /// The claim lines that only repeat a row the answer keeps: the same statement on the same grounds. Words alone do not make a copy: the
@@ -322,19 +335,19 @@ fn claim_stated(text: &str, claim: &Value, grounds: BTreeSet<String>) -> (String
 /// id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them distinct. A line another line rests on
 /// stays. Done here and not in the store: a journal holding such copies must replay.
 fn copies_of_kept<S: AuditStore>(s: &S, kept: &[RecordId], lines: &[Value]) -> BTreeSet<String> {
-    let rows: BTreeSet<_> = kept
+    let rows: Vec<_> = kept
         .iter()
         .filter_map(|id| s.record(id))
-        .filter_map(|r| r.text.as_deref().map(|t| claim_stated(t, &r.body, r.based_on.iter().map(RecordId::short).collect())))
+        .filter_map(|r| r.text.as_deref().map(|t| (claim_stated(t, &r.body), r.based_on.iter().map(|g| to_hex(&g.0)).collect::<BTreeSet<_>>())))
         .collect();
-    let line_grounds = |v: &Value| -> BTreeSet<String> {
-        let refs = v["based_on"].as_array().into_iter().flatten().filter_map(Value::as_str);
-        refs.map(|r| format!("@{}", r.trim_start_matches('@').chars().take(16).collect::<String>())).collect()
+    let repeats = |v: &Value, text: &str| {
+        let (stated, references) = (claim_stated(text, v), v["based_on"].as_array().map_or(&[][..], Vec::as_slice));
+        rows.iter().any(|(row, grounds)| *row == stated && names_grounds(references, grounds))
     };
     let used: BTreeSet<String> = lines.iter().filter(|v| v["kind"] != "done").flat_map(references).collect();
     lines
         .iter()
-        .filter(|v| v["kind"] == "claim" && v["text"].as_str().is_some_and(|t| rows.contains(&claim_stated(t, v, line_grounds(v)))))
+        .filter(|v| v["kind"] == "claim" && v["text"].as_str().is_some_and(|t| repeats(v, t)))
         .filter_map(|v| v["local_id"].as_str())
         .filter(|n| !used.contains(*n))
         .map(str::to_string)

@@ -901,6 +901,14 @@ fn a_journal_of_a_folder_says_when_its_documents_are_not_the_set_it_started_on()
     drop(s);
     let (replayed, read) = AuditState::verify(&wal.0, &mut |_, _, _, _| {}).unwrap();
     assert_eq!((replayed.docs_set_matches(), read.document_puts), (true, 2));
+    drop(replayed);
+    // a batch stops at a failed operation: what follows it was not applied, and it is not counted
+    let mut s = AuditState::open(&wal.0).unwrap();
+    let put = |text: &str| json!({"kind":"put_document","doc_id":"a.txt","text":text});
+    s.submit_operations_id("tail", "owner", &[put("Second.\n"), json!({"kind":"no-such"}), put("Third.\n")], None).unwrap();
+    assert_eq!(s.doc_text("a.txt").as_deref(), Some("Second.\n"));
+    drop(s);
+    assert_eq!(AuditState::verify(&wal.0, &mut |_, _, _, _| {}).unwrap().1.document_puts, 3);
     // the library's own value says no from the start: nothing in such a journal claims to be a folder's set
     let other = TempPath::new();
     let library = AuditState::create(&other.0, &AuditOntology::base(), &[("a".to_string(), b"Alpha.\n".to_vec())], "library", sha256(b"own")).unwrap();
