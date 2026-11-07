@@ -135,6 +135,26 @@ fn a_copy_of_a_kept_row_is_left_out_and_counted() {
     assert_eq!(context["composition"]["fallen_answer_ids"], json!([a.fallen]), "{context}");
 }
 
+/// R017-02: the same sentence on another quote or with another date is another claim, and the repair keeps it.
+#[test]
+fn the_words_of_a_kept_row_on_other_grounds_or_another_date_are_no_copy() {
+    let mut a = withdrawn_under(&[0, 1], false);
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    let task = t["task_id"].as_str().unwrap().to_string();
+    let (b, c) = (a.quotes[1].short(), a.quotes[2].short());
+    let mut dated = claim("dated", &[&c], KEPT_TEXT);
+    dated["as_of"] = json!(20260101);
+    let lines = [claim("other", &[&b], KEPT_TEXT), dated, done(&t, &["other", "dated"])];
+    let r = a.d.submit(&mut a.s, &task, "repair", &lines, 101);
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    assert!(r.get("dropped_copies").is_none_or(|d| d.as_array().is_some_and(|d| d.is_empty())), "{r}");
+    let view = a.d.accepted_outcomes(&a.s);
+    let ids: Vec<&str> = view["RQ1"]["answer_ids"].as_array().unwrap().iter().filter_map(|x| x.as_str()).collect();
+    for name in ["other", "dated"] {
+        assert!(ids.contains(&r["accepted_locals"][name].as_str().unwrap()), "{name}: {view}");
+    }
+}
+
 #[test]
 fn a_repair_takes_no_more_lines_than_it_was_told() {
     let mut a = withdrawn_under(&[0, 1], false);

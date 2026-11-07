@@ -225,7 +225,7 @@ Your own documents need no manifest: `--docs` takes the UTF-8 text files of a fo
 ```
 
 A document is named by its path inside the folder. The server leaves out hidden files such as `.env`, service folders, links and
-its own files, and prints on stderr what it took and what it left. A file that is not UTF-8 text stops the start, by name: convert
+its own files with their copies, and prints on stderr what it took and what it left. A file that is not UTF-8 text stops the start, by name: convert
 PDF and Word files to text first, or name the files to take with `--select` (one path per line). The journal keeps the full text of
 what was taken, and whoever checks it gets that text: see [LIMITATIONS.md](LIMITATIONS.md).
 

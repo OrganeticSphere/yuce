@@ -43,11 +43,14 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   versions of a document, which is what `examples/findings-gate/` uses.
 * **A run on a folder proves the bytes, not where they came from.** Its journal names each file by its path inside the folder, with
   the SHA-256 of its bytes, and `corpus_manifest_hash` is the hash of that list. No repository or commit stands behind it: to compare
-  a journal with your files, compare the hashes. `audit-verify` computes that hash again (`sources.set_matches_manifest_hash`). It
-  says `false` when documents changed after the start (`sources.put_document_entries`), and for a journal the library wrote with a
-  value of its own.
-* `--docs` leaves out what a walk should not give away: hidden files, service folders, links and the server's own files. It cannot
-  tell a secret in an ordinary file: read the list of taken files it prints, as what is taken stays in the journal for good.
+  a journal with your files, compare the hashes. `audit-verify` computes that hash again: `sources.set_matches_manifest_hash` says
+  whether the documents as they stand at the end are the set the journal names, and `sources.put_document_entries` how many entries
+  put a document, as one can change and come back. It says `false` for a journal the library wrote with a value of its own. This is
+  a check of a journal against itself: one rewritten with its hash computed again passes it, and only a receipt kept elsewhere shows that.
+* `--docs` leaves out what a walk should not give away: hidden files, service folders, links, the server's own files and copies of
+  `--subjects` and `--questions`. A list given with `--select` may name a hidden file, and it stops the start on a link or a file of
+  the server. Neither can tell a secret in an ordinary file: read the list of taken files it prints, as what is taken stays in the
+  journal for good. A name takes at most 512 bytes.
 * **PDF and Word are not read.** Convert them to text first. A quote is matched by its bytes and nothing is normalized, so text
   from Word with curly quotes or no-break spaces fails when an agent writes them differently, as any changed byte does. How often
   that happens on such text has not been measured.
@@ -72,9 +75,10 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * **`CURRENT_UNCERTAIN` needs one claim on both dates.** In the default profile the mark falls on a claim that rested on an earlier
   and a later report, and on the next summary. A reader's claim on the earlier quote alone stays `LATEST_KNOWN`, and a summary written
   as one claim per quote gets no mark. With accepted `supersedes` links, off by default, the earlier claim itself is marked.
-* **The rule of a journal is pinned by its chain, not by its roots.** Under the rule before 0.1.6 and under that of 0.1.6 the same
-  entries reach the same `audit_root` and `engine_root`, and only the first entry differs, and with it every `wal_head`. A receipt
-  says which rule a journal ran under when it holds a `wal_head` you trust.
+* **The rule of a journal is pinned by its chain, not by its roots.** The roots do not say whether a journal ran under the rule before
+  0.1.6 or under that of 0.1.6: until a command the two rules answer differently, the same entries reach the same `audit_root` and
+  `engine_root`. The first entry differs, and with it every `wal_head`. A receipt says which rule a journal ran under when it holds a
+  `wal_head` you trust.
 * A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
   `engine_root`, `wal_head`) where the journal's writer cannot change it, such as a protected commit or a CI artifact, and
   check the journal against it with `sbgk audit-verify --expect`. There is no external witness service in 0.1.
