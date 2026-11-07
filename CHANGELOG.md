@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.7 (not released yet)
+## 0.1.7 (2026-11-08)
 
 A repair after a withdrawal names what fell, and the audit server takes your own text files. The blind grading of the second run of
 four makers found the first: the kernel kept the conclusion, and its answer lost it in the repair.
