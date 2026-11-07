@@ -17,9 +17,11 @@ timestamps and in what their models write.
 ## Source revoked: one minute, no model, no API key
 
 ```bash
-cargo build --release
-python examples/revoke-and-replay/demo.py --html inspector_report.html
+python examples/revoke-and-replay/demo.py --bin path/to/sbgk --html inspector_report.html
 ```
+
+`path/to/sbgk` is the binary of a release (see [Quick start](#quick-start)), or `cargo build --release` builds it and the script
+finds it without `--bin`.
 
 Three readers and an owner work on one page of the MCP specification through the real audit server, in six checked steps:
 
@@ -48,6 +50,7 @@ correct statements, graded blind; after reading (stage 1) and after each of two 
 | DeepSeek Flash, series 2 (Opus 5.5) | 89.6 / 92.1 / 84.9 | 89.6 / 83.8 / 85.2 | 89.7 / 81.0 / 88.9 |
 | Four makers, run 1, before the fix of 0.1.6 (Opus 5.5) | 87.8 / 86.6 / 84.0 | 83.6 / 93.7 / 67.1 | 87.0 / 92.5 / 82.3 |
 | Four makers, run 2 (Opus 5.5) | 88.2 / 50.0 / 81.8 | 85.9 / 80.5 / 77.5 | 82.2 / 70.4 / 76.9 |
+| Four makers, control run of 0.1.7: K new, T and L of run 2 graded again (Opus 5.5) | 82.0 / 56.9 / 86.4 | 87.1 / 87.7 / 77.5 | 82.6 / 78.2 / 83.8 |
 
 **We claim no gain in answer quality.** The samples are small: one corpus, one or two runs per side, 45 to 158 graded statements
 each. The 95% interval of a difference is about 10 to 12 points either way; on the single-model runs one difference of the 18
@@ -62,7 +65,10 @@ receipt by anyone. On the single-model runs every grading found that the kernel'
 it kept them fully in 10 (T) and 8 (L) of 12 gradings and partly in the rest. On four makers the grader found a real gap: a reader
 stored a withdrawn sentence again, three bytes wider, the kernel took it as a new record, and an answer cited it. Since 0.1.6 a
 withdrawal closes the bytes, and in the second run no grounded record rests on the withdrawn text. Its answer was still graded
-partly kept after the second withdrawal, for dropping a conclusion another page supports. T kept all 8 gradings there, L 6.
+partly kept after the second withdrawal, for dropping a conclusion another page supports. T kept all 8 gradings there, L 6. In
+0.1.7 the kernel names what fell: in its control run the repair took one new claim per answer and the conclusion stood. The grader
+marked the second withdrawal kept in one order and partly in the other, for an earlier state written as current, which the answer
+held before the withdrawals.
 
 **The price.** 2.3 to 2.5 times the wall time and 1.4 times the cost on Haiku; 1.2 to 1.3 and 1.5 to 1.6 on DeepSeek. Its side also
 makes 1.8 to 2.6 times the model calls in stage 1, and no side with an equal budget of calls was run, so what the kernel adds to
@@ -149,16 +155,23 @@ All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting
 
 ## Quick start
 
-Build with a current stable Rust toolchain and run the tests:
+The shortest way is a release: binaries for Linux, macOS and Windows, with SHA-256 sums, are on the
+[releases page](https://github.com/OrganeticSphere/yuce/releases). Check the sum, unpack, and run `sbgk --help` (or `yuce --help`,
+the same commands). The Python client is on PyPI:
+
+```bash
+pip install organetic-yuce
+```
+
+The examples below are in this repository, not in the release archives. To build from source with a current stable Rust
+toolchain and run the tests:
 
 ```bash
 cargo build --workspace --release
 cargo test --workspace --release
 ```
 
-The build produces `sbgk` and its alias `yuce` (the same commands) in `target/release/`; `sbgk --help` lists them. Release
-binaries for Linux, macOS and Windows, with SHA-256 sums, are on the releases page; the examples below are in this repository,
-not in the release archives.
+The build puts `sbgk` and `yuce` in `target/release/`.
 
 ### A minimal example
 
@@ -234,7 +247,8 @@ journal as a resumed server would (frame hashes, source identities, every entry 
 reading the file once and read-only, and prints the record count, the audit, engine and session roots and the chain head.
 With `--expect receipt.json`, the receipt's roots must name a state the journal passed through (a phase receipt or the
 final one), and its `wal_head`, if it has one, the chain up to that state; a refused journal or a receipt that names no
-state of it exits 1. With `--at-end` that state must also be the journal's last. Keep the receipt where the journal's writer cannot change it, for example in a
+state of it exits 1. With `--at-end` that state must also be the journal's last. `VERIFIED` without `--expect` says that the chain
+and every entry check out, not that this is the journal a receipt names: only `--expect` says that. Keep the receipt where the journal's writer cannot change it, for example in a
 protected git commit or a CI artifact: a party that can rewrite the whole journal can also rewrite its hash chain.
 
 An MCP client joins as one agent through the bridge, for example with this `.mcp.json` entry:
@@ -245,6 +259,16 @@ An MCP client joins as one agent through the bridge, for example with this `.mcp
   "args": ["mcp-bridge", "--connect", "127.0.0.1:8787", "--agent-id", "reader-1",
            "--allow-tools", "audit_acquire,audit_submit,audit_renew,audit_release"],
   "env": {"SBGK_MCP_TOKEN": "replace-with-a-secret-1"}}}}
+```
+
+The owner joins the same way with the owner's token and its tools:
+
+```json
+{"mcpServers": {"r2r-owner": {
+  "command": "/path/to/sbgk",
+  "args": ["mcp-bridge", "--connect", "127.0.0.1:8787", "--agent-id", "owner",
+           "--allow-tools", "audit_status,audit_record,audit_revoke,audit_withdraw_text,audit_terminal_receipt"],
+  "env": {"SBGK_MCP_TOKEN": "replace-with-a-secret-4"}}}}
 ```
 
 The bridge adds the token to every message, so the token stays in the bridge's environment and out of the model's prompt.
