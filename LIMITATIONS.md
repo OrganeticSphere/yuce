@@ -50,7 +50,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * `--docs` leaves out what a walk should not give away: hidden files, service folders, links, the server's own files and copies of
   `--subjects` and `--questions`. A list given with `--select` may name a hidden file, and it stops the start on a link or a file of
   the server. Neither can tell a secret in an ordinary file: read the list of taken files it prints, as what is taken stays in the
-  journal for good. A name takes at most 512 bytes.
+  journal for good. A name takes at most 512 bytes. Each path is checked before and after its file is read, not the open file itself:
+  nobody else should write to the folder while the server starts.
 * **PDF and Word are not read.** Convert them to text first. A quote is matched by its bytes and nothing is normalized, so text
   from Word with curly quotes or no-break spaces fails when an agent writes them differently, as any changed byte does. How often
   that happens on such text has not been measured.
