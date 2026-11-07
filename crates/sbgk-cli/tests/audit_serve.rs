@@ -248,6 +248,7 @@ fn a_run_completes_on_the_wire_and_resumes_from_the_journal_after_a_kill() {
     let mut w1 = Client::connect(server.port, W1);
     let t = w1.call("audit_acquire", json!({}));
     assert_eq!(t["kind"], "EXTEND", "{t}");
+    assert!(t["prompt"].as_str().unwrap().contains("over a corpus of engineering reports."), "the words of the measured runs: {t}");
     let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
     assert_eq!(r["status"], "COMMITTED", "{r}");
     drop(server); // killed: nothing flushed beyond the journal

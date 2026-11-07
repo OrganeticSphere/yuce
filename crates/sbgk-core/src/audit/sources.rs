@@ -149,6 +149,14 @@ fn markdown_extension(p: &str) -> Option<&'static str> {
     [".md", ".mdx"].into_iter().find(|e| lower.ends_with(e))
 }
 
+/// The identity of a set of supplied files: their names and content hashes, in the order of the names. It holds nothing of the
+/// machine, so the same files give the same value anywhere, and it can be computed again from a journal's own list.
+pub fn docs_set_hash<'a>(docs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Hash {
+    let mut pairs: Vec<(&str, &str)> = docs.into_iter().collect();
+    pairs.sort_unstable();
+    sha256(to_jcs(&json!(["r2r-audit-docs/1", pairs])).as_bytes())
+}
+
 fn document_id(repo: &str, commit: &str, path: &str, raw_hash: &Hash) -> String {
     let tuple = json!(["R2R-AUDIT-GIT-DOCUMENT/1", repo, commit, path, to_hex(raw_hash)]);
     format!("d_{}", to_hex(&sha256(to_jcs(&tuple).as_bytes())))

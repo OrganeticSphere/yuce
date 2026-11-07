@@ -36,6 +36,27 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
   `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
 * `audit_close` is not journaled: a server restarted on the same journal is open again.
+* **A journal holds the full text of its sources.** Whoever checks a journal gets them: to publish a journal is to publish its
+  documents. A journal cannot be checked without their text.
+* `sbgk audit-serve` takes two kinds of sources: Markdown pinned by commit and SHA-256 (`--manifest`), or the UTF-8 text files of a
+  folder (`--docs`). Either way a run is fixed at its start: a source that changes means a new run. The library also takes new
+  versions of a document, which is what `examples/findings-gate/` uses.
+* **A run on a folder proves the bytes, not where they came from.** Its journal names each file by its path inside the folder, with
+  the SHA-256 of its bytes, and `corpus_manifest_hash` is the hash of that list. No repository or commit stands behind it: to compare
+  a journal with your files, compare the hashes. `audit-verify` computes that hash again (`sources.set_matches_manifest_hash`). It
+  says `false` when documents changed after the start (`sources.put_document_entries`), and for a journal the library wrote with a
+  value of its own.
+* `--docs` leaves out what a walk should not give away: hidden files, service folders, links and the server's own files. It cannot
+  tell a secret in an ordinary file: read the list of taken files it prints, as what is taken stays in the journal for good.
+* **PDF and Word are not read.** Convert them to text first. A quote is matched by its bytes and nothing is normalized, so text
+  from Word with curly quotes or no-break spaces fails when an agent writes them differently, as any changed byte does. How often
+  that happens on such text has not been measured.
+* Only Markdown is cut at `#` lines. Other text and code files are cut by size, at a blank line or else at a line end, so a passage
+  can fall on two sections, and a quote cannot cross them. A document without a date has no place in time, and whatever compares an
+  earlier document with a later one says nothing about it. The dated summary needs a `+++` block in the file for that.
+* The research questions are not in the journal: it holds a hash of their set in a few entries, not their text. A server reopened on
+  a journal with another `--questions` file takes the work up again for the new set, and `audit-verify` still passes, as it checks
+  what the journal holds. Keep the questions file with its journal.
 * **What a withdrawal reaches.** A withdrawal closes text of one document: those bytes wherever they stand in it, in any version.
   Every stored quote that overlaps them goes with it, and a new quote that overlaps them is refused, even when most of it is other
   text. So no claim stays grounded on those bytes of that document. The owner names a stored quote (`audit_revoke`) or the text
@@ -51,6 +72,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * **`CURRENT_UNCERTAIN` needs one claim on both dates.** In the default profile the mark falls on a claim that rested on an earlier
   and a later report, and on the next summary. A reader's claim on the earlier quote alone stays `LATEST_KNOWN`, and a summary written
   as one claim per quote gets no mark. With accepted `supersedes` links, off by default, the earlier claim itself is marked.
+* **The rule of a journal is pinned by its chain, not by its roots.** Under the rule before 0.1.6 and under that of 0.1.6 the same
+  entries reach the same `audit_root` and `engine_root`, and only the first entry differs, and with it every `wal_head`. A receipt
+  says which rule a journal ran under when it holds a `wal_head` you trust.
 * A party that can rewrite the whole journal can also rewrite its chain: keep the terminal receipt (`audit_root`,
   `engine_root`, `wal_head`) where the journal's writer cannot change it, such as a protected commit or a CI artifact, and
   check the journal against it with `sbgk audit-verify --expect`. There is no external witness service in 0.1.

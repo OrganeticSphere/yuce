@@ -37,6 +37,8 @@ pub struct DispatchConfig {
     pub agent_attempts: Option<u32>,
     /// Explicit transport deadline of SUMMARY/ANSWER only; None preserves historical leases.
     pub answer_timeout_ms: Option<u64>,
+    /// What the agents are told they read. A run on pinned reports keeps the words its measured runs had.
+    pub corpus: &'static str,
     /// Upper bound of one report section handed to an agent (UTF-8 bytes).
     pub section_bytes: usize,
     /// Records shown as support (cone) or as already established.
@@ -98,6 +100,7 @@ impl Default for DispatchConfig {
             ttl_ms: 600_000,
             agent_attempts: None,
             answer_timeout_ms: None,
+            corpus: "a corpus of engineering reports",
             section_bytes: 6000,
             max_cone: 12,
             max_known: 12,
@@ -197,6 +200,9 @@ struct Lease {
     refusals: u32,
     /// A reading task in its RELATE turn (`relate_hints`): its answer is stored, and it now takes only claims of a change.
     relate: bool,
+    /// A repair that names fallen answer rows: the most lines it takes. The report coverage of a new answer does not apply to it:
+    /// the rows kept were covered when they were accepted, and a report whose only row fell need not come back.
+    repair_lines: Option<usize>,
 }
 
 /// Hints per claim in a RELATE turn (offline on four runs: the best three held the other side of 8 to 9 of 11 to 12 stale facts).
@@ -231,6 +237,91 @@ struct Answer {
     done: RecordId,
     outcome: String,
     ids: Vec<RecordId>,
+    /// Rows of this answer that stopped standing: its repair names them.
+    fallen: Vec<RecordId>,
+}
+
+impl Answer {
+    /// Keep the rows that stand and remember the others.
+    fn settle<S: AuditStore>(&mut self, s: &S, f: &Flags) {
+        let (kept, fallen): (Vec<RecordId>, Vec<RecordId>) = self.ids.iter().copied().partition(|id| f.support(s, id));
+        self.ids = kept;
+        self.fallen.extend(fallen);
+    }
+}
+
+/// An answer row that fell: the quotes under it that stand, and how many do not.
+struct Fallen {
+    id: RecordId,
+    standing: Vec<RecordView>,
+    gone: usize,
+}
+
+/// The fallen rows a repair names one by one. The others are only counted.
+const FALLEN_NAMED: usize = 20;
+
+/// The rows a repair names: those with a quote left to answer from.
+fn named_rows(fallen: &[Fallen]) -> Vec<&Fallen> {
+    fallen.iter().filter(|r| !r.standing.is_empty()).take(FALLEN_NAMED).collect()
+}
+
+/// The claim lines a repair takes: a merged row may come back as two, and a little room. The room stays when no quote stands: the
+/// state before a withdrawn one may stand in other records, and the answer may say so.
+fn repair_claims(fallen: &[Fallen]) -> usize {
+    (2 * named_rows(fallen).len() + 2).min(SUMMARY_CLAIMS)
+}
+
+/// The head of a repair. A fallen row is named by id with the quotes that stand: its text may state what was withdrawn (run K016:
+/// the row said what the withdrawn sentence said, and the header it named stood in no other quote), so the kernel does not hand it
+/// back. Without this the repair could not tell what fell: it wrote the answer again, 34 lines, 23 of them copies, and not the row.
+fn fallen_repair(fallen: &[Fallen], kept: &[RecordId]) -> String {
+    let named = named_rows(fallen);
+    let mut out = format!(
+        "INCREMENTAL REPAIR: {} of the answer records of this question no longer stand: evidence under them was withdrawn or changed. The kernel \
+         keeps the other {} and adds them to your done line itself: {}. Do not write them again: a line repeating one of them is dropped.\n",
+        fallen.len(),
+        kept.len(),
+        short_list(kept).join(", ")
+    );
+    if named.is_empty() {
+        out.push_str(&format!(
+            "No quote of theirs stands, and their text is left out, as it may state what was withdrawn. Write a claim only where the records below \
+             show that a point of this question now stands differently, at most {} claim lines; otherwise only the done line.\n",
+            repair_claims(fallen)
+        ));
+        return out;
+    }
+    out.push_str("STILL STANDING UNDER THE FALLEN RECORDS (their text is left out, as it may state what was withdrawn):\n");
+    for r in &named {
+        let quotes: Vec<String> = r.standing.iter().map(|o| format!("{} \"{}\"", o.id.short(), o.quote.as_deref().unwrap_or_default())).collect();
+        let gone = if r.gone > 0 { format!(" ({} of its quotes gone)", r.gone) } else { String::new() };
+        out.push_str(&format!("  {}{gone}: {}\n", r.id.short(), quotes.join(", ")));
+    }
+    if fallen.len() > named.len() {
+        out.push_str(&format!("{} more fell: write nothing for them.\n", fallen.len() - named.len()));
+    }
+    out.push_str(&format!(
+        "Write at most {} claim lines: for each fallen record above, what its standing quotes state on their own, based_on those quotes only and \
+         saying nothing they do not say, or no claim where they state too little. Write no other claim: the answer needs no other change.\n",
+        repair_claims(fallen)
+    ));
+    out
+}
+
+/// The claim lines that only repeat a row the answer keeps, by their text, case and spacing aside. A copy would be a new record
+/// beside the kept row (a record's id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them
+/// distinct. A line another line rests on stays. Done here and not in the store: a journal holding such copies must replay.
+fn copies_of_kept<S: AuditStore>(s: &S, kept: &[RecordId], lines: &[Value]) -> BTreeSet<String> {
+    let plain = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let texts: BTreeSet<String> = kept.iter().filter_map(|id| s.record(id)).filter_map(|r| r.text).map(|t| plain(&t)).collect();
+    let used: BTreeSet<String> = lines.iter().filter(|v| v["kind"] != "done").flat_map(references).collect();
+    lines
+        .iter()
+        .filter(|v| v["kind"] == "claim" && v["text"].as_str().is_some_and(|t| texts.contains(&plain(t))))
+        .filter_map(|v| v["local_id"].as_str())
+        .filter(|n| !used.contains(*n))
+        .map(str::to_string)
+        .collect()
 }
 
 /// What a section's first reading lost: records stored, the most lines one answer offered, refused answers, and whether the reading
@@ -483,13 +574,31 @@ impl Default for Dispatcher {
     }
 }
 
-/// Byte ranges of a Markdown document cut at headings, then packed (or split at blank lines / char boundaries) to at most `max`.
-pub(crate) fn sections(text: &str, max: usize) -> Vec<(usize, usize)> {
+/// Whether `#` opens a section of this document. A Markdown file: yes, and so a name that does not say what it is, as a pinned
+/// source's id (`d_<hash>`) does not. In any other text or code file such a line is a comment or an attribute.
+fn has_headings(doc: &str) -> bool {
+    let name = doc.rsplit('/').next().unwrap_or(doc);
+    match name.rsplit_once('.') {
+        Some((stem, kind)) if !stem.is_empty() => kind.eq_ignore_ascii_case("md") || kind.eq_ignore_ascii_case("mdx"),
+        _ => true,
+    }
+}
+
+/// Where a piece of plain text ends: after its last blank line, else after its last line. Text from Windows ends a line in `\r\n`.
+fn plain_break(piece: &str) -> Option<usize> {
+    let blank = piece.rfind("\n\n").map(|p| p + 2).max(piece.rfind("\n\r\n").map(|p| p + 3));
+    blank.or_else(|| piece.rfind('\n').map(|p| p + 1))
+}
+
+/// Byte ranges of a document cut at headings where it has them, then packed (or split at blank lines / char boundaries) to at most
+/// `max`. Task keys hold these section numbers, so every reader of a document's sections comes here, with its name.
+pub(crate) fn sections(doc: &str, text: &str, max: usize) -> Vec<(usize, usize)> {
     let max = max.max(64);
+    let headings = has_headings(doc);
     let mut starts = vec![0usize];
     let mut at = 0;
     for line in text.split_inclusive('\n') {
-        if at > 0 && line.starts_with('#') {
+        if headings && at > 0 && line.starts_with('#') {
             starts.push(at);
         }
         at += line.len();
@@ -503,8 +612,9 @@ pub(crate) fn sections(text: &str, max: usize) -> Vec<(usize, usize)> {
             while !text.is_char_boundary(cut) {
                 cut -= 1;
             }
-            if let Some(p) = text[a..cut].rfind("\n\n").filter(|p| *p > 0) {
-                cut = a + p + 2;
+            let end = if headings { text[a..cut].rfind("\n\n").filter(|p| *p > 0).map(|p| p + 2) } else { plain_break(&text[a..cut]) };
+            if let Some(end) = end {
+                cut = a + end;
             }
             raw.push((a, cut));
             a = cut;
@@ -1222,7 +1332,7 @@ impl Dispatcher {
         let mut keys: BTreeSet<String> = self.all_work(s, &f).into_iter().map(|w| w.1).collect();
         // Recover every possible reread key, including completed keys no longer in the open queue.
         for doc in s.docs() {
-            for k in 0..sections(&s.doc_text(&doc).unwrap_or_default(), self.cfg.section_bytes).len() {
+            for k in 0..sections(&doc, &s.doc_text(&doc).unwrap_or_default(), self.cfg.section_bytes).len() {
                 keys.insert(format!("reread:{doc}#{k}"));
             }
         }
@@ -1254,7 +1364,13 @@ impl Dispatcher {
                         if s.record(&done).is_some_and(|r| r.kind == RecordKind::Done && r.body["rq_id"] == q) {
                             let ids =
                                 ids.iter().filter_map(|x| x.as_str().and_then(crate::hash::from_hex).map(RecordId)).filter(|id| f.support(s, id)).collect();
-                            self.retained.insert(q.to_string(), Answer { done, outcome: outcome.to_string(), ids });
+                            let fallen = a["fallen_ids"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|x| x.as_str().and_then(crate::hash::from_hex).map(RecordId))
+                                .collect();
+                            self.retained.insert(q.to_string(), Answer { done, outcome: outcome.to_string(), ids, fallen });
                         }
                     }
                 }
@@ -1267,7 +1383,7 @@ impl Dispatcher {
                 let outcome = ctx["outcome"].as_str().filter(|o| OUTCOMES.contains(o));
                 match (ids, outcome, id(&ctx["done"])) {
                     (Some(ids), Some(outcome), Some(done)) if ctx["rq_id"] == q && ctx["question_set_revision"] == revision.as_str() => {
-                        self.answered.insert(q.to_string(), Answer { done, outcome: outcome.to_string(), ids });
+                        self.answered.insert(q.to_string(), Answer { done, outcome: outcome.to_string(), ids, fallen: Vec::new() });
                     }
                     _ => continue,
                 }
@@ -1344,7 +1460,7 @@ impl Dispatcher {
                 continue;
             }
             let text = s.doc_text(&d).unwrap_or_default();
-            for (k, (a, b)) in sections(&text, self.cfg.section_bytes).into_iter().enumerate() {
+            for (k, (a, b)) in sections(&d, &text, self.cfg.section_bytes).into_iter().enumerate() {
                 out.push((TaskKind::Extend, format!("doc:{d}#{k}"), None, None, Some((d.clone(), a, b))));
             }
         }
@@ -1363,7 +1479,7 @@ impl Dispatcher {
         let stale: Vec<String> = self.answered.iter().filter(|(q, a)| !Self::answer_holds(s, f, q, a)).map(|(q, _)| q.clone()).collect();
         for q in stale {
             if let Some(mut a) = self.answered.remove(&q) {
-                a.ids.retain(|id| f.support(s, id));
+                a.settle(s, f);
                 if !a.ids.is_empty() {
                     self.retained.insert(q.clone(), a);
                 }
@@ -1371,8 +1487,30 @@ impl Dispatcher {
             self.handled.remove(&format!("rq:{q}"));
         }
         for a in self.retained.values_mut() {
-            a.ids.retain(|id| f.support(s, id));
+            a.settle(s, f);
         }
+    }
+
+    /// The rows of a question's answer that no longer stand, with what stands under each.
+    fn fallen_rows<S: AuditStore>(&self, s: &S, f: &Flags, q: &str) -> Vec<Fallen> {
+        let Some(a) = self.retained.get(q).or_else(|| self.answered.get(q)) else { return Vec::new() };
+        let ids: BTreeSet<RecordId> = a.fallen.iter().chain(&a.ids).filter(|id| !f.support(s, id)).copied().collect();
+        ids.into_iter()
+            .map(|id| {
+                let quotes = super::pairs::cone(s, &[id]).into_iter().filter(|r| r.kind == RecordKind::Observe);
+                let (standing, gone): (Vec<RecordView>, Vec<RecordView>) = quotes.partition(|o| f.grounded(s, &o.id));
+                Fallen { id, standing, gone: gone.len() }
+            })
+            .collect()
+    }
+
+    /// The most lines a repair naming fallen rows takes: its claims and the done line. None for any other summary.
+    fn repair_lines<S: AuditStore>(&self, s: &S, f: &Flags, q: &str) -> Option<usize> {
+        if self.retained_ids(s, q).is_empty() {
+            return None;
+        }
+        let fallen = self.fallen_rows(s, f, q);
+        (!fallen.is_empty()).then(|| repair_claims(&fallen) + 1)
     }
 
     fn retained_ids<S: AuditStore>(&self, s: &S, q: &str) -> Vec<RecordId> {
@@ -1718,6 +1856,7 @@ impl Dispatcher {
         } else {
             Vec::new()
         };
+        let repair_lines = key.strip_prefix("rq:").filter(|_| kind == TaskKind::Summarize).and_then(|q| self.repair_lines(s, &f, q));
         let lease = Lease {
             agent: agent.to_string(),
             kind,
@@ -1736,6 +1875,7 @@ impl Dispatcher {
             failed: false,
             refusals: 0,
             relate: false,
+            repair_lines,
         };
         *self.stats.issued.entry(kind.name().to_string()).or_default() += 1;
         if kind == TaskKind::Investigate {
@@ -1748,7 +1888,7 @@ impl Dispatcher {
             return self.circle_tag(json!({"status":"DIRECTIVE","task_id":task_id,"kind":"BUILD","key":key,"agent_id":agent,
                 "expires_at_ms":now+self.lease_ms(),"prompt":prompt,"card_id":card.card_id,"card":card.to_json(),"ring_batch":self.ring_batch}));
         }
-        let max_lines = self.max_lines(kind);
+        let max_lines = repair_lines.unwrap_or_else(|| self.max_lines(kind));
         // a relation line becomes a link the swarm checks, by the builder's criteria (live run 10A-6: 10 of 28 checked links came
         // from relation lines, which were not told them)
         let link_authors = if self.cfg.circles.is_some() {
@@ -1760,9 +1900,9 @@ impl Dispatcher {
             self.circle_tag(json!({"status": "DIRECTIVE", "task_id": task_id, "kind": kind.name(), "key": key, "agent_id": agent, "local_id_prefix": prefix,
                "expires_at_ms": now + self.lease_ms_for(kind), "max_lines": max_lines,
                "retained_answer_ids": if kind == TaskKind::Summarize { short_list(&self.retained_ids(s, &key[3..])) } else { vec![] },
-               "prompt": format!("You are one agent of an audit swarm over a corpus of engineering reports. You are stateless: this directive is all \
+               "prompt": format!("You are one agent of an audit swarm over {corpus}. You are stateless: this directive is all \
                                  you get. Answer with at most {max_lines} JSON lines; every local_id starts with {prefix}.\n\n{prompt}\n\n{}",
-                                 formats(self.cfg.relation_lines || (self.cfg.versions && kind == TaskKind::Change)))}));
+                                 formats(self.cfg.relation_lines || (self.cfg.versions && kind == TaskKind::Change)), corpus = self.cfg.corpus)}));
         if self.cfg.versions && kind == TaskKind::Summarize {
             let prompt = out["prompt"].as_str().unwrap_or_default().to_string();
             out["prompt"] = json!(prompt + &super::versions::uncertainty(s));
@@ -1924,7 +2064,7 @@ impl Dispatcher {
         let mut scored = Vec::new();
         for d in s.docs() {
             let text = s.doc_text(&d).unwrap_or_default();
-            for (a, b) in sections(&text, self.cfg.section_bytes) {
+            for (a, b) in sections(&d, &text, self.cfg.section_bytes) {
                 let low = text[a..b].to_lowercase();
                 let hits = terms.iter().filter(|t| !t.is_empty() && low.contains(&t.to_lowercase())).count();
                 if hits > 0 {
@@ -2150,7 +2290,12 @@ impl Dispatcher {
         // where they fit, then ordinary source claims. The store's issued-reference bound still applies.
         let retained_units: Vec<(RecordId, BTreeSet<RecordId>)> = retained.iter().map(|c| (*c, unit(c))).collect();
         let support_units: Vec<BTreeSet<RecordId>> = support.iter().map(unit).collect();
-        let (shown, mut fit, partial) = place(&retained_units, &support_units, budget, crate::session::MAX_REFS, temporal);
+        // what a repair answers from stands in the window whatever else fits there
+        let fallen = if retained.is_empty() { Vec::new() } else { self.fallen_rows(s, f, rq) };
+        let named: BTreeSet<RecordId> = named_rows(&fallen).iter().flat_map(|r| r.standing.iter().map(|o| o.id)).collect();
+        let hard = crate::session::MAX_REFS.saturating_sub(named.len());
+        let (mut shown, mut fit, partial) = place(&retained_units, &support_units, budget.min(hard), hard, temporal);
+        shown.extend(named.iter().copied());
         if temporal {
             // a component brings in relevant claims of its own: count the relevant claims shown, not the units placed (D05)
             fit = chosen.iter().filter(|c| shown.contains(c)).count();
@@ -2247,12 +2392,14 @@ impl Dispatcher {
             "WINDOW: {fit} of {eligible} relevant claims shown, each with all it rests on{}; {} not shown{}. Documents with no quote shown: {}.",
             if partial.is_empty() { String::new() } else { format!(" except the retained {}", short_list(&partial).join(", ")) },
             eligible - fit,
-            if eligible > fit || !partial.is_empty() { " (say that the answer may be incomplete)" } else { "" },
+            if (eligible > fit || !partial.is_empty()) && fallen.is_empty() { " (say that the answer may be incomplete)" } else { "" },
             if unquoted.is_empty() { "none".to_string() } else { unquoted.join(", ") }
         );
         let open = self.open_questions(s, f, &q.about);
         let repair = if retained.is_empty() {
             String::new()
+        } else if !fallen.is_empty() {
+            fallen_repair(&fallen, &retained)
         } else {
             format!(
                 "INCREMENTAL REPAIR: retain these independent answer records unchanged: {}. Write only replacement/additional \
@@ -2263,19 +2410,29 @@ impl Dispatcher {
         };
         let guidance = super::answer_guidance::text();
         let target_text_chars = super::answer_guidance::target_claim_characters();
+        // a repair is no new answer: telling it to condense and to cover every report made it write the whole answer again
+        let (shape, cover) = if fallen.is_empty() {
+            let most = SUMMARY_CLAIMS.min(self.cfg.summary_lines.saturating_sub(1));
+            (
+                format!(
+                    "Condense: at most {most} claim lines, each a short text (at most {target_text_chars} characters; more than {SUMMARY_TEXT_CHARS} is refused) that \
+                     merges related records and rests on all their quotes; do not restate every record."
+                ),
+                " Cover every report the records come from.",
+            )
+        } else {
+            (format!("Each claim is a short text (at most {target_text_chars} characters; more than {SUMMARY_TEXT_CHARS} is refused)."), "")
+        };
         let prompt = format!(
             "{repair}TASK SUMMARIZE research question {}: {}\nAnswer only from the records below: write final claim lines based_on the observe @ids shown (the quotes), \
-             and write no observe lines (no document is open to a summary: cite the quotes shown by their @ids). Condense: at most {} claim lines, \
-             each a short text (at most {target_text_chars} characters; more than {SUMMARY_TEXT_CHARS} is refused) that merges related records and rests on all their quotes; \
-             do not restate every record. End with {{\"kind\":\"done\",\"local_id\":\"<prefix>d1\",\"rq_id\":\"{}\",\"directive_id\":\"{task_id}\",\
+             and write no observe lines (no document is open to a summary: cite the quotes shown by their @ids). {shape} End with {{\"kind\":\"done\",\"local_id\":\"<prefix>d1\",\"rq_id\":\"{}\",\"directive_id\":\"{task_id}\",\
              \"outcome\":\"answered|unknown|unresolved_conflict\",\"answer_ids\":[\"your claims\"],\"text\":\"what the records do not settle\"}}. The done text names \
              the main points the records do not settle, the OPEN QUESTIONS below included, in at most {target_text_chars} characters; they are not claims (a claim always rests \
-             on quotes). If the records settle nothing, the outcome is unknown with no answer_ids. Cover every report the records come from. \
+             on quotes). If the records settle nothing, the outcome is unknown with no answer_ids.{cover} \
              {guidance}\n{time_metadata}{window}\n\
              RECORDS:\n{}\nACCEPTED LINKS:\n{}{later}\nOPEN QUESTIONS (not settled by the swarm):\n{}",
             q.id,
             q.text,
-            SUMMARY_CLAIMS.min(self.cfg.summary_lines.saturating_sub(1)),
             q.id,
             cone.join("\n"),
             links.join("\n"),
@@ -2639,10 +2796,13 @@ impl Dispatcher {
         // A3: compose the current independent view into a delta completion without rewriting any accepted claim. Original
         // answer checkpoints and records remain immutable; the new checkpoint explicitly attributes the union to the kernel.
         let retained = lease.question.as_ref().filter(|_| lease.kind == TaskKind::Summarize).map(|q| self.retained_ids(s, q)).unwrap_or_default();
-        let mut composed = lines.to_vec();
+        let copies = copies_of_kept(s, &retained, lines);
+        let mut composed: Vec<Value> =
+            lines.iter().filter(|v| v["kind"] != "claim" || !v["local_id"].as_str().is_some_and(|n| copies.contains(n))).cloned().collect();
         for v in &mut composed {
             if !retained.is_empty() && v["kind"] == "done" && v["rq_id"] == lease.question.as_deref().unwrap_or("") {
                 if let Some(ids) = v.get_mut("answer_ids").and_then(|x| x.as_array_mut()) {
+                    ids.retain(|x| !x.as_str().is_some_and(|n| copies.contains(n)));
                     for id in &retained {
                         let n = json!(id.short());
                         if !ids.contains(&n) {
@@ -2661,7 +2821,7 @@ impl Dispatcher {
             let offered = self.key_offered.entry(lease.key.clone()).or_default();
             *offered = (*offered).max(lines.len());
         }
-        let max_lines = self.max_lines(lease.kind);
+        let max_lines = lease.repair_lines.unwrap_or_else(|| self.max_lines(lease.kind));
         if lines.len() > max_lines {
             // a repair, not a lost section (run 8 lost four sections to answers of 25..27 lines). Nothing is stored, so the failed
             // index is 0: live run 10A-3 read index 40 as "40 lines accepted" and sent only its last three
@@ -2848,6 +3008,7 @@ impl Dispatcher {
                 let missing = ids
                     .as_ref()
                     .filter(|ids| !ids.is_empty() || outcome.as_deref() != Some("unknown"))
+                    .filter(|_| lease.repair_lines.is_none())
                     .map(|ids| Self::missing_summary_reports(s, &lease.issued, ids))
                     .unwrap_or_default();
                 if !missing.is_empty() {
@@ -3030,6 +3191,13 @@ impl Dispatcher {
         if !retained.is_empty() {
             context["composition"] = json!({"by": "kernel", "mode": "incremental_repair", "retained_answer_ids": short_list(&retained),
                 "source_done": lease.question.as_ref().and_then(|q| self.retained.get(q)).map(|a| a.done.short())});
+            // what the kernel left out of the answer is on the record, and which rows this answer replaces
+            if !copies.is_empty() {
+                context["composition"]["dropped_copies"] = json!(copies);
+            }
+            if let Some(a) = lease.question.as_ref().and_then(|q| self.retained.get(q)).filter(|a| !a.fallen.is_empty()) {
+                context["composition"]["fallen_answer_ids"] = json!(short_list(&a.fallen));
+            }
         }
         if !extended.is_empty() {
             context["extended_quotes"] = json!(extended.iter().map(|x| x["local_id"].clone()).collect::<Vec<_>>());
@@ -3083,7 +3251,7 @@ impl Dispatcher {
             context["done"] = json!(crate::hash::to_hex(&done.0));
             context["outcome"] = json!(outcome);
             context["answer_ids"] = json!(ids.iter().map(|r| crate::hash::to_hex(&r.0)).collect::<Vec<_>>());
-            answer = Some(Answer { done, outcome, ids });
+            answer = Some(Answer { done, outcome, ids, fallen: Vec::new() });
         }
         context = self.circle_tag(context);
         if lease.relate {
@@ -3162,6 +3330,9 @@ impl Dispatcher {
         if !referenced.is_empty() {
             done["referenced"] = json!(referenced);
         }
+        if !copies.is_empty() {
+            done["dropped_copies"] = json!(copies);
+        }
         done
     }
 
@@ -3194,7 +3365,7 @@ impl Dispatcher {
         let prefix = format!("{}_", task_id.split('-').next().unwrap_or("t").to_lowercase());
         let max_lines = self.max_lines(TaskKind::Extend);
         let prompt = format!(
-            "You are one agent of an audit swarm over a corpus of engineering reports. Your answer to this reading task is stored. \
+            "You are one agent of an audit swarm over {corpus}. Your answer to this reading task is stored. \
              TASK RELATE: below, each of your claims comes with claims of reports of other dates that share its words: hints chosen by \
              words, not evidence. When a hint states an earlier or a later state of the same thing and scope as your claim, write one \
              claim of the change: what held at the earlier report date and what the later report date replaced, removed, deprecated or \
@@ -3206,7 +3377,8 @@ impl Dispatcher {
              line, no code fences, nothing else):\n  {{\"kind\":\"claim\",\"local_id\":\"{prefix}r1\",\"text\":\"<= 240 chars\",\"subject\":\"...\",\
              \"predicate\":\"...\",\"object\":\"...\",\"stance\":\"superseded|qualified\",\"as_of\":null,\"based_on\":[\"@observe of the earlier \
              report\",\"@observe of the later report\"]}}",
-            blocks.join("\n\n")
+            blocks.join("\n\n"),
+            corpus = self.cfg.corpus
         );
         Some((prompt, shown))
     }
@@ -3259,7 +3431,7 @@ impl Dispatcher {
             s.docs()
                 .iter()
                 .flat_map(|d| {
-                    sections(&s.doc_text(d).unwrap_or_default(), self.cfg.section_bytes)
+                    sections(d, &s.doc_text(d).unwrap_or_default(), self.cfg.section_bytes)
                         .iter()
                         .enumerate()
                         .map(|(k, _)| format!("doc:{d}#{k}"))
@@ -3372,6 +3544,7 @@ impl Dispatcher {
             failed: false,
             refusals: 0,
             relate: false,
+            repair_lines: None,
         };
         self.leases.insert(task_id.to_string(), lease);
     }
@@ -3446,7 +3619,8 @@ impl Dispatcher {
             context["question_set_revision"] = json!(self.question_set_revision());
             if let Some(a) = self.retained.get(q) {
                 context["retained_answer"] = json!({"done":crate::hash::to_hex(&a.done.0),"outcome":a.outcome,
-                    "answer_ids":a.ids.iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>()});
+                    "answer_ids":a.ids.iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>(),
+                    "fallen_ids":a.fallen.iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>()});
             }
         }
         let checkpoint = json!({"key": task_checkpoint(key), "from": 0, "to": 0, "context": context});
@@ -3765,8 +3939,60 @@ mod tests {
     }
 
     #[test]
+    fn hash_lines_open_sections_in_markdown_and_in_a_name_that_says_nothing() {
+        let text = "# one\nfirst line of text\n# two\nsecond line of text\n";
+        for doc in ["a.md", "reports/a.MD", "a.mdx", "policy", "d_0123", ".notes", "dir.v2/policy"] {
+            assert!(has_headings(doc), "{doc}");
+            assert_eq!(sections(doc, text, 64).len(), sections("a.md", text, 64).len(), "{doc}");
+        }
+        for doc in ["a.txt", "app/orders.py", "src/lib.RS", "contract.v2"] {
+            assert!(!has_headings(doc), "{doc}");
+        }
+    }
+
+    #[test]
+    fn a_comment_does_not_cut_a_code_file_and_plain_text_ends_at_a_line() {
+        let line = "x = compute(value)\n";
+        let code = format!("{}# a comment, not a heading\n{}", line.repeat(3), line.repeat(3));
+        assert_eq!(sections("a.py", &code, 1000), vec![(0, code.len())]);
+        // a comment line at the top of a window opens no section either
+        let many = format!("{}# comment\n{}", line.repeat(4), line.repeat(4));
+        assert!(sections("a.py", &many, 64).iter().all(|(a, _)| !many[*a..].starts_with('#')), "cut by size, not at the comment");
+        // no blank line in the window: the cut falls at the end of a line, never inside one
+        let long = line.repeat(12);
+        let cut = sections("a.py", &long, 64);
+        assert!(cut.len() > 1);
+        assert!(cut.iter().all(|(a, b)| long[*a..*b].ends_with('\n') && b - a <= 64), "{cut:?}");
+        assert_eq!((cut[0].0, cut[cut.len() - 1].1), (0, long.len()));
+        // one line longer than a section is still cut, on a character
+        let wide = "\u{44f}".repeat(100);
+        let parts = sections("a.txt", &wide, 64);
+        assert_eq!(parts.iter().map(|(a, b)| b - a).sum::<usize>(), wide.len());
+    }
+
+    #[test]
+    fn a_blank_line_ends_a_piece_of_plain_text_in_either_line_ending() {
+        for end in ["\n", "\r\n"] {
+            let para = format!("A paragraph of words.{end}Its second line.{end}{end}");
+            let text = para.repeat(6);
+            let cut = sections("contract.txt", &text, 2 * para.len() + 10);
+            assert!(cut.len() > 1);
+            assert!(cut.iter().all(|(_, b)| b % para.len() == 0), "{cut:?} at {} with {end:?}", para.len());
+            assert_eq!(cut[cut.len() - 1].1, text.len());
+        }
+    }
+
+    #[test]
+    fn a_markdown_document_is_cut_as_it_always_was() {
+        // the cut a measured run read: blank lines of `\n` only, whatever the line ending of the file
+        let crlf = "word word word word\r\n\r\n".repeat(12);
+        let cut = sections("d_0123", &crlf, 64);
+        assert_eq!(cut[0], (0, 64));
+    }
+
+    #[test]
     fn sections_cut_at_headings_and_respect_the_size_bound() {
-        let secs = sections(R1, 80);
+        let secs = sections("r1", R1, 80);
         assert!(secs.len() >= 2 && secs.iter().all(|(a, b)| b - a <= 80 && R1.is_char_boundary(*a) && R1.is_char_boundary(*b)), "{secs:?}");
         assert_eq!((secs[0].0, secs.last().unwrap().1), (0, R1.len()));
         assert!(secs.windows(2).all(|w| w[0].1 == w[1].0), "contiguous");

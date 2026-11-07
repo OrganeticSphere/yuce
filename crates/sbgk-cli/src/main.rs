@@ -19,6 +19,7 @@ use std::time::Instant;
 mod audit_mcp;
 #[path = "bridge.rs"]
 mod bridge;
+mod docs_input;
 #[path = "mcp.rs"] // explicit: `src/bin/yuce.rs` loads this file as a module
 mod mcp;
 
@@ -117,6 +118,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "circles",
     "circles-refiner",
     "concept-functions",
+    "docs",
     "dynamic-roles",
     "evolution-cards",
     "evolution-document-order",
@@ -903,9 +905,10 @@ const HELP: &str = "usage: sbgk (or yuce) <command> [arguments]
 A deterministic evidence control kernel for AI agent teams.
 
 Audit server for a team of agents:
-  audit-serve   the shared audit server (newline-delimited JSON-RPC over TCP): --manifest --repo --select --run-id
-                --wal --subjects --questions --listen; the measured v0.1 profile unless --profile custom.
-                Started again on an existing --wal without --manifest, it resumes that run
+  audit-serve   the shared audit server (newline-delimited JSON-RPC over TCP): --manifest --repo --select --run-id, or
+                --docs <folder> [--select <list>] --run-id for your own UTF-8 text files, and --wal --subjects --questions
+                --listen; the measured v0.1 profile unless --profile custom.
+                Started again on an existing --wal without --manifest or --docs, it resumes that run
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the
@@ -934,6 +937,17 @@ on stdout (apply still writes the container of the steps it accepted).
   sbgk --version   the version
 More: README.md, examples/ and crates/sbgk-core/src/audit/README.md in the repository.";
 
+/// The name this binary was called by: a release ships one binary under both names.
+fn program() -> &'static str {
+    let called = std::env::args().next().unwrap_or_default();
+    let stem = std::path::Path::new(&called).file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase();
+    if stem == "yuce" {
+        "yuce"
+    } else {
+        "sbgk"
+    }
+}
+
 pub fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.is_empty() {
@@ -946,7 +960,7 @@ pub fn main() {
         return;
     }
     if raw[0] == "--version" || raw[0] == "-V" {
-        println!("sbgk {}", env!("CARGO_PKG_VERSION"));
+        println!("{} {}", program(), env!("CARGO_PKG_VERSION"));
         return;
     }
     let cmd = raw[0].clone();

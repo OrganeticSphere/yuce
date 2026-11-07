@@ -24,7 +24,8 @@
 //! is held in memory, like the acknowledgements: a restarted server is open again, and the owner closes it again.
 //!
 //! Start: a non-empty `--wal` is resumed (dispatcher and builder recover from its checkpoints); otherwise a new run is created
-//! from `--manifest`, `--repo`, `--select` (one repository path per line) and `--run-id`. `--questions` (the research
+//! from `--manifest`, `--repo`, `--select` (one repository path per line) and `--run-id`, or from the text files of a folder:
+//! `--docs` and `--run-id`, with `--select` to name the files instead of walking the folder. `--questions` (the research
 //! questions, JSON) is needed in both cases: a changed question set reopens the questions (`question_set_revision`).
 //! The section size is bound by an ordinary coordinator checkpoint; an incompatible resume is refused.
 //! Successful swarm submissions replay their original ACK across reconnects for the same subject, task and lines while this
@@ -1214,8 +1215,41 @@ pub fn drop_new_journal() {
     eprintln!("{}", json!({"status": "warning", "message": message, "journal": wal.display().to_string()}));
 }
 
-/// A new durable run from the corpus manifest and the selected report paths.
+/// The base ontology of a new run: from a file it seeds the run's concepts, without it the built-in schema. The genesis keeps either.
+fn run_base(a: &Args) -> Value {
+    let mut base = a.get("base-ontology").map(|p| read_json(p, "--base-ontology")).unwrap_or_else(AuditOntology::base);
+    if a.get("base-ontology").is_some() {
+        base["seed_status"] = json!("provisional");
+    }
+    if a.sw("ontology-revisions") {
+        base["revision_policy"] = json!({"rule":"next_nonproposer/1","unmapped_circles":a.num("ontology-unmapped-circles",3usize),
+            "catchall_mappings":a.num("ontology-catchall-mappings",8usize),"catchall_reports":a.num("ontology-catchall-reports",2usize)});
+    }
+    base
+}
+
+/// A new durable run on the text files of a folder. What was taken and what was left stays on the operator's screen, not in the
+/// journal: the journal holds the text of what was taken for good, so this is the moment to see it.
+fn create_docs_run(a: &Args, folder: &str, wal: &Path) -> AuditState {
+    if a.get("manifest").is_some() || a.get("repo").is_some() {
+        fail("--docs starts a run on a folder, --manifest and --repo on a pinned corpus: give one of them");
+    }
+    let select = a.get("select").map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| fail(&format!("cannot read --select: {e}"))));
+    // the tokens of --subjects must not become a source of the run they guard
+    let own: Vec<PathBuf> = [a.get("subjects"), a.get("questions"), wal.to_str()].into_iter().flatten().filter_map(|p| std::fs::canonicalize(p).ok()).collect();
+    let taken = super::docs_input::collect(Path::new(folder), select.as_deref(), &own).unwrap_or_else(|e| fail(&e));
+    let bytes: usize = taken.docs.iter().map(|(_, b)| b.len()).sum();
+    let names: Vec<&str> = taken.docs.iter().map(|(id, _)| id.as_str()).collect();
+    let left: Vec<Value> = taken.skipped.iter().map(|(path, why)| json!({"path": path, "reason": why})).collect();
+    eprintln!("{}", json!({"status": "docs", "folder": folder, "bytes": bytes, "taken": names, "skipped": left}));
+    AuditState::create_from_docs(wal, &run_base(a), &a.req("run-id"), taken.docs).unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())))
+}
+
+/// A new durable run from the corpus manifest and the selected report paths, or from a folder.
 fn create_run(a: &Args, wal: &Path) -> AuditState {
+    if let Some(folder) = a.get("docs") {
+        return create_docs_run(a, folder, wal);
+    }
     let manifest = a.req("manifest");
     let repo = a.req("repo");
     let select = std::fs::read_to_string(a.req("select")).unwrap_or_else(|e| fail(&format!("cannot read --select: {e}")));
@@ -1229,16 +1263,7 @@ fn create_run(a: &Args, wal: &Path) -> AuditState {
         fail("--select lists no report paths");
     }
     let bytes = std::fs::read(&manifest).unwrap_or_else(|e| fail(&format!("cannot read --manifest {manifest}: {e}")));
-    // a base ontology from a file seeds the run's concepts; without it the built-in schema. The genesis keeps either.
-    let mut base = a.get("base-ontology").map(|p| read_json(p, "--base-ontology")).unwrap_or_else(AuditOntology::base);
-    if a.get("base-ontology").is_some() {
-        base["seed_status"] = json!("provisional");
-    }
-    if a.sw("ontology-revisions") {
-        base["revision_policy"] = json!({"rule":"next_nonproposer/1","unmapped_circles":a.num("ontology-unmapped-circles",3usize),
-            "catchall_mappings":a.num("ontology-catchall-mappings",8usize),"catchall_reports":a.num("ontology-catchall-reports",2usize)});
-    }
-    AuditState::create_from_manifest(wal, &base, &a.req("run-id"), &bytes, &selected)
+    AuditState::create_from_manifest(wal, &run_base(a), &a.req("run-id"), &bytes, &selected)
         .unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())))
 }
 
@@ -1499,6 +1524,10 @@ pub fn cmd_audit_verify(a: &Args) {
                          "corpus_manifest_hash": to_hex(&state.manifest_hash()), "entries": entries, "records": state.head(),
                          "audit_root": to_hex(&state.audit_root()), "engine_root": to_hex(&state.engine_root()),
                          "session_root": to_hex(&state.session_root()), "wal_head": to_hex(&read.wal_head)});
+    if state.source_mode() == "opaque" {
+        out["sources"] = json!({"mode": "opaque", "documents": state.source_document_count(), "set_matches_manifest_hash": state.docs_set_matches(),
+                                "put_document_entries": read.document_puts});
+    }
     // listed whatever the verdict: after a cut, a mismatch is just the case where these files matter
     let earlier = torn_files(&wal);
     if !earlier.is_empty() {
@@ -1724,6 +1753,9 @@ pub fn cmd_audit_serve(a: &Args) {
         if a.get("manifest").is_some() {
             fail(&format!("{wal} already holds a run: resume it without --manifest, or start a new run with another --wal"));
         }
+        if a.get("docs").is_some() {
+            fail(&format!("{wal} already holds a run with its documents: resume it without --docs, or start a new run with another --wal"));
+        }
         if a.get("base-ontology").is_some() {
             fail(&format!("{wal} already holds a run whose genesis fixed its base ontology: resume it without --base-ontology"));
         }
@@ -1787,6 +1819,7 @@ pub fn cmd_audit_serve(a: &Args) {
     }
     bind_coverage(&mut state, coverage).unwrap_or_else(|error| fail(&error));
     let cfg = DispatchConfig {
+        corpus: if state.source_mode() == "opaque" { "a source document corpus" } else { DispatchConfig::default().corpus },
         ttl_ms,
         answer_timeout_ms,
         agent_attempts,

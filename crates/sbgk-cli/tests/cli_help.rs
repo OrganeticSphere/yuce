@@ -39,6 +39,9 @@ fn version_names_the_package_version() {
         let (code, out, _) = run(BIN, &[flag]);
         assert_eq!(code, 0);
         assert_eq!(out.trim(), format!("sbgk {}", env!("CARGO_PKG_VERSION")));
+        let (code, out, _) = run(YUCE, &[flag]);
+        assert_eq!(code, 0);
+        assert_eq!(out.trim(), format!("yuce {}", env!("CARGO_PKG_VERSION")));
     }
 }
 
