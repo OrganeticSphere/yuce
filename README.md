@@ -4,7 +4,7 @@
 
 YuCe is the environment a team of AI agents works in. It hands each agent one bounded task at a time, accepts a quote only
 when its bytes occur in the source, records which conclusions rest on which quotes, and keeps everything it accepts in a
-hash-chained journal. When a source is revoked, the kernel itself finds the conclusions that rested on it and leaves the
+hash-chained journal. When a source is revoked, the kernel itself finds the conclusions registered on it and leaves the
 others standing: no model is asked what the revocation touches. A stopped run replays its journal to the same roots, and
 anyone can check a published journal against its receipt without a model.
 
@@ -78,7 +78,7 @@ The environment for agent teams is the audit server, `sbgk audit-serve`:
 * **Shared records with exact quotes.** Agents submit records: `observe`, `claim`, `relation`, `hypothesis`, `question`,
   `done`. An `observe` must quote its source byte for byte, inside the document range issued with the task; otherwise it
   is rejected. Each source document is pinned by repository, commit, path and SHA-256 of its raw bytes, as listed in a
-  manifest.
+  manifest, or, for your own files, by its path in a folder and the SHA-256 of its bytes.
 * **Grounds.** A claim names the quotes it is based on (`based_on`), and every one of them is required. The kernel
   tracks whether each claim is still grounded: all its quotes must stand. A claim cannot rest on another claim here;
   chains of derivations belong to the engine below.
@@ -136,7 +136,7 @@ All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting
 
 ## Three ways to use it
 
-* **On its own.** Run `sbgk audit-serve` on your corpus (a manifest of source files pinned by commit and SHA-256) and let
+* **On its own.** Run `sbgk audit-serve` on your corpus (a folder of text files, or a manifest of sources pinned by commit and SHA-256) and let
   your agents call its MCP tools, each with its own token, from any language or through the
   [Python client](clients/python). See [An audit server on the open corpus](#an-audit-server-on-the-open-corpus).
 * **With a team you run.** The benchmark runner (`benchmarks/run_pilot_ac.py`) drives a team of readers and a checker
@@ -215,7 +215,19 @@ stale suspects and the dated summary. It needs at least three reading agents, as
 given instead (for example a dedicated `builder` subject with the experimental `--build-scope full`).
 
 The first line of output gives the address and the initial `audit_root`. Each new run needs a new `--wal` path; started
-again on an existing journal without `--manifest`, the server resumes that run.
+again on an existing journal without `--manifest` or `--docs`, the server resumes that run.
+
+Your own documents need no manifest: `--docs` takes the UTF-8 text files of a folder, such as contracts, policies, logs or code.
+
+```bash
+./target/release/sbgk audit-serve --docs ./contracts --run-id contracts-1 --wal contracts.wal \
+  --subjects subjects.json --questions questions.json --listen 127.0.0.1:8787
+```
+
+A document is named by its path inside the folder. The server leaves out hidden files such as `.env`, service folders, links and
+its own files, and prints on stderr what it took and what it left. A file that is not UTF-8 text stops the start, by name: convert
+PDF and Word files to text first, or name the files to take with `--select` (one path per line). The journal keeps the full text of
+what was taken, and whoever checks it gets that text: see [LIMITATIONS.md](LIMITATIONS.md).
 
 A recorded run can be checked without a model and without the server: `sbgk audit-verify --wal demo.wal` replays the
 journal as a resumed server would (frame hashes, source identities, every entry to its committed outcome and roots),
@@ -248,6 +260,8 @@ More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core
   `mcp-bridge`).
 * `examples/quickstart/`: the minimal example above.
 * `examples/revoke-and-replay/`: the no-LLM demo of the audit server and its offline inspector page.
+* `examples/findings-gate/`: a security review's findings on code files through the kernel: a made-up finding, a lost agent, a
+  file that changes.
 * `benchmarks/`: the benchmark runner and its tests, and the open corpus in `benchmarks/corpora/`.
 * `scripts/check_no_cyrillic.py`: the repository language check; `scripts/check_snapshot.py`: the check of an unpacked
   release snapshot.

@@ -43,7 +43,7 @@ mod versions;
 /// replay as it was recorded.
 const GENESIS_FORMAT: &str = "r2r-audit-genesis/2";
 const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
-const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
 /// The rule a map_term names when the circles +1 refiner maps a term under ontology reviews; the builder sets it, not the model.
 pub const REFINER_MAP_RULE: &str = "refiner_map_term/1";
 
@@ -54,6 +54,13 @@ fn bad(field: &str, message: impl Into<String>) -> KernelError {
 /// The quote rule of an observe record: the document is one of the directive's, the whole document holds the quote byte for byte
 /// exactly once, and that occurrence lies inside the issued byte ranges. One rule for the commit path and for the dispatcher's
 /// read-only diagnostics of a refused answer, which never decide what is stored; the commit path also refuses withdrawn text.
+/// The occurrences of `text` near `span`, among them every one that overlaps it: such an occurrence lies within one length of `text`
+/// on either side. Every new quote asks this of every closed text, so it must not cost a search of the whole document.
+fn occurrences_around(doc: &[u8], text: &[u8], span: &Occurrence) -> Vec<Occurrence> {
+    let (from, to) = (span.start.saturating_sub(text.len()), span.end.saturating_add(text.len()).min(doc.len()));
+    find_all(&doc[from..to], text).into_iter().map(|o| Occurrence { start: o.start + from, end: o.end + from }).collect()
+}
+
 pub fn quote_span(scope: &Scope, doc_id: &str, doc: Option<&[u8]>, quote: &str) -> KResult<Occurrence> {
     if !scope.docs.iter().any(|d| d == doc_id) {
         return Err(bad("doc_id", "document is outside the directive"));
@@ -603,7 +610,7 @@ impl Core {
                 .get(&doc_id)
                 .into_iter()
                 .flatten()
-                .flat_map(|text| find_all(&doc.bytes, text))
+                .flat_map(|text| occurrences_around(&doc.bytes, text, &span))
                 .find(|o| o.start < span.end && span.start < o.end)
             {
                 return Err(KernelError::new(Code::EvidenceRevoked, "this quote overlaps withdrawn text: quote other text or drop the line")
@@ -801,6 +808,8 @@ pub struct VerifiedJournal {
     pub complete_bytes: u64,
     pub sha256: Hash,
     pub wal_head: Hash,
+    /// Entries that put a document after the start: only a journal of supplied documents can hold one.
+    pub document_puts: usize,
 }
 
 /// The session root that binds an engine root and an audit root (the `session_root` of a state and of a terminal receipt).
@@ -875,6 +884,15 @@ impl AuditState {
         Ok(state)
     }
 
+    /// A run on supplied files, each named by its path inside the set. They are bound by their bytes alone: no repository stands behind
+    /// them. In order of the names, so that the same files give the same roots however they were found.
+    pub fn create_from_docs(path: &Path, base_ontology: &Value, run_id: &str, mut docs: Vec<(String, Vec<u8>)>) -> KResult<Self> {
+        docs.sort_by(|a, b| a.0.cmp(&b.0));
+        let hashes: Vec<String> = docs.iter().map(|(_, bytes)| to_hex(&sha256(bytes))).collect();
+        let set = super::sources::docs_set_hash(docs.iter().zip(&hashes).map(|((id, _), hash)| (id.as_str(), hash.as_str())));
+        Self::create(path, base_ontology, &docs, run_id, set)
+    }
+
     fn attach_new_journal(&mut self, path: &Path, base_ontology: &Value) -> KResult<()> {
         let container = build_container(&mut self.core.session);
         let format = if self.core.data.withdrawal_closes_bytes { GENESIS_FORMAT } else { GENESIS_FORMAT_EXACT_SPAN };
@@ -913,7 +931,9 @@ impl AuditState {
             visit(n, state.audit_root(), state.engine_root(), heads[n - 1]);
             Ok(())
         })?;
-        let read = VerifiedJournal { bytes: scan.bytes, complete_bytes: scan.complete_bytes, sha256: scan.sha256, wal_head: heads[heads.len() - 1] };
+        let document_puts = scan.payloads.iter().skip(1).filter(|p| p["command"]["kind"] == "put_document").count();
+        let read =
+            VerifiedJournal { bytes: scan.bytes, complete_bytes: scan.complete_bytes, sha256: scan.sha256, wal_head: heads[heads.len() - 1], document_puts };
         Ok((state, read))
     }
 
@@ -1164,6 +1184,23 @@ impl AuditState {
     }
     pub fn manifest_hash(&self) -> Hash {
         self.core.data.manifest_hash
+    }
+
+    /// `git_manifest` (pinned sources) or `opaque` (supplied documents).
+    pub fn source_mode(&self) -> &str {
+        &self.core.data.source_mode
+    }
+
+    pub fn source_document_count(&self) -> usize {
+        self.core.data.source_documents.len()
+    }
+
+    /// Whether the documents as they stand now are the set this run's `manifest_hash` names. Computed here, not read: a run started on
+    /// a folder says yes until a document changes. A run of the library may hold any value there, and then says no from the start.
+    pub fn docs_set_matches(&self) -> bool {
+        let documents = &self.core.data.source_documents;
+        let pairs = documents.iter().map(|(id, identity)| (id.as_str(), identity["raw_sha256"].as_str().unwrap_or_default()));
+        self.core.data.manifest_hash == super::sources::docs_set_hash(pairs)
     }
     /// Read-only: `link_usable` of every link, computed in one pass.
     pub fn usable_links(&self) -> BTreeSet<LinkId> {

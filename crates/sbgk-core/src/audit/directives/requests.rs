@@ -234,7 +234,7 @@ impl Dispatcher {
                 continue;
             }
             let text = s.doc_text(doc).unwrap_or_default();
-            if let Some((a, b)) = sections(&text, self.cfg.section_bytes).get(k) {
+            if let Some((a, b)) = sections(doc, &text, self.cfg.section_bytes).get(k) {
                 per_doc.entry(doc.to_string()).or_default().push((loss.score(), k, *a, *b));
             }
         }
@@ -242,7 +242,7 @@ impl Dispatcher {
             rows.sort_by_key(|(score, k, _, _)| (std::cmp::Reverse(*score), *k));
         }
         let first_readings_done = s.docs().iter().all(|doc| {
-            sections(&s.doc_text(doc).unwrap_or_default(), self.cfg.section_bytes)
+            sections(doc, &s.doc_text(doc).unwrap_or_default(), self.cfg.section_bytes)
                 .iter()
                 .enumerate()
                 .all(|(k, _)| self.handled.contains(&format!("doc:{doc}#{k}")) || self.unresolved.contains(&format!("doc:{doc}#{k}")))
@@ -269,7 +269,7 @@ impl Dispatcher {
     pub(super) fn auto_reread_prompt<S: AuditStore>(&self, s: &S, f: &Flags, key: &str) -> (String, Scope, Vec<RecordId>) {
         let (doc, k) = key[7..].rsplit_once('#').expect("a reread section key");
         let text = s.doc_text(doc).unwrap_or_default();
-        let (a, b) = sections(&text, self.cfg.section_bytes)[k.parse::<usize>().expect("section number")];
+        let (a, b) = sections(doc, &text, self.cfg.section_bytes)[k.parse::<usize>().expect("section number")];
         let (base, scope, issued) = self.extend_prompt(s, f, &(doc.to_string(), a, b));
         (
             format!(
@@ -409,7 +409,7 @@ impl Dispatcher {
         let target = match ty {
             "reread_gap" => {
                 let (d, t) = doc("doc_id")?;
-                let secs = sections(&t, self.cfg.section_bytes);
+                let secs = sections(&d, &t, self.cfg.section_bytes);
                 let section = field("section")?
                     .as_u64()
                     .map(|n| n as usize)
@@ -528,7 +528,7 @@ impl Dispatcher {
         docs.sort();
         for d in docs {
             let text = s.doc_text(&d).unwrap_or_default();
-            for (k, range) in sections(&text, self.cfg.section_bytes).into_iter().enumerate() {
+            for (k, range) in sections(&d, &text, self.cfg.section_bytes).into_iter().enumerate() {
                 let at = (d.clone(), k);
                 if !self.handled.contains(&format!("doc:{d}#{k}")) || requested.contains(&at) || controlled.contains(&at) {
                     continue;
@@ -554,7 +554,7 @@ impl Dispatcher {
     pub(super) fn request_work<S: AuditStore>(&self, s: &S) -> Vec<Work> {
         let at = |doc: &String, k: usize| {
             let text = s.doc_text(doc).unwrap_or_default();
-            sections(&text, self.cfg.section_bytes).get(k).map(|(a, b)| (doc.clone(), *a, *b))
+            sections(doc, &text, self.cfg.section_bytes).get(k).map(|(a, b)| (doc.clone(), *a, *b))
         };
         let mut out = Vec::new();
         for (i, r) in self.requests.iter().enumerate() {
@@ -602,7 +602,7 @@ impl Dispatcher {
             (Target::Section { doc, kind: SectionRequest::RereadGap { section, focus } }, _) => {
                 let (doc, section) = if control { r.control.clone().expect("a control task has its section") } else { (doc.clone(), *section) };
                 let text = s.doc_text(&doc).unwrap_or_default();
-                let (a, b) = sections(&text, self.cfg.section_bytes)[section];
+                let (a, b) = sections(&doc, &text, self.cfg.section_bytes)[section];
                 let mut known: Vec<RecordView> =
                     self.section_records(s, &doc, &text, (a, b)).into_iter().filter(|r| matches!(r.kind, RecordKind::Claim | RecordKind::Hypothesis)).collect();
                 known.truncate(2 * self.cfg.max_known);
@@ -623,7 +623,7 @@ impl Dispatcher {
                 let q = self.questions.iter().find(|q| &q.id == rq).expect("a checked request names a question");
                 let text = s.doc_text(doc).unwrap_or_default();
                 let topics: Vec<String> = q.about.iter().map(|t| t.to_lowercase()).collect();
-                let mut secs: Vec<(usize, usize, usize)> = sections(&text, self.cfg.section_bytes)
+                let mut secs: Vec<(usize, usize, usize)> = sections(doc, &text, self.cfg.section_bytes)
                     .into_iter()
                     .map(|(a, b)| {
                         let low = text[a..b].to_lowercase();
@@ -679,7 +679,7 @@ impl Dispatcher {
             let Some(d) = r.doc_id.clone() else { continue };
             let text = texts.entry(d.clone()).or_insert_with(|| s.doc_text(&d).unwrap_or_default());
             if let Some(p) = observe_at(text, r) {
-                if let Some(k) = sections(text, self.cfg.section_bytes).iter().position(|(a, b)| *a <= p && p < *b) {
+                if let Some(k) = sections(&d, text, self.cfg.section_bytes).iter().position(|(a, b)| *a <= p && p < *b) {
                     at.insert(r.id.short(), json!([d, k]));
                 }
             }

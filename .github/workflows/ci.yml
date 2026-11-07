@@ -66,3 +66,4 @@ jobs:
         run: |
           python examples/revoke-and-replay/demo.py --report report.json --html inspector_report.html
           python examples/revoke-and-replay/check_inspector.py report.json
+          cargo run --release -p sbgk-core --example findings_gate

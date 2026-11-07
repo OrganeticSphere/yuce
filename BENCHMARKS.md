@@ -112,7 +112,11 @@ from v0.1.6. Run 1 found a defect of the kernel, which v0.1.6 fixes, so its K is
   text: 0 of 897 and 0 of 895 grounded claims, with 2 and then 3 stored quotes touched and 9 records resting on them, and 0 quotes
   touching the text stored afterwards. Read from the journal, no model.
 * **Run 2 in the answers.** K's 2B was again graded partly kept, for the opposite reason: the answer cites no withdrawn text, but it
-  drops a conclusion that another page supports on its own. L was partly kept once in 2A and once in 2B.
+  drops a conclusion that another page supports on its own. The claim on that page stood and was shown: the kernel's request for a
+  repair did not say what had fallen, and the model wrote the answer again without it. L was partly kept once in 2A and once in 2B.
+* **Repeats in K's answers.** The same request made a repair repeat rows it was told to keep, so K's counts of statements grow after
+  a withdrawal: the answer to the first question has 71 rows, 48 of them distinct, at 2B of run 2, and 80 and 47 at 2B of run 1.
+  Without the repeats K's 2B of run 2 is 82.1% rather than 82.2%. The request is fixed after v0.1.6, see `CHANGELOG.md`.
 * **The grader's control.** Two lines restating the withdrawn content in other words were planted in a copy of T's answer of 2A and
   of 2B, fixed before the answers were read, in a separate packet. The grader found all four and changed its verdict from `ok` to
   `failed` and `partly`.
@@ -157,6 +161,21 @@ The tables are what was measured. What they do not show:
   | DeepSeek 2, L | 40 | 4 | 7 | 29 |
 
   After 2B, the withdrawal that touched an answer, K made 7, 12 and 1 calls, T 8, 54 and 43, L 7, 52 and 34.
+
+  In the runs of four makers, by the same script: all calls, then those on the withdrawn page, bringing the answer together and on
+  other pages.
+
+  | Run, side | After 2A | After 2B |
+  |---|---|---|
+  | 1, K | 5: 0, 5, 0 | 5: 4, 1, 0 |
+  | 1, T | 13: 7, 2, 4 | 9: 5, 2, 2 |
+  | 1, L | 24: 2, 6, 16 | 16: 2, 7, 7 |
+  | 2, K | 0 | 1: 0, 1, 0 |
+  | 2, T | 24: 6, 6, 12 | 10: 3, 3, 4 |
+  | 2, L | 22: 4, 4, 14 | 8: 3, 2, 3 |
+
+  Calls on the withdrawn page and on the answer, both withdrawals together: K 10 and 1, T 16 and 18, L 17 and 13. Those are the ones
+  to compare. T's and L's other calls went to other pages, and in run 1 the difference on these is small.
 * **Withdrawals.** The second withdrawal touched an answer of K once per run: three cases, on one corpus. T and L kept the
   withdrawals fully in 10 and 8 of 12 gradings and partly in the others.
 * **The graders.** Each comparison has one grader and no human spot check; its two label orders differ by up to 20.3 points. The

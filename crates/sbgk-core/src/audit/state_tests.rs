@@ -879,3 +879,21 @@ fn a_text_with_a_line_break_and_a_long_text_can_be_withdrawn() {
     assert_eq!(s.withdraw_text("owner", "policy", long.trim_end()).unwrap(), 0);
     assert!(refused_as_withdrawn(&mut s, "broken", "Prior witness."));
 }
+
+#[test]
+fn a_journal_of_a_folder_says_when_its_documents_are_not_the_set_it_started_on() {
+    let wal = TempPath::new();
+    let docs = vec![("b.txt".to_string(), b"Beta.\n".to_vec()), ("a.txt".to_string(), b"Alpha.\n".to_vec())];
+    let mut s = AuditState::create_from_docs(&wal.0, &AuditOntology::base(), "folder", docs).unwrap();
+    assert!(s.docs_set_matches());
+    assert_eq!(s.source_document_count(), 2);
+    s.put_document("owner", "a.txt", b"Alpha, changed.\n").unwrap();
+    assert!(!s.docs_set_matches());
+    drop(s);
+    let (replayed, read) = AuditState::verify(&wal.0, &mut |_, _, _, _| {}).unwrap();
+    assert_eq!((replayed.docs_set_matches(), read.document_puts), (false, 1));
+    // the library's own value says no from the start: nothing in such a journal claims to be a folder's set
+    let other = TempPath::new();
+    let library = AuditState::create(&other.0, &AuditOntology::base(), &[("a".to_string(), b"Alpha.\n".to_vec())], "library", sha256(b"own")).unwrap();
+    assert!(!library.docs_set_matches());
+}

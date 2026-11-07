@@ -4,7 +4,7 @@
 
 ## Opening a session
 
-Use `AuditState::create` with explicit document IDs, or `create_from_manifest` with the original manifest bytes and selected `(repository_relative_path, raw_bytes)` pairs. The manifest loader checks the pinned repository/commit/path/raw-SHA256 identity and excludes auxiliary Markdown and non-report files. Lexical revision mentions remain unresolved metadata.
+Use `AuditState::create` with explicit document IDs, `create_from_docs` for a set of supplied files, or `create_from_manifest` with the original manifest bytes and selected `(repository_relative_path, raw_bytes)` pairs. The manifest loader checks the pinned repository/commit/path/raw-SHA256 identity and excludes auxiliary Markdown and non-report files. Lexical revision mentions remain unresolved metadata.
 
 `AuditState::new` provides read-only inspection. Mutations require a durable journal. `create` never overwrites an existing file; `open` validates and replays it under an exclusive writer lock.
 

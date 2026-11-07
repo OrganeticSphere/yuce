@@ -125,7 +125,7 @@ pub fn later_sections<S: AuditStore>(s: &S, id: RecordId, size: usize) -> Vec<(S
     }
     docs.sort_by_key(|d| (!preferred.contains(&json!(d)), date(s, d), d.clone()));
     docs.into_iter()
-        .flat_map(|d| super::super::directives::sections(&s.doc_text(&d).unwrap_or_default(), size).into_iter().map(move |(a, b)| (d.clone(), a, b)))
+        .flat_map(|d| super::super::directives::sections(&d, &s.doc_text(&d).unwrap_or_default(), size).into_iter().map(move |(a, b)| (d.clone(), a, b)))
         .collect()
 }
 pub fn investigation_section<S: AuditStore>(s: &S, id: RecordId, section: &(String, usize, usize)) -> (String, Scope, Vec<RecordId>) {

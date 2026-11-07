@@ -1,0 +1,215 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "orders-path-traversal",
+    "title": "Path traversal in the order export",
+    "description": "The export reads a file named by the request.",
+    "root_cause": "The name is joined to a base path.",
+    "intended_behavior": "Names are checked against a list.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "app/orders.py",
+        "line": 9,
+        "scope": "function",
+        "description": "The name comes from the request.",
+        "quote": "path = BASE_DIR + request.args[\"name\"]"
+      },
+      {
+        "kind": "propagation",
+        "file": "app/orders.py",
+        "line": 10,
+        "scope": "function",
+        "description": "It is joined to the base path.",
+        "quote": "path = BASE_DIR + request.args[\"name\"]"
+      },
+      {
+        "kind": "sink",
+        "file": "app/orders.py",
+        "line": 11,
+        "scope": "function",
+        "description": "The file is opened.",
+        "quote": "return open(path).read()"
+      }
+    ],
+    "evidence": [
+      {
+        "file": "app/orders.py",
+        "line": 11,
+        "description": "The file is read and returned.",
+        "quote": "return open(path).read()"
+      }
+    ],
+    "conditions": [],
+    "execution": {
+      "attacker_perspective": "An unprivileged remote user.",
+      "payloads": [
+        "see the description"
+      ],
+      "instructions": [
+        "Send the request."
+      ],
+      "observed_result": "As described."
+    },
+    "remediation": {
+      "strategy": "Check the name against a list."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Directly reachable."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Reads one table."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Reproduced."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "orders-sql-injection",
+    "title": "SQL injection in order_by_id",
+    "description": "The order id is concatenated into the query.",
+    "root_cause": "User input reaches a raw SQL string.",
+    "intended_behavior": "The id is bound as a parameter.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "app/orders.py",
+        "line": 9,
+        "scope": "function",
+        "description": "order_id comes from the request.",
+        "quote": "def order_by_id(conn, order_id):"
+      },
+      {
+        "kind": "propagation",
+        "file": "app/orders.py",
+        "line": 10,
+        "scope": "function",
+        "description": "It is joined to the SQL text.",
+        "quote": "query = \"SELECT * FROM orders WHERE id = \" + order_id"
+      },
+      {
+        "kind": "sink",
+        "file": "app/orders.py",
+        "line": 11,
+        "scope": "function",
+        "description": "The text is executed.",
+        "quote": "return conn.execute(query).fetchone()"
+      }
+    ],
+    "evidence": [
+      {
+        "file": "app/orders.py",
+        "line": 10,
+        "description": "The query is built by concatenation.",
+        "quote": "query = \"SELECT * FROM orders WHERE id = \" + order_id"
+      }
+    ],
+    "conditions": [],
+    "execution": {
+      "attacker_perspective": "An unprivileged remote user.",
+      "payloads": [
+        "see the description"
+      ],
+      "instructions": [
+        "Send the request."
+      ],
+      "observed_result": "As described."
+    },
+    "remediation": {
+      "strategy": "Use a bound parameter."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Directly reachable."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Reads one table."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Reproduced."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "session-hardcoded-key",
+    "title": "Hardcoded session signing key",
+    "description": "The key that signs cookies is in the source.",
+    "root_cause": "The secret is a constant.",
+    "intended_behavior": "The key comes from the environment.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "app/session.py",
+        "line": 7,
+        "scope": "function",
+        "description": "Every cookie is signed here.",
+        "quote": "def sign(value):"
+      },
+      {
+        "kind": "propagation",
+        "file": "app/session.py",
+        "line": 8,
+        "scope": "function",
+        "description": "The key is mixed into the digest.",
+        "quote": "return hashlib.sha256((SECRET_KEY + value).encode()).hexdigest()"
+      },
+      {
+        "kind": "sink",
+        "file": "app/session.py",
+        "line": 4,
+        "scope": "function",
+        "description": "The key is a constant.",
+        "quote": "SECRET_KEY = \"dev-secret\""
+      }
+    ],
+    "evidence": [
+      {
+        "file": "app/session.py",
+        "line": 4,
+        "description": "The key is written in the file.",
+        "quote": "SECRET_KEY = \"dev-secret\""
+      }
+    ],
+    "conditions": [],
+    "execution": {
+      "attacker_perspective": "An unprivileged remote user.",
+      "payloads": [
+        "see the description"
+      ],
+      "instructions": [
+        "Send the request."
+      ],
+      "observed_result": "As described."
+    },
+    "remediation": {
+      "strategy": "Read the key from the environment."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Directly reachable."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Reads one table."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Reproduced."
+    }
+  }
+]
