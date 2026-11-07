@@ -29,6 +29,9 @@ four makers found the first: the kernel kept the conclusion, and its answer lost
   made-up one is refused by its bytes, a lost reader does not hang the work, and a file that changes takes the findings on it
   until each is checked again.
 * **`yuce --version` says `yuce`.** It printed the name of the other binary.
+* **README starts with a release binary and the Python client,** shows how the owner joins through the bridge, and says what
+  `VERIFIED` means without a receipt.
+* **BENCHMARKS: the control run of 0.1.7,** side K run again from this tree before the tag, graded blind with T and L of run 2.
 * **`LIMITATIONS.md` says that the research questions are not in the journal,** and what follows from it.
 
 ## 0.1.6 (2026-11-06)

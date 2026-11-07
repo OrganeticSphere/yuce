@@ -116,7 +116,7 @@ from v0.1.6. Run 1 found a defect of the kernel, which v0.1.6 fixes, so its K is
   repair did not say what had fallen, and the model wrote the answer again without it. L was partly kept once in 2A and once in 2B.
 * **Repeats in K's answers.** The same request made a repair repeat rows it was told to keep, so K's counts of statements grow after
   a withdrawal: the answer to the first question has 71 rows, 48 of them distinct, at 2B of run 2, and 80 and 47 at 2B of run 1.
-  Without the repeats K's 2B of run 2 is 82.1% rather than 82.2%. The request is fixed after v0.1.6, see `CHANGELOG.md`.
+  Without the repeats K's 2B of run 2 is 82.1% rather than 82.2%. The request is fixed in 0.1.7: see its control run below.
 * **The grader's control.** Two lines restating the withdrawn content in other words were planted in a copy of T's answer of 2A and
   of 2B, fixed before the answers were read, in a separate packet. The grader found all four and changed its verdict from `ok` to
   `failed` and `partly`.
@@ -126,6 +126,38 @@ from v0.1.6. Run 1 found a defect of the kernel, which v0.1.6 fixes, so its K is
 * **By model, on K (lines sent, refused).** `deepseek-flash` 1,703 and 190, then 1,523 and 163; Haiku 688 and 77, then 705 and 105;
   Luna 444 and 57, then 406 and 55; Gemini 335 and 13, then 358 and 14. A faster reader takes more of the work. These numbers
   describe this corpus and these runs, not the models.
+
+### The control run of 0.1.7, grader Opus 5.5
+
+Side K alone, run again from the candidate tree of 0.1.7 before its tag, as `benchmarks/PREREGISTRATION_0.1.7.md` fixed it: the
+same four readers, corpus and withdrawals as run 2. T and L are the answers of run 2, graded again with the new K in one pass.
+
+| Stage | K | T | L |
+|---|---|---|---|
+| 1 | 82.0% | 56.9% | 86.4% |
+| 2A | 87.1% | 87.7% | 77.5% |
+| 2B | 82.6% | 78.2% | 83.8% |
+
+* **The repair.** At 2B one row fell in each of the two answers. The kernel named it with the quotes under it that stand, and the
+  model sent one claim for each question: 2 calls, 1.4 KB of replies, no copy, no line refused. The other 40 and 49 rows stayed,
+  with no repeats, and no cited quote the withdrawal did not touch was dropped. In both label orders the grader found the
+  conclusion that run 2 lost: it rests on the standing quote.
+* **Withdrawal kept.** 2A `ok` in both orders, 2B `ok` and `partly`. The `partly` is for other text: the answer to the second
+  question lists optional session ids as open, though sessions are removed. That statement was there before the withdrawals: K's
+  answers after stage 1 and after 2A are the same text, and on it the grader marked three earlier states as current at 2A and one at
+  stage 1.
+* **Earlier states.** At 2A and 2B the grader marks 14 of K's statements as stale in one order and 5 and 14 in the other, against 0
+  or 1 for T and L. At stage 1 T has more, 16 and 17 against K's 10. K's answers keep what each revision said, and some of it is
+  written as if it still held.
+* **The graph.** After each withdrawal no record the kernel reports as grounded rests on a quote overlapping the withdrawn text: 0 of
+  888 and 0 of 885, with 1 and then 2 stored quotes touched and 2 and then 9 records resting on them, and no quote touching the text
+  stored afterwards. From the journal, no model.
+* **Two gradings of the same answers.** This grading put T and L of run 2 at 78.2% and 83.8% at 2B, against 70.4% and 76.9% in
+  the first: 7.8 and 6.9 points apart on the same text. Differences of that size in these tables say nothing.
+* **The grader's control.** Two lines per stage restating the withdrawn content were planted in a copy of T's answer: it found all
+  four.
+* **Cost.** 282 calls, none failed, 38.9 minutes, $0.45 for the seats with a price. The run comes from the public branch of its
+  candidate, with the binary its release workflow built: its `provenance.json` names public commits.
 
 ### How far these numbers go
 
