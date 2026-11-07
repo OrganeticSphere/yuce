@@ -892,8 +892,32 @@ fn a_journal_of_a_folder_says_when_its_documents_are_not_the_set_it_started_on()
     drop(s);
     let (replayed, read) = AuditState::verify(&wal.0, &mut |_, _, _, _| {}).unwrap();
     assert_eq!((replayed.docs_set_matches(), read.document_puts), (false, 1));
+    drop(replayed);
+    // R017-04: a document put inside a batch counts, and a document that came back matches again with the count showing it
+    let mut s = AuditState::open(&wal.0).unwrap();
+    let put = json!({"kind":"put_document","doc_id":"a.txt","text":"Alpha.\n"});
+    s.submit_operations_id("back", "owner", &[put], None).unwrap();
+    assert!(s.docs_set_matches());
+    drop(s);
+    let (replayed, read) = AuditState::verify(&wal.0, &mut |_, _, _, _| {}).unwrap();
+    assert_eq!((replayed.docs_set_matches(), read.document_puts), (true, 2));
     // the library's own value says no from the start: nothing in such a journal claims to be a folder's set
     let other = TempPath::new();
     let library = AuditState::create(&other.0, &AuditOntology::base(), &[("a".to_string(), b"Alpha.\n".to_vec())], "library", sha256(b"own")).unwrap();
     assert!(!library.docs_set_matches());
+}
+
+/// R017-03: the keys of a document's tasks hold its name, so a name that fits an identifier can give a key that does not.
+#[test]
+fn a_document_name_leaves_room_for_the_keys_of_its_tasks() {
+    let wal = TempPath::new();
+    let long = |n: usize| vec![(format!("{}.txt", "a".repeat(n - 4)), b"Alpha.\n".to_vec())];
+    let refused = AuditState::create_from_docs(&wal.0, &AuditOntology::base(), "names", long(MAX_DOC_NAME_BYTES + 1));
+    assert!(refused.is_err());
+    assert!(!wal.0.exists(), "no journal is left behind");
+    let mut s = AuditState::create_from_docs(&wal.0, &AuditOntology::base(), "names", long(MAX_DOC_NAME_BYTES)).unwrap();
+    let id = long(MAX_DOC_NAME_BYTES)[0].0.clone();
+    let key = format!("task:reread:{id}#99999");
+    let check = json!({"kind":"checkpoint","key":key,"from":0,"to":0,"context":{}});
+    s.submit_operations_id("key", "kernel", &[check], None).unwrap();
 }

@@ -3,12 +3,26 @@
 //! A document's name is its path inside the folder, with `/` on every system, so nothing of the machine reaches the journal. What
 //! a journal takes it keeps for good and hands to whoever checks it, so a walk leaves out what nobody meant to give: hidden files
 //! such as `.env`, service folders, links, the server's own files. A file that is no text stops the start, by name: leaving
-//! it out quietly would look like a reviewed folder with a contract missing. `--select` names the files instead of walking.
+//! it out quietly would look like a reviewed folder with a contract missing. `--select` names the files instead of walking: a hidden
+//! file named there is taken, as someone asked for it, but a link or a file of the server stops the start like a file outside.
 
 use sbgk_core::audit::state::MAX_DOC_BYTES;
 use std::path::{Component, Path, PathBuf};
 
 const SERVICE_FOLDERS: [&str; 3] = ["__pycache__", "node_modules", "target"];
+
+/// The server's own files: their real paths, and their bytes, as a copy of the tokens in `--subjects` gives away the same tokens.
+#[derive(Default)]
+pub struct Own {
+    pub paths: Vec<PathBuf>,
+    pub texts: Vec<Vec<u8>>,
+}
+
+impl Own {
+    fn holds(&self, path: &Path, bytes: &[u8]) -> bool {
+        self.texts.iter().any(|t| t == bytes) || std::fs::canonicalize(path).is_ok_and(|p| self.paths.contains(&p))
+    }
+}
 
 pub struct Taken {
     /// Sorted by name.
@@ -31,7 +45,7 @@ fn hidden(name: &str, meta: &std::fs::Metadata) -> bool {
     name.starts_with('.')
 }
 
-fn walk(dir: &Path, prefix: &str, own: &[PathBuf], files: &mut Vec<(String, PathBuf)>, skipped: &mut Vec<(String, &'static str)>) -> Result<(), String> {
+fn walk(dir: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>, skipped: &mut Vec<(String, &'static str)>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
@@ -47,15 +61,35 @@ fn walk(dir: &Path, prefix: &str, own: &[PathBuf], files: &mut Vec<(String, Path
             if SERVICE_FOLDERS.contains(&name.as_str()) {
                 skipped.push((id, "a service folder"));
             } else {
-                walk(&path, &format!("{id}/"), own, files, skipped)?;
+                walk(&path, &format!("{id}/"), files, skipped)?;
             }
         } else if !meta.is_file() {
             skipped.push((id, "not a regular file"));
-        } else if std::fs::canonicalize(&path).is_ok_and(|p| own.contains(&p)) {
-            skipped.push((id, "a file of this server's own command"));
         } else {
             files.push((id, path));
         }
+    }
+    Ok(())
+}
+
+/// A path of a list, step by step: a link or a junction on the way leads out of the folder while the path still looks inside it.
+fn check_named(folder: &Path, parts: &[&str], line: &str) -> Result<(), String> {
+    let mut at = folder.to_path_buf();
+    for part in parts {
+        at.push(part);
+        let meta = std::fs::symlink_metadata(&at).map_err(|e| format!("--select: cannot read {line}: {e}"))?;
+        if meta.file_type().is_symlink() {
+            return Err(format!("--select: {line} goes through a link, and links are not followed"));
+        }
+    }
+    let inside = std::fs::canonicalize(&at)
+        .and_then(|file| Ok(file.starts_with(std::fs::canonicalize(folder)?)))
+        .map_err(|e| format!("--select: cannot read {line}: {e}"))?;
+    if !inside {
+        return Err(format!("--select: {line} is not a path inside the folder"));
+    }
+    if !std::fs::metadata(&at).is_ok_and(|m| m.is_file()) {
+        return Err(format!("--select: {line} is not a file"));
     }
     Ok(())
 }
@@ -75,6 +109,7 @@ fn named(folder: &Path, list: &str, files: &mut Vec<(String, PathBuf)>) -> Resul
         if parts.is_empty() {
             return Err(format!("--select: {line} names no file"));
         }
+        check_named(folder, &parts, line)?;
         let id = parts.join("/");
         let path = folder.join(&id);
         files.push((id, path));
@@ -82,15 +117,15 @@ fn named(folder: &Path, list: &str, files: &mut Vec<(String, PathBuf)>) -> Resul
     Ok(())
 }
 
-/// The documents of a run on `folder`. `own` holds the canonical paths of the server's own files, which a walk leaves out.
-pub fn collect(folder: &Path, select: Option<&str>, own: &[PathBuf]) -> Result<Taken, String> {
+/// The documents of a run on `folder`.
+pub fn collect(folder: &Path, select: Option<&str>, own: &Own) -> Result<Taken, String> {
     if !folder.is_dir() {
         return Err(format!("--docs: {} is not a folder", folder.display()));
     }
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
     match select {
         Some(list) => named(folder, list, &mut files)?,
-        None => walk(folder, "", own, &mut files, &mut skipped)?,
+        None => walk(folder, "", &mut files, &mut skipped)?,
     }
     files.sort();
     if let Some(twice) = files.windows(2).find(|w| w[0].0 == w[1].0) {
@@ -104,7 +139,12 @@ pub fn collect(folder: &Path, select: Option<&str>, own: &[PathBuf]) -> Result<T
             continue;
         }
         let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {id}: {e}"))?;
-        if bytes.is_empty() {
+        if own.holds(&path, &bytes) {
+            if select.is_some() {
+                return Err(format!("--select: {id} is a file of this server's own command, and it would stay in the journal"));
+            }
+            skipped.push((id, "a file of this server's own command"));
+        } else if bytes.is_empty() {
             skipped.push((id, "empty"));
         } else if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
             refused.push(format!("{id} (not UTF-8 text)"));
@@ -170,7 +210,7 @@ mod tests {
                 ("sub/empty.txt", b""),
             ],
         );
-        let t = collect(&f.0, None, &[]).unwrap();
+        let t = collect(&f.0, None, &Own::default()).unwrap();
         assert_eq!(ids(&t), ["b.txt", "sub/a.md", "sub/deep/c.py"]);
         let left: Vec<&str> = t.skipped.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(left, [".env", ".git", "node_modules", "sub/__pycache__", "sub/empty.txt", "target"]);
@@ -179,17 +219,24 @@ mod tests {
 
     #[test]
     fn the_servers_own_files_are_no_sources() {
-        let f = Folder::new("own", &[("a.txt", b"one\n"), ("subjects.json", b"{\"token\":\"t\"}\n")]);
-        let own = vec![std::fs::canonicalize(f.0.join("subjects.json")).unwrap()];
+        let tokens: &[u8] = b"{\"token\":\"t\"}\n";
+        let f = Folder::new("own", &[("a.txt", b"one\n"), ("subjects.json", tokens), ("sub/copy of subjects.txt", tokens), ("run.wal", b"journal\n")]);
+        let own = Own { paths: vec![std::fs::canonicalize(f.0.join("run.wal")).unwrap()], texts: vec![tokens.to_vec()] };
         let t = collect(&f.0, None, &own).unwrap();
         assert_eq!(ids(&t), ["a.txt"]);
-        assert_eq!(t.skipped[0].0, "subjects.json");
+        let left: Vec<&str> = t.skipped.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(left, ["run.wal", "sub/copy of subjects.txt", "subjects.json"]);
+        // named on purpose it stops the start: a list that gives the tokens away is no list to work around
+        for name in ["subjects.json", "sub/copy of subjects.txt", "run.wal"] {
+            let error = collect(&f.0, Some(name), &own).err().unwrap();
+            assert!(error.contains("own command") && error.contains(name), "{error}");
+        }
     }
 
     #[test]
     fn a_file_that_is_no_text_stops_the_start_and_every_one_is_named() {
         let f = Folder::new("binary", &[("a.txt", b"one\n"), ("b.pdf", b"%PDF\x00\x01"), ("c.txt", b"\xcf\xf0\xe8\xe2\xe5\xf2\n")]);
-        let error = collect(&f.0, None, &[]).err().unwrap();
+        let error = collect(&f.0, None, &Own::default()).err().unwrap();
         assert!(error.contains("b.pdf") && error.contains("c.txt") && !error.contains("a.txt"), "{error}");
         assert!(error.contains("--select"), "{error}");
     }
@@ -197,7 +244,7 @@ mod tests {
     #[test]
     fn a_list_names_files_beside_ones_that_are_no_text() {
         let f = Folder::new("list", &[("a.txt", b"one\n"), ("sub/b.txt", b"two\n"), ("c.pdf", b"%PDF\x00"), (".notes", b"named on purpose\n")]);
-        let t = collect(&f.0, Some("# the two that count\na.txt\n./sub/b.txt\n.notes\n"), &[]).unwrap();
+        let t = collect(&f.0, Some("# the two that count\na.txt\n./sub/b.txt\n.notes\n"), &Own::default()).unwrap();
         assert_eq!(ids(&t), [".notes", "a.txt", "sub/b.txt"]);
     }
 
@@ -205,26 +252,38 @@ mod tests {
     fn a_list_stays_inside_the_folder_and_names_a_file_once() {
         let f = Folder::new("outside", &[("a.txt", b"one\n")]);
         for list in ["../a.txt\n", "sub/../../a.txt\n", "/etc/hosts\n"] {
-            assert!(collect(&f.0, Some(list), &[]).err().unwrap().contains("inside the folder"), "{list}");
+            assert!(collect(&f.0, Some(list), &Own::default()).err().unwrap().contains("inside the folder"), "{list}");
         }
-        assert!(collect(&f.0, Some("a.txt\n./a.txt\n"), &[]).err().unwrap().contains("twice"));
+        assert!(collect(&f.0, Some("a.txt\n./a.txt\n"), &Own::default()).err().unwrap().contains("twice"));
+        assert!(collect(&f.0, Some("absent.txt\n"), &Own::default()).err().unwrap().contains("cannot read"));
+        std::fs::create_dir_all(f.0.join("sub")).unwrap();
+        assert!(collect(&f.0, Some("sub\n"), &Own::default()).err().unwrap().contains("not a file"));
     }
 
     #[test]
     fn nothing_to_take_is_said() {
         let f = Folder::new("nothing", &[(".env", b"KEY=secret\n"), ("empty.txt", b"")]);
-        assert!(collect(&f.0, None, &[]).err().unwrap().contains("no text file"));
-        assert!(collect(&f.0.join("absent"), None, &[]).err().unwrap().contains("not a folder"));
+        assert!(collect(&f.0, None, &Own::default()).err().unwrap().contains("no text file"));
+        assert!(collect(&f.0.join("absent"), None, &Own::default()).err().unwrap().contains("not a folder"));
     }
 
-    #[cfg(unix)]
+    /// A folder link: a symbolic link, on Windows a junction, which needs no rights to make.
+    fn link_folder(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().unwrap().status.success());
+    }
+
     #[test]
-    fn a_link_is_not_followed() {
+    fn a_link_is_not_followed_by_a_walk_nor_by_a_list() {
         let outside = Folder::new("outside_link", &[("secret.txt", b"not yours\n")]);
         let f = Folder::new("link", &[("a.txt", b"one\n")]);
-        std::os::unix::fs::symlink(outside.0.join("secret.txt"), f.0.join("b.txt")).unwrap();
-        let t = collect(&f.0, None, &[]).unwrap();
+        link_folder(&outside.0, &f.0.join("alias"));
+        let t = collect(&f.0, None, &Own::default()).unwrap();
         assert_eq!(ids(&t), ["a.txt"]);
-        assert_eq!(t.skipped[0].0, "b.txt");
+        assert_eq!(t.skipped[0].0, "alias");
+        let error = collect(&f.0, Some("a.txt\nalias/secret.txt\n"), &Own::default()).err().unwrap();
+        assert!(error.contains("alias/secret.txt") && error.contains("link"), "{error}");
     }
 }

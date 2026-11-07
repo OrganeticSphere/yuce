@@ -7,9 +7,10 @@ four makers found the first: the kernel kept the conclusion, and its answer lost
 
 * **`sbgk audit-serve --docs <folder>` runs on your own text files.** Contracts, policies, logs, code: any UTF-8 text, with no manifest
   and no repository. A document is named by its path inside the folder and bound by its bytes, and the same files give the same
-  roots anywhere. Hidden files, service folders, links and the server's own files stay out, and the server prints what it took and
-  what it left. A file that is not text stops the start, by name; `--select` names the files instead of walking the folder. The
-  journal format does not change: `audit-verify` of 0.1.6 passes such a journal.
+  roots anywhere. Hidden files, service folders, links, the server's own files and their copies stay out, and the server prints what
+  it took and what it left. A file that is not text stops the start, by name. `--select` names the files instead of walking the
+  folder, and it stops on a link or a file of the server. The journal format does not change: `audit-verify` of 0.1.6 passes such a
+  journal.
 * **`audit-verify` checks the file set of a journal on supplied documents.** It computes the hash of the list again and says whether
   the documents still are the set the run started on (`sources`). `corpus_manifest_hash` was only read before.
 * **Only Markdown is cut at `#` lines.** In a code or text file that line is a comment. Such a file is cut by size, at a blank line or
@@ -21,9 +22,9 @@ four makers found the first: the kernel kept the conclusion, and its answer lost
   under the task of a whole answer, so the model wrote the answer again: 34 lines, 23 of them copies of rows it was told to keep, and
   not the row that fell. Now the repair names each fallen row by id with the quotes under it that stand. The row's text stays out, as
   it may state what was withdrawn. A repair takes a few lines, and the report coverage of a new answer does not apply to it.
-* **Copies of the kept rows stay out of a repaired answer.** The kernel leaves out a claim line with the text of a row it keeps, and
-  says so (`dropped_copies`, in its reply and in the answer's checkpoint). The rule is the dispatcher's, not the store's: a journal
-  that holds such copies replays as before.
+* **Copies of the kept rows stay out of a repaired answer.** The kernel leaves out a claim line that says what a kept row says on the
+  same grounds, and says so (`dropped_copies`, in its reply and in the answer's checkpoint). The same words with another date or on
+  another quote are another claim. The rule is the dispatcher's, not the store's: a journal that holds such copies replays as before.
 * **`examples/findings-gate/` puts a security review's findings through the kernel.** A check of the shape passes all three; the
   made-up one is refused by its bytes, a lost reader does not hang the work, and a file that changes takes the findings on it
   until each is checked again.

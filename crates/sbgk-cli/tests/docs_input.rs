@@ -237,6 +237,23 @@ fn a_folder_with_a_file_that_is_no_text_starts_nothing() {
     assert!(server.note.contains("a.txt") && !server.note.contains("contract.docx"), "{}", server.note);
 }
 
+/// R017-01: a list cannot put the server's own tokens into the journal.
+#[test]
+fn a_list_that_names_the_tokens_starts_nothing() {
+    let fx = Fixture::new("tokens", &[("a.txt", b"one\n")]);
+    let subjects = fx.0.join("docs/subjects.json");
+    std::fs::copy(fx.0.join("subjects.json"), &subjects).unwrap();
+    std::fs::write(fx.p("take.txt"), "a.txt\nsubjects.json\n").unwrap();
+    let mut args = fx.fresh();
+    let at = args.iter().position(|a| a == "--subjects").unwrap();
+    args[at + 1] = subjects.display().to_string();
+    args.extend(["--select".to_string(), fx.p("take.txt")]);
+    let out = fx.refused(&args);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("own command"), "{out:?}");
+    assert!(!Path::new(&fx.p("run.wal")).exists(), "no journal is left behind");
+}
+
 #[test]
 fn two_ways_to_start_a_run_are_refused_together() {
     let fx = Fixture::new("both", &[("a.txt", b"one\n")]);

@@ -44,6 +44,9 @@ mod versions;
 const GENESIS_FORMAT: &str = "r2r-audit-genesis/2";
 const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
 pub const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
+/// The longest name of a supplied document: the keys of its tasks hold the name and have the limit of any identifier, so a longer name
+/// could be read and its reading never closed.
+pub const MAX_DOC_NAME_BYTES: usize = 512;
 /// The rule a map_term names when the circles +1 refiner maps a term under ontology reviews; the builder sets it, not the model.
 pub const REFINER_MAP_RULE: &str = "refiner_map_term/1";
 
@@ -812,6 +815,15 @@ pub struct VerifiedJournal {
     pub document_puts: usize,
 }
 
+/// The documents a committed command put, those inside a batch too.
+fn document_puts(command: &Value) -> usize {
+    match command["kind"].as_str() {
+        Some("put_document") => 1,
+        Some("batch") => command["operations"].as_array().into_iter().flatten().map(document_puts).sum(),
+        _ => 0,
+    }
+}
+
 /// The session root that binds an engine root and an audit root (the `session_root` of a state and of a terminal receipt).
 pub fn session_root_of(engine_root: &Hash, audit_root: &Hash) -> Hash {
     sha256_parts(&[b"R2R-AUDIT-SESSION/1", engine_root, audit_root])
@@ -887,6 +899,9 @@ impl AuditState {
     /// A run on supplied files, each named by its path inside the set. They are bound by their bytes alone: no repository stands behind
     /// them. In order of the names, so that the same files give the same roots however they were found.
     pub fn create_from_docs(path: &Path, base_ontology: &Value, run_id: &str, mut docs: Vec<(String, Vec<u8>)>) -> KResult<Self> {
+        if let Some((id, _)) = docs.iter().find(|(id, _)| id.len() > MAX_DOC_NAME_BYTES) {
+            return Err(bad("doc_id", format!("a document name takes at most {MAX_DOC_NAME_BYTES} bytes: {id}")));
+        }
         docs.sort_by(|a, b| a.0.cmp(&b.0));
         let hashes: Vec<String> = docs.iter().map(|(_, bytes)| to_hex(&sha256(bytes))).collect();
         let set = super::sources::docs_set_hash(docs.iter().zip(&hashes).map(|((id, _), hash)| (id.as_str(), hash.as_str())));
@@ -931,7 +946,7 @@ impl AuditState {
             visit(n, state.audit_root(), state.engine_root(), heads[n - 1]);
             Ok(())
         })?;
-        let document_puts = scan.payloads.iter().skip(1).filter(|p| p["command"]["kind"] == "put_document").count();
+        let document_puts = scan.payloads.iter().skip(1).filter(|p| p["outcome"]["kind"] != "error").map(|p| document_puts(&p["command"])).sum();
         let read =
             VerifiedJournal { bytes: scan.bytes, complete_bytes: scan.complete_bytes, sha256: scan.sha256, wal_head: heads[heads.len() - 1], document_puts };
         Ok((state, read))
@@ -1196,7 +1211,8 @@ impl AuditState {
     }
 
     /// Whether the documents as they stand now are the set this run's `manifest_hash` names. Computed here, not read: a run started on
-    /// a folder says yes until a document changes. A run of the library may hold any value there, and then says no from the start.
+    /// a folder says yes while its documents are those of the start, also when one changed and came back. A run of the library may
+    /// hold any value there, and then says no from the start.
     pub fn docs_set_matches(&self) -> bool {
         let documents = &self.core.data.source_documents;
         let pairs = documents.iter().map(|(id, identity)| (id.as_str(), identity["raw_sha256"].as_str().unwrap_or_default()));

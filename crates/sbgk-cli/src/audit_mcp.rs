@@ -1236,7 +1236,11 @@ fn create_docs_run(a: &Args, folder: &str, wal: &Path) -> AuditState {
     }
     let select = a.get("select").map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| fail(&format!("cannot read --select: {e}"))));
     // the tokens of --subjects must not become a source of the run they guard
-    let own: Vec<PathBuf> = [a.get("subjects"), a.get("questions"), wal.to_str()].into_iter().flatten().filter_map(|p| std::fs::canonicalize(p).ok()).collect();
+    let inputs: Vec<&str> = [a.get("subjects"), a.get("questions")].into_iter().flatten().collect();
+    let own = super::docs_input::Own {
+        paths: inputs.iter().copied().chain(wal.to_str()).filter_map(|p| std::fs::canonicalize(p).ok()).collect(),
+        texts: inputs.iter().filter_map(|p| std::fs::read(p).ok()).collect(),
+    };
     let taken = super::docs_input::collect(Path::new(folder), select.as_deref(), &own).unwrap_or_else(|e| fail(&e));
     let bytes: usize = taken.docs.iter().map(|(_, b)| b.len()).sum();
     let names: Vec<&str> = taken.docs.iter().map(|(id, _)| id.as_str()).collect();
