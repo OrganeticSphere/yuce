@@ -2,6 +2,8 @@
 
 **A deterministic evidence control kernel for AI agent teams.**
 
+[简体中文](README.zh-CN.md)
+
 YuCe is the environment a team of AI agents works in. It hands each agent one bounded task at a time, accepts a quote only
 when its bytes occur in the source, records which conclusions rest on which quotes, and keeps everything it accepts in a
 hash-chained journal. When a source is revoked, the kernel itself finds the conclusions registered on it and leaves the
