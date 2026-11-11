@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.2.0 (not released yet)
+
+A new run writes the 0.2 journal; `audit-verify` checks journals of both formats, and the published journals of 0.1 verify as before.
+The server no longer resumes a 0.1 journal: finish it with a 0.1 release.
+
+* **Frames of `sbgk-session-log/3`.** A frame is a header and a body: the header names the body by its hash and the records the frame
+  accepted by the root of their tree, and the frame hash covers the header. One record with all its grounds is one leaf of that tree.
+* **The state root `r2r-state-root/2` grows with what changed, not with the run.** Every value of the state is a leaf in one of
+  thirteen named sections, each spread over 256 buckets; a command rehashes the leaves it changed, their buckets and their sections.
+  Whether a record still stands is not a leaf: it is the status projection's. The withdrawn text is, by its hash.
+* **The genesis names its rules and the run:** the version of the rules, the formats of the root and of the seal, the questions of the
+  run, the hash of its settings, and an object of the operator's (at most 4 KB) that the kernel never reads. A field it does not
+  know is refused. A resumed run takes its questions from the genesis and must have the same settings.
+* **`audit_close` is an entry of the journal:** a server started on a closed run's journal finds it closed.
+* **Seals.** The server writes a seal every 256 frames, at each phase of a circle and before it closes the run: the number of frames
+  before it, their RFC 6962 tree, the roots of the state and the hashes of the status and dependency projections. Signatures come
+  later, without a change of this format. A seal and a close are frames of their own, never operations of a batch; the ids `seal-<n>`
+  and `audit-close` of the kernel are theirs alone. A seal that fails does not undo the command it follows: the next command writes
+  it, after a restart too.
+* **The status projection names the direct grounds that fell:** a done that rests on a claim on a withdrawn quote names the claim;
+  the first cause is found by following the chain down to the withdrawn quote.
+* **The gap pass (`--gap-pass <packs>`, `--gap-units 4..8`, `--gap-profile <file>`), off by default.** After the first readings, the
+  units of the read sections (a list item, a paragraph, a table row) that no standing quote covers go out in packs as narrow tasks
+  (`TG`): record what a unit states with an exact quote, or answer empty. The section heading and a nested item's parent are shown
+  as context that cannot be quoted. Tiers from the profile set the order; a tier closes after three empty packs in a row. A second
+  reader, never the first, checks the units a pack of a named tier left unquoted. The reading is not done while the pass runs,
+  the coverage report says what each read unit came to, and the settings are pinned with the run.
+* **A section cut from the middle of a document comes with its context:** the first reading's task shows the nearest heading above
+  the section and the header row of the table it begins inside (a line of three or more ` | ` cells in plain text), marked as never
+  to be quoted. The gap pass shows the same. Reading tasks change, so new runs differ from the published ones.
+* **A `#` line or a table row inside a fenced code block is code:** it starts no section of the first reading and is shown as no
+  heading or table header. The sections of a Markdown document with such blocks change.
+* **Reading tools over the two projections,** live for the owner and over a recorded journal with `sbgk audit-read <tool> --wal`,
+  which checks the journal first as `audit-verify` does and answers as the live server does for the same state:
+  * `status` (the `projections` block of `audit_status`): records by kind, standing, fallen (a ground of theirs went) and otherwise
+    not standing, withdrawn texts by hash, gone quotes, seals and the projection hashes;
+  * `dependents` (`audit_dependents`): every record resting on a record or on the quotes of a document, by depth;
+  * `active-claims` (`audit_active_claims`): the claims that stand, those of equal text in one row with the documents under them;
+  * `diff` (`audit_diff`): what changed between two points of the journal (a point is a number of frames, as a seal's `log_size`);
+  * `record` (`audit_record`): now with its row of the status projection, how many records rest on it and its first causes;
+  * `fallen` (`audit_fallen`): what fell and on what it stood. Each fallen claim, relation or answer names the grounds that fell,
+    the gone quotes with their bytes and why they went, as the command that took them recorded it then (`withdrawn`, with the
+    withdrawn text's hash and the bytes that overlapped; `revoked`; `version_replaced`), the quotes under it that stand, with their
+    text, twins on other sources found by comparing words, and what to reread. The text of a fallen row, of a gone quote and of a
+    twin is never in it, nor the bytes of a gone quote inside a wider one that stands (a journal of the first rule). A withdrawal's
+    answer names the point before it (`since`) and how many records fell.
+* **A frame of a 0.2 journal nests at most 64 levels of JSON,** its outer object counting one: a command whose frame would be
+  deeper is refused before it is written, and a journal with such a frame is refused on replay. Real journals nest at most 11.
+  The writer holds every frame to the limits of the format, the genesis included: a run whose genesis would break them (a deep
+  or fractional `operator_meta`) is refused before any journal is written.
+* **Signed checkpoints (C2SP `signed-note` and `tlog-checkpoint`, Ed25519).** The journal does not change: a checkpoint is a file
+  beside it whose three lines name the run (`yuce/<run_id>`), a number of frames and the RFC 6962 root over them, up to and with a
+  seal frame, so the signed root also covers the seal's state roots and projection hashes. `sbgk keygen --name --out` writes a
+  signing key to a file and prints its verifier key; `audit-serve --signing-key <file>` signs every new seal into
+  `<run.wal>.checkpoints/`; `audit-sign` signs the seals of a recorded journal; `audit-verify --checkpoint <file>` checks one with
+  the journal: `signature valid, key pinned` under `--trusted-keys` (a file of verifier keys with role and dates), `key not
+  pinned` under the key beside it or `--key`, refused for a revoked key unless `--anchored-at` names a day before the revocation,
+  and refused when it names no prefix of this journal ending with a seal. The cryptography is `ed25519-dalek`'s.
+  An anchored day is a day of the calendar or the check refuses; the days a key is valid hold for a revoked key too; a note
+  with a control character other than the line end is refused whole. A server that could not write a seal's checkpoint says so
+  in `audit_status` and in the reply of `audit_close` (`signing`) and on stderr; the seal stands, `audit-sign` writes it later.
+* **Quittances (`yuce-proof/1`).** `sbgk audit-proof --wal <run.wal> --record <id>` cuts one file that shows a record with every
+  record it rests on, down to its quotes, under the signed checkpoint of a seal; `sbgk audit-proof-verify --proof <file>` checks it
+  alone, without the journal and without a model, with the key statuses of a checkpoint and `--expect-seal` for an anchored seal.
+  `--self-contained` adds the bytes of every quote with its document version's chunk list, `--with-status` the status projection of
+  the seal. A quittance proves that the records were written before the seal (and with the projection, that they stood at it), not
+  that they stand now. It is cut only of records that stand at the seal, carries no hypothesis of a model, and a self-contained
+  one hands out no chunk that holds withdrawn text.
+* **The index beside a journal (`sbgk audit-index`).** A SQLite database any tool reads (`<run.wal>.index.sqlite`): frames,
+  records with their frame and leaf hash, grounds, quotes, seals and the status of every record. It is rebuilt from the journal at
+  any time and adds the rows of new frames to an index of the frames before them; `--check` compares it with the journal row by
+  row, and an index built in steps has the `index_hash` of one built at once; an index behind its journal is checked against the
+  prefix it names. It is never written over its journal or over a file that is no index, and a journal that ends in a torn frame
+  is refused. The truth stays in the journal. The binaries build in SQLite (public domain) through `rusqlite`.
+* **A settings file (`audit-serve --settings <file>`, `yuce-settings/1`).** One JSON object of the flags of `audit-serve`: text or
+  a whole number, `true` for a switch, relative paths from the file's folder. A flag of the file given again on the command line
+  is refused. The settings hash in the genesis is what the same flags give by hand, and the same file resumes the run.
+  `examples/settings/` holds one that runs as it is.
+* **One agent on its own folder in one command.** `--profile solo` without `--subjects` writes `<run.wal>.subjects.json` with
+  the tokens of one reading agent and the owner, readable by its owner only where the system has such modes, and never prints
+  them; a resumed run takes the same file.
+* **A question whose `about` no document holds is said, not lost in silence:** on stderr at the start and in `audit_status`
+  (`about_unmatched`).
+* **Task numbers are drawn under the chain head,** not the audit root, so they differ from those of a 0.1 run.
+* **The terminal receipt no longer has `tasks_committed`:** it counted only the tasks since the last start of the server.
+
+### Also since 0.1.7
+
+* **`--profile solo` runs the measured profile with one agent:** no circles and no dynamic roles, which need a team of three.
+* **A wait for a graph builder nobody runs says so.** With `--build-scope full` and no builder subject the readers finished and every
+  agent was told to wait, with no reason given. The server warns at the start, and the wait names the builder and `--build-scope none`.
+  Links proposed by agents and decided by the owner still need no builder.
+* **`audit-verify --expect` checks the receipt's `corpus_manifest_hash` and `run_id`** where it has them. A receipt with the roots of
+  the journal and another corpus named in it passed.
+* **A manifest refusal names the file** and points a text file to `--docs`.
+* **A repair knows a copy that names its quote without the `@`,** as the store reads such a reference.
+* **`--select` refuses a stream of a Windows file** (`a.txt:notes`), which no walk of the folder would give.
+* **`LIMITATIONS.md` no longer plans agents with their own profile for 0.2:** they come later, with rights per agent.
+* **CI checks every published journal** of the recorded runs against the receipts of its stages, with the binary of the tree under
+  test (`scripts/verify_published_runs.py`, public repository only). A rule change that a published journal does not survive fails
+  there before a release does.
+* **`LIMITATIONS.md` says that a withdrawal takes away support and does not erase:** the journal keeps the withdrawn text.
+
 ## 0.1.7 (2026-11-08)
 
 A repair after a withdrawal names what fell, and the audit server takes your own text files. The blind grading of the second run of

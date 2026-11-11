@@ -71,7 +71,7 @@ def circle_metrics(wal: Path, events: list[dict], agent_models: dict[str,str] | 
     reviews=[]
     source_warnings=[]
     for frame in (frames if frames is not None else jsonl_prefix(wal, source_warnings)):
-        p=frame.get("payload") or {}
+        p=(frame.get("payload") or frame.get("body") or {})
         cmd=p.get("command") or {}
         ck=cmd.get("checkpoint") or {}
         ctx=ck.get("context") or {}

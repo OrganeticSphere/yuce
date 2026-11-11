@@ -105,6 +105,10 @@ impl Core {
             let target = ConceptId(hash_field(row, "to")?);
             self.data.mappings.remove(&(rid, term.clone(), broad));
             self.data.mappings.insert((rid, term.clone(), target), string(row, "status")?.into());
+            if let Some(d) = self.dirty() {
+                d.mappings.insert((rid, term.clone(), broad));
+                d.mappings.insert((rid, term.clone(), target));
+            }
             self.data.decisions.push(json!({"op":"map_term","by":"builder","subject":proposer,"confirmed_by":confirmer,"record":row["record"],"term":term,"concept":row["to"],"moved_from":row["from"],"status":row["status"]}));
         }
         self.data.ontology = plan.ontology;

@@ -101,6 +101,10 @@ STATUS_SAMPLE_S = 30.0
 # (R2R is for several agents working together; how would Opus and an independent GPT agent work without it?). The team's first agent
 # leads and alone writes the answers in both arms; the others read and check (TEAM_READER_KINDS).
 MAX_LINES: int | None = None
+# the gap pass of 0.2 (SPEC_V02_GAP_PASS): primary packs at most (0: off), units per pack, and a profile file of tiers
+GAP_PASS = 0
+GAP_UNITS: int | None = None
+GAP_PROFILE: str | None = None
 PAIRS_ONLY = False
 LINK_CHECKER = False
 LINK_CHECKER_ID = "wv"
@@ -1315,6 +1319,12 @@ class Kernel:
             args += ["--builder-requests", str(BUILDER_REQUESTS)]
         if MAX_LINES:
             args += ["--max-lines", str(MAX_LINES)]
+        if GAP_PASS:
+            args += ["--gap-pass", str(GAP_PASS)]
+            if GAP_UNITS:
+                args += ["--gap-units", str(GAP_UNITS)]
+            if GAP_PROFILE:
+                args += ["--gap-profile", str(GAP_PROFILE)]
         if WHOLE_READER:
             (work / "zones.json").write_text(json.dumps([reports]), encoding="utf-8")
             args += ["--zones", str(work / "zones.json"), "--own-refs", "--summary-records", "0", "--ttl-ms", "3600000"]
@@ -3448,7 +3458,8 @@ def graph_shape(wal: pathlib.Path) -> dict | None:
         return None
     records, maps, concepts, locals_ = {}, defaultdict(set), {}, {}
     for line in wal.read_text(encoding="utf-8").splitlines():
-        p = json.loads(line).get("payload") or {}
+        frame = json.loads(line)
+        p = frame.get("payload") or frame.get("body") or {}  # 0.1 frames: payload; 0.2: body
         cmd, res = p.get("command") or {}, (p.get("outcome") or {}).get("result") or {}
         actor = str(p.get("actor", ""))
         if cmd.get("kind") == "submit" and actor.startswith("w"):

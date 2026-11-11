@@ -10,7 +10,8 @@ impl Drop for Wal {
 fn state() -> (Wal, AuditState, Scope) {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let path = Wal(std::env::temp_dir().join(format!("root-cache-{}-{nonce}.wal", std::process::id())));
-    let mut s = AuditState::create(
+    // the cache serves the `/1` root of the first formats
+    let mut s = AuditState::create_v2(
         &path.0,
         &AuditOntology::base(),
         &[("doc".into(), b"Earlier witness. Later witness.\n".to_vec())],

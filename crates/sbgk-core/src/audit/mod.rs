@@ -16,14 +16,19 @@
 mod answer_guidance;
 pub mod builder;
 pub mod directives;
+pub mod index;
 #[cfg(test)]
 pub(crate) mod mem;
 pub mod onto;
 pub(crate) mod persistence;
+pub mod proof;
+pub mod read;
 pub mod records;
 pub mod s0;
+pub mod sign;
 pub mod sources;
 pub mod state;
+pub mod trees;
 pub mod versions;
 
 use crate::error::KernelError;
@@ -202,6 +207,20 @@ pub trait AuditStore {
     }
     /// The UTF-8 text of a document (directives hand agents the section they must read).
     fn doc_text(&self, doc_id: &str) -> Option<String>;
+    /// The bytes of a document that standing accepted quotes are bound to, for the gap pass (SPEC_V02_GAP_PASS section 3). The
+    /// default places each standing quote at its first occurrence, as a store without bound spans can.
+    fn quoted_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
+        let text = self.doc_text(doc_id).unwrap_or_default();
+        self.records_of_kind(RecordKind::Observe)
+            .into_iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id) && self.is_grounded(&r.id))
+            .filter_map(|r| r.quote.filter(|q| !q.is_empty()).and_then(|q| text.find(&q).map(|a| (a, a + q.len()))))
+            .collect()
+    }
+    /// The byte ranges of a document closed by a withdrawal of its text (every occurrence of each closed text). Default: none.
+    fn closed_spans(&self, _doc_id: &str) -> Vec<(usize, usize)> {
+        Vec::new()
+    }
     /// Validate and store swarm records (contract §2, v0.1 R1-R5), stopping at the first refused line. A `relation` record also
     /// creates its link through `add_link` (status `Proposed`, the same path as the builder's links: v0.1 R3).
     fn submit_records(&mut self, agent: &str, directive: &str, scope: &Scope, lines: &[Value]) -> SubmitReport;
@@ -331,6 +350,12 @@ pub trait AuditStore {
 
     /// Commitment over records, audit ontology, links and statuses (combined with the engine root by the session).
     fn root(&self) -> Hash;
+
+    /// The epoch the dispatcher's task numbers are drawn under: the audit root by default; a 0.2 journal answers its chain head,
+    /// which costs nothing to read (SPEC_V02_STEP2 section 8).
+    fn epoch(&self) -> Hash {
+        self.root()
+    }
 }
 
 /// Bounded deterministic pair retrieval and procedural scope checks (consilium A4).

@@ -13,3 +13,6 @@ benchmarks/sbgk_bench/*_ru.py
 standalone_byte_graph_kernel_prompt.md
 clients/python/build/
 clients/python/src/*.egg-info/
+# what running examples/settings writes beside its settings file
+examples/settings/*.wal
+examples/settings/*.wal.*

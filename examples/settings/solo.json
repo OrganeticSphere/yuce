@@ -1,0 +1,1 @@
+{"format": "yuce-settings/1", "profile": "solo", "docs": "docs", "questions": "questions.json", "run-id": "settings-example", "wal": "settings-example.wal", "listen": "127.0.0.1:8787"}

@@ -7,6 +7,9 @@ edition.workspace = true
 [dependencies]
 sha2 = "0.10"
 serde_json = "1"
+# 0.2 step 4: signed checkpoints (C2SP signed-note, Ed25519); no cryptography of our own
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+getrandom = "0.2"
 
 [features]
 audit-root-profile = []

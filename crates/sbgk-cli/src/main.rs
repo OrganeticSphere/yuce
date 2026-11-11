@@ -12,9 +12,12 @@ use serde_json::{json, Value};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+#[path = "audit_index.rs"]
+mod audit_index;
 #[path = "audit_mcp.rs"]
 mod audit_mcp;
 #[path = "bridge.rs"]
@@ -88,6 +91,10 @@ const SWITCHES: &[&str] = &[
     "temporal-summary",
     "summary-companions",
     "concept-functions",
+    "self-contained",
+    "with-status",
+    "rebuild",
+    "check",
 ];
 
 /// The flags each command reads. `parse_args` takes any `--name value`, so a typo such as `--expct` or `--allow-tool` would
@@ -126,6 +133,9 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "evolution-pairs-per-card",
     "evolution-pairs-per-concept",
     "evolution-pairs-per-function",
+    "gap-pass",
+    "gap-profile",
+    "gap-units",
     "known-concepts",
     "link-both-sides",
     "listen",
@@ -147,6 +157,8 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "run-id",
     "section-bytes",
     "select",
+    "settings",
+    "signing-key",
     "stale-suspect",
     "subjects",
     "summary-companions",
@@ -167,7 +179,8 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
 fn positional_args(cmd: &str) -> usize {
     match cmd {
         "diff" => 2,
-        "update-doc" | "root" | "view" | "dump-nodes" | "dump-claims" | "node-table" | "timetravel" | "timetravel-all" | "cone" | "verify" | "tamper" => 1,
+        "update-doc" | "root" | "view" | "dump-nodes" | "dump-claims" | "node-table" | "timetravel" | "timetravel-all" | "cone" | "verify" | "tamper"
+        | "audit-read" => 1,
         _ => 0,
     }
 }
@@ -179,7 +192,13 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "mcp-serve" => &["allow-remote", "listen", "max-connections", "max-message-bytes", "targets", "token", "wal-path"],
         "mcp-bridge" => &["agent-id", "allow-shutdown", "allow-tools", "connect", "connect-timeout-ms", "tier", "token"],
         "audit-serve" => AUDIT_SERVE_FLAGS,
-        "audit-verify" => &["at-end", "expect", "wal"],
+        "audit-verify" => &["anchored-at", "at-end", "checkpoint", "expect", "key", "trusted-keys", "wal"],
+        "keygen" => &["name", "out"],
+        "audit-sign" => &["out", "signing-key", "wal"],
+        "audit-proof" => &["checkpoint", "out", "record", "seal", "self-contained", "wal", "with-status"],
+        "audit-proof-verify" => &["anchored-at", "expect-seal", "key", "proof", "trusted-keys"],
+        "audit-index" => &["check", "db", "rebuild", "wal"],
+        "audit-read" => &["doc-id", "end", "from", "limit", "pretty", "record", "since", "start", "to", "wal"],
         "update-doc" => &["doc-id", "file", "out", "pretty"],
         "root" | "dump-claims" | "verify" => &["pretty"],
         "dump-nodes" => &["ids-only", "pretty"],
@@ -204,10 +223,12 @@ struct Args {
     pos: Vec<String>,
     kv: HashMap<String, String>,
     sw: HashSet<String>,
+    /// The flags a settings file gave (`--settings`): those that start a run are not given again to a run resumed from the same file.
+    from_settings: HashSet<String>,
 }
 
 fn parse_args(raw: Vec<String>) -> Args {
-    let mut a = Args { pos: Vec::new(), kv: HashMap::new(), sw: HashSet::new() };
+    let mut a = Args { pos: Vec::new(), kv: HashMap::new(), sw: HashSet::new(), from_settings: HashSet::new() };
     let mut i = 0;
     while i < raw.len() {
         if let Some(name) = raw[i].strip_prefix("--") {
@@ -253,6 +274,67 @@ impl Args {
     fn sw(&self, k: &str) -> bool {
         self.sw.contains(k)
     }
+}
+
+/// The format of a settings file (SPEC_V02_STEP6_7 section 7).
+const SETTINGS_FORMAT: &str = "yuce-settings/1";
+
+/// The flags of `audit-serve` that name a file or a folder: in a settings file, a relative one is taken from the file's folder.
+const SETTINGS_PATHS: &[&str] = &[
+    "base-ontology",
+    "change-summary-documents",
+    "docs",
+    "evolution-document-order",
+    "gap-profile",
+    "manifest",
+    "questions",
+    "repo",
+    "select",
+    "signing-key",
+    "subjects",
+    "version-lineage",
+    "wal",
+    "zones",
+];
+
+/// `audit-serve --settings <file>` (SPEC_V02_STEP6_7 section 7): one JSON object `{"format": "yuce-settings/1", <flag>: <value>,
+/// ...}` in place of the flags of `audit-serve`. A value is text or a whole number, a switch `true`; a relative path is taken from
+/// the file's folder; a flag of the file given again on the command line is refused, so the run has one source. The settings of the
+/// run, and so `settings_hash` in its genesis, are what the flags make of them: the same as from the same flags given by hand.
+fn with_settings(mut a: Args) -> Args {
+    let Some(path) = a.kv.remove("settings") else { return a };
+    let v: Value = serde_json::from_slice(&read(&path)).unwrap_or_else(|e| fail(&format!("--settings {path}: not JSON: {e}")));
+    let object = v.as_object().unwrap_or_else(|| fail(&format!("--settings {path}: a JSON object of the flags of audit-serve")));
+    if object.get("format").and_then(Value::as_str) != Some(SETTINGS_FORMAT) {
+        fail(&format!("--settings {path}: \"format\" must be \"{SETTINGS_FORMAT}\""));
+    }
+    let known = known_flags("audit-serve").expect("audit-serve has flags");
+    let folder = Path::new(&path).parent().map(Path::to_path_buf).unwrap_or_default();
+    for (flag, value) in object.iter().filter(|(k, _)| k.as_str() != "format") {
+        if flag == "settings" || !known.contains(&flag.as_str()) {
+            fail(&format!("--settings {path}: audit-serve has no flag --{flag}"));
+        }
+        if a.kv.contains_key(flag) || a.sw.contains(flag) {
+            fail(&format!("--settings {path}: --{flag} is in the file and on the command line: give it once"));
+        }
+        if SWITCHES.contains(&flag.as_str()) {
+            if *value != Value::Bool(true) {
+                fail(&format!("--settings {path}: the switch \"{flag}\" is true, or left out"));
+            }
+            a.sw.insert(flag.clone());
+            a.from_settings.insert(flag.clone());
+            continue;
+        }
+        let text = match value {
+            Value::String(s) if !s.is_empty() => s.clone(),
+            Value::Number(n) if n.is_u64() => n.to_string(),
+            _ => fail(&format!("--settings {path}: \"{flag}\" is text or a whole number")),
+        };
+        let text = if SETTINGS_PATHS.contains(&flag.as_str()) && Path::new(&text).is_relative() { folder.join(&text).display().to_string() } else { text };
+        a.kv.insert(flag.clone(), text);
+        a.from_settings.insert(flag.clone());
+    }
+    a
 }
 
 fn fail(msg: &str) -> ! {
@@ -907,12 +989,28 @@ A deterministic evidence control kernel for AI agent teams.
 Audit server for a team of agents:
   audit-serve   the shared audit server (newline-delimited JSON-RPC over TCP): --manifest --repo --select --run-id, or
                 --docs <folder> [--select <list>] --run-id for your own UTF-8 text files, and --wal --subjects --questions
-                --listen; the measured v0.1 profile unless --profile custom.
+                --listen; the measured v0.1 profile for a team of three or more, --profile solo for one agent, --profile custom
+                to take every flag as given.
                 Started again on an existing --wal without --manifest or --docs, it resumes that run
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the
                 audit, engine and session roots, exit 1 if the journal is refused or the receipt names no state of it
+  keygen        a signing key for checkpoints: --name <name> --out <file>; writes the key to the file and prints its verifier key
+  audit-sign    signs the seals of a recorded 0.2 journal: --wal <run.wal> --signing-key <file> [--out <folder>]; C2SP checkpoints
+                (default folder <run.wal>.checkpoints); audit-verify --checkpoint <file> [--trusted-keys <file>] [--key <verifier>]
+                [--anchored-at YYYY-MM-DD] checks one with the journal; audit-serve --signing-key <file> signs every new seal
+  audit-proof   a quittance of one record and all it rests on, down to its quotes, under the signed checkpoint of a seal:
+                --wal <run.wal> --record <id> [--seal <n>] [--checkpoint <file>] [--self-contained] [--with-status] [--out <file>]
+  audit-proof-verify  checks a quittance alone, without the journal: --proof <file> [--trusted-keys <file>] [--key <verifier>]
+                [--expect-seal <seal hash>] [--anchored-at YYYY-MM-DD]; exit 1 if refused
+  audit-index   the SQLite index beside a journal, rebuilt from it at any time: --wal <run.wal> [--db <file>] (default
+                <run.wal>.index.sqlite); adds the rows of new frames to an index of the frames before them; --rebuild builds it
+                again; --check compares it with the journal row by row; exit 1 if refused or different
+  audit-read    the reading tools over a recorded journal, checked first as audit-verify checks it: audit-read <tool> --wal <run.wal>;
+                tools: status, dependents (--record <id> or --doc-id <id> [--start --end]), active-claims [--doc-id], diff --from <n>
+                [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood); --limit; a point <n> is a
+                number of frames, as a seal's log_size; exit 1 if the journal is refused
 
 Engine and container:
   apply         apply a JSONL stream: --ontology <file> --docs <dir> --stream <file> --out <container>
@@ -977,6 +1075,7 @@ pub fn main() {
             fail(&format!("unexpected argument {stray} for {cmd}: sbgk --help lists the commands"));
         }
     }
+    let a = with_settings(a);
     let out = match cmd.as_str() {
         "apply" => cmd_apply(&a),
         "serve" => {
@@ -997,6 +1096,30 @@ pub fn main() {
         }
         "audit-verify" => {
             audit_mcp::cmd_audit_verify(&a);
+            return;
+        }
+        "audit-read" => {
+            audit_mcp::cmd_audit_read(&a);
+            return;
+        }
+        "keygen" => {
+            audit_mcp::cmd_keygen(&a);
+            return;
+        }
+        "audit-sign" => {
+            audit_mcp::cmd_audit_sign(&a);
+            return;
+        }
+        "audit-proof" => {
+            audit_mcp::cmd_audit_proof(&a);
+            return;
+        }
+        "audit-proof-verify" => {
+            audit_mcp::cmd_audit_proof_verify(&a);
+            return;
+        }
+        "audit-index" => {
+            audit_index::cmd_audit_index(&a);
             return;
         }
         "update-doc" => cmd_update_doc(&a),
@@ -1071,6 +1194,12 @@ mod flag_tests {
             "mcp-bridge",
             "audit-serve",
             "audit-verify",
+            "audit-read",
+            "keygen",
+            "audit-sign",
+            "audit-proof",
+            "audit-proof-verify",
+            "audit-index",
             "update-doc",
             "root",
             "dump-claims",
@@ -1088,7 +1217,8 @@ mod flag_tests {
             "view",
         ];
         let all: Vec<&str> = commands.iter().flat_map(|c| known_flags(c).unwrap()).collect();
-        let sources = [include_str!("main.rs"), include_str!("audit_mcp.rs"), include_str!("bridge.rs"), include_str!("mcp.rs")];
+        let sources =
+            [include_str!("main.rs"), include_str!("audit_mcp.rs"), include_str!("audit_index.rs"), include_str!("bridge.rs"), include_str!("mcp.rs")];
         for flag in sources.iter().flat_map(|s| flags_read(s)) {
             assert!(all.contains(&flag.as_str()), "--{flag} is read by the code but no command lists it");
         }
@@ -1110,6 +1240,7 @@ mod flag_tests {
     fn each_command_lists_the_flags_of_its_own_function() {
         let main = include_str!("main.rs");
         let audit = include_str!("audit_mcp.rs");
+        let index = include_str!("audit_index.rs");
         for (command, src, function) in [
             ("audit-serve", audit, "graph_quality_args"),
             ("audit-serve", audit, "create_run"),
@@ -1130,6 +1261,12 @@ mod flag_tests {
             ("emit-batch-directives", main, "cmd_emit_batch"),
             ("frontier", main, "cmd_frontier"),
             ("audit-verify", audit, "cmd_audit_verify"),
+            ("audit-read", audit, "cmd_audit_read"),
+            ("keygen", audit, "cmd_keygen"),
+            ("audit-sign", audit, "cmd_audit_sign"),
+            ("audit-proof", audit, "cmd_audit_proof"),
+            ("audit-proof-verify", audit, "cmd_audit_proof_verify"),
+            ("audit-index", index, "cmd_audit_index"),
             ("audit-serve", audit, "cmd_audit_serve"),
         ] {
             let known = known_flags(command).unwrap();

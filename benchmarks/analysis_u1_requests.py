@@ -51,7 +51,8 @@ def read_wal(run: pathlib.Path) -> dict:
     """Records (16-hex id -> kind, directive, doc, quote), the accepted requests, task id -> request key, accepted link verdicts."""
     records, requests, task_key, verdicts = {}, {}, {}, []
     for line in wal_of(run).open(encoding="utf-8"):
-        p = json.loads(line).get("payload") or {}
+        frame = json.loads(line)
+        p = frame.get("payload") or frame.get("body") or {}  # 0.1 frames: payload; 0.2: body
         cmd, res = p.get("command") or {}, (p.get("outcome") or {}).get("result") or {}
         if cmd.get("kind") == "submit":
             for ln, rid in zip(cmd.get("lines") or [], res.get("accepted") or []):

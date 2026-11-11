@@ -249,7 +249,10 @@ pub fn prepare(manifest_bytes: &[u8], selected: &[(String, Vec<u8>)]) -> KResult
         }
         let (e, refs) = entries.get(p.as_str()).ok_or_else(|| bad("selected", "selected path is absent from the pinned manifest"))?;
         if markdown_extension(p) != Some(string(e, "extension")?) || string(e, "corpus_role")? != "markdown_document_candidate" {
-            return Err(bad("selected", "only Markdown document candidates may be selected; auxiliary and JSON entries are excluded"));
+            return Err(bad(
+                "selected",
+                format!("{p}: only Markdown document candidates may be selected from a manifest; for other text files start the run with --docs"),
+            ));
         }
         let hash = check_bytes(e, bytes)?;
         let id = document_id(repo, &commit, p, &hash);

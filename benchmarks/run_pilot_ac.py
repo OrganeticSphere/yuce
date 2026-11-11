@@ -771,6 +771,11 @@ def main() -> None:
                     help="run S1.2: one strong agent reads every report in one zone task of the kernel and hands in "
                          "its records, relations and answers in one answer; arm A takes the same answer without the kernel")
     ap.add_argument("--max-lines", type=int, help="the lines one answer of the kernel may hold (default: the kernel's)")
+    ap.add_argument("--gap-pass", type=int, default=0,
+                    help="0.2 gap pass: after the first readings the kernel hands out the units nothing was quoted from, at most this "
+                         "many packs (0: off)")
+    ap.add_argument("--gap-units", type=int, help="units per gap pack, 4..8 (default: the kernel's 8)")
+    ap.add_argument("--gap-profile", help="a JSON file of gap pass tiers and second-reader tiers (SPEC_V02_GAP_PASS section 4)")
     ap.add_argument("--section-bytes", type=int, default=P.SECTION_BYTES,
                     help="upper bound of a report section, the same for both arms and the kernel (registry R1a'': 3000 tested against 6000)")
     if closed is not None:
@@ -805,6 +810,9 @@ def main() -> None:
     if a.max_lines is not None and a.max_lines <= 0:
         sys.exit("--max-lines must be positive")
     P.MAX_LINES = a.max_lines
+    if a.gap_pass < 0 or (a.gap_units is not None and not 4 <= a.gap_units <= 8):
+        sys.exit("--gap-pass must be 0 (off) or positive; --gap-units 4..8")
+    P.GAP_PASS, P.GAP_UNITS, P.GAP_PROFILE = a.gap_pass, a.gap_units, a.gap_profile
     if a.strong_reader:
         if a.workers != 1:
             sys.exit("--strong-reader reads with one agent: give --workers 1")

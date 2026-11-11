@@ -34,10 +34,11 @@
 use super::mcp::{self, LineServer};
 use super::{fail, Args};
 use sbgk_core::audit::builder::{Builder, BuilderConfig, LINK_RELATIONS};
-use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, ResearchQuestion, TaskKind};
+use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, GapProfile, ResearchQuestion, TaskKind};
 use sbgk_core::audit::onto::AuditOntology;
-use sbgk_core::audit::state::{session_root_of, AuditState};
-use sbgk_core::audit::{AuditStore, ConceptId, LinkId, LinkStatus, RecordId};
+use sbgk_core::audit::sign::{self, NoteSigner, NoteVerifier};
+use sbgk_core::audit::state::{AuditState, GenesisSpec};
+use sbgk_core::audit::{proof, read, AuditStore, ConceptId, LinkId, LinkStatus, RecordId};
 use sbgk_core::hash::{from_hex, sha256, to_hex, Hash};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,6 +47,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const PROTOCOL: &str = "2025-06-18";
+/// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, and stay open after the
+/// run is closed.
+const READ_TOOLS: [&str; 4] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen"];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
 /// Longest `max_wait_ms` an `audit_acquire` can ask for.
@@ -89,6 +93,10 @@ impl Role {
                 "audit_link_status",
                 "audit_concept_status",
                 "audit_record",
+                "audit_dependents",
+                "audit_active_claims",
+                "audit_diff",
+                "audit_fallen",
                 "audit_revoke",
                 "audit_withdraw_text",
                 "audit_terminal_receipt",
@@ -260,6 +268,10 @@ struct Run {
     /// The owner closed the terminal run: the agents are told `DONE` and nothing more is accepted. Memory only, like the
     /// acknowledgements: a restarted server is open again.
     closed: bool,
+    /// The signing failures already told to the operator on stderr (Codex review of 904f1cdb, S4-05).
+    sign_failures_told: usize,
+    /// The questions whose `about` no document of the run holds (the architect, 11.11.2026).
+    about_unmatched: Vec<Value>,
 }
 
 /// Backpressure liveness (run 10A-17): when the graph builder's cursor has not moved for the stall time while records wait, the
@@ -478,7 +490,35 @@ fn tool_defs() -> Vec<Value> {
             "The owner's decision on a concept.",
             schema(json!({"concept": s("full concept id"), "status": {"type": "string", "enum": ["accepted", "retired"]}}), &["concept", "status"]),
         ),
-        t("audit_record", "One record with its basis and grounding (full or short @id).", schema(json!({"record": s("record id")}), &["record"])),
+        t(
+            "audit_record",
+            "One record with its basis and grounding (full or short @id), its row of the status projection, how many records rest on it, and, when it fell, its first causes. A withdrawn record's text is still shown: a withdrawal is not an erasure.",
+            schema(json!({"record": s("record id")}), &["record"]),
+        ),
+        t(
+            "audit_dependents",
+            "Every record that rests on a record or on the quotes of a document (in a byte range of its current version), directly or through others, by depth.",
+            schema(
+                json!({"record": s("record id"), "doc_id": s("document id, instead of a record"), "start": {"type": "integer"}, "end": {"type": "integer"},
+                        "limit": {"type": "integer"}}),
+                &[],
+            ),
+        ),
+        t(
+            "audit_active_claims",
+            "The claims that stand now; claims of equal text are one row, with the documents of the standing quotes under them.",
+            schema(json!({"doc_id": s("only claims with a standing quote of this document"), "limit": {"type": "integer"}}), &[]),
+        ),
+        t(
+            "audit_diff",
+            "What changed between two points of the journal (a point = a number of frames, as a seal's log_size): records added, records that fell or rose, texts withdrawn. Replays the journal up to the earlier point.",
+            schema(json!({"from": {"type": "integer"}, "to": {"type": "integer", "description": "default: now"}, "limit": {"type": "integer"}}), &["from"]),
+        ),
+        t(
+            "audit_fallen",
+            "The report of what fell: each fallen claim, relation or answer with the grounds that fell, the gone quotes (without their text), the quotes that stand (with their text), twins on other sources (without text) and what to reread. With since (the point a withdrawal answered), only what stood then.",
+            schema(json!({"since": {"type": "integer"}, "limit": {"type": "integer"}}), &[]),
+        ),
         t(
             "audit_revoke",
             "Withdraw an observation (its source no longer holds): its text closes in that document, every stored quote overlapping it goes with it, new ones are refused, and the answers resting on them are reopened.",
@@ -530,6 +570,10 @@ impl AuditServer {
             let backlog = r.paced_backlog(Instant::now(), self.now());
             let was_started = r.dispatch.ring_started();
             let mut out = r.dispatch.acquire_for(&r.state, &who.id, caught_up, backlog, who.kinds.as_deref(), self.now());
+            // a wait for a builder that no subject runs would last for ever: the answer says what it waits for
+            if out["status"] == "WAIT" && out["builder_caught_up"] == false && !self.subjects.iter().any(|s| s.role == Role::Builder) {
+                out["message"] = json!("waiting for the graph builder to catch up; --subjects names no graph builder: if no agent builds the graph, start the run with --build-scope none");
+            }
             // The wrapper also flushes pending expiry/recovery closures on WAIT, and drops any unpublished task on failure.
             let task = out["task_id"].as_str().unwrap_or("");
             if let Err(e) = r.dispatch.persist_change_lease(&mut r.state, task) {
@@ -571,7 +615,10 @@ impl AuditServer {
             }
         }
         // a closed run assigns and accepts nothing more; the owner still reads it
-        if g.closed && !matches!(name, "audit_status" | "audit_links" | "audit_record" | "audit_terminal_receipt" | "audit_close") {
+        if g.closed
+            && !matches!(name, "audit_status" | "audit_links" | "audit_record" | "audit_terminal_receipt" | "audit_close")
+            && !READ_TOOLS.contains(&name)
+        {
             let out = match name {
                 "audit_acquire" | "audit_next_card" => json!({"status": "DONE"}),
                 _ => json!({"status": "error", "code": "RUN_CLOSED", "message": "the owner closed the run: nothing more is accepted"}),
@@ -735,6 +782,7 @@ impl AuditServer {
                 if r.closed {
                     out["closed"] = json!(true);
                 }
+                out["projections"] = read::summary(&r.state);
                 let quality = r.state.graph_quality_metrics();
                 if !quality.is_null() {
                     out["graph_quality"] = quality;
@@ -774,18 +822,53 @@ impl AuditServer {
                 Ok(r) => record_json(&g.state, &r),
                 Err(e) => e,
             },
+            "audit_dependents" => match target_arg(&g.state, args) {
+                Ok(target) => read::dependents(&g.state, &target, limit_arg(args)),
+                Err(e) => e,
+            },
+            "audit_active_claims" => read::active_claims(&g.state, args.get("doc_id").and_then(Value::as_str), limit_arg(args)),
+            "audit_diff" => {
+                let now = g.state.entries().unwrap_or(0);
+                match points_arg(args, now) {
+                    Ok((from, to)) => match read::own_points(&mut g.state, &[from, to]) {
+                        Ok(at) => match (at.get(&from), at.get(&to)) {
+                            (Some(a), Some(b)) => read::diff(a, b, limit_arg(args)),
+                            _ => bad_arg(format!("the journal has {now} frames: give points from 1 to {now}")),
+                        },
+                        Err(e) => json!({"status": "error", "code": "REPLAY_FAILED", "error": e.to_json()}),
+                    },
+                    Err(e) => e,
+                }
+            }
+            "audit_fallen" => {
+                let now = g.state.entries().unwrap_or(0);
+                match args.get("since").map(|v| v.as_u64().map(|n| n as usize)) {
+                    None => read::fallen(&g.state, now, None, limit_arg(args)),
+                    Some(Some(since)) if (1..=now).contains(&since) => match read::own_points(&mut g.state, &[since]) {
+                        Ok(at) => read::fallen(&g.state, now, at.get(&since), limit_arg(args)),
+                        Err(e) => json!({"status": "error", "code": "REPLAY_FAILED", "error": e.to_json()}),
+                    },
+                    Some(_) => bad_arg(format!("'since' is a point of the journal: an integer from 1 to {now}")),
+                }
+            }
             "audit_revoke" => match record_arg(&g.state, args) {
-                Ok(r) => match g.state.revoke_observation(&who.id, &r) {
-                    Ok(also) => json!({"status": "REVOKED", "record": r.short(), "also_revoked": also}),
-                    Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
-                },
+                Ok(r) => {
+                    let before = withdrawal_point(&g.state);
+                    match g.state.revoke_observation(&who.id, &r) {
+                        Ok(also) => withdrawal_answer(&g.state, json!({"status": "REVOKED", "record": r.short(), "also_revoked": also}), before),
+                        Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+                    }
+                }
                 Err(e) => e,
             },
             "audit_withdraw_text" => match (args.get("doc_id").and_then(|x| x.as_str()), args.get("exact_quote").and_then(|x| x.as_str())) {
-                (Some(doc), Some(text)) => match g.state.withdraw_text(&who.id, doc, text) {
-                    Ok(also) => json!({"status": "REVOKED", "doc_id": doc, "also_revoked": also}),
-                    Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
-                },
+                (Some(doc), Some(text)) => {
+                    let before = withdrawal_point(&g.state);
+                    match g.state.withdraw_text(&who.id, doc, text) {
+                        Ok(also) => withdrawal_answer(&g.state, json!({"status": "REVOKED", "doc_id": doc, "also_revoked": also}), before),
+                        Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+                    }
+                }
                 _ => bad_arg("give 'doc_id' and 'exact_quote'"),
             },
             "audit_terminal_receipt" | "audit_close" => {
@@ -799,12 +882,22 @@ impl AuditServer {
                     return json!({"status":"error","code":"ATTESTATION_REFUSED","error":e});
                 }
                 let receipt = terminal(r);
-                // only a terminal run is closed; NOT_COMPLETE closes nothing
+                // only a terminal run is closed; NOT_COMPLETE closes nothing. The close is an entry of the journal (a seal, then
+                // `close`): a restart finds the run closed
                 if name == "audit_close" && receipt["status"] == "TERMINAL" {
+                    if let Err(e) = r.state.close_run() {
+                        return json!({"status":"error","code":"CLOSE_NOT_DURABLE","error":e.to_json()});
+                    }
                     r.closed = true;
                     // the agents are told DONE without the dispatcher: their waits end here (Codex review 987431f3, WAIT-01)
                     r.dispatch.stats.end_waits(now);
-                    json!({"status": "CLOSED", "audit_root": receipt["audit_root"], "wal_head": receipt["wal_head"]})
+                    // the roots after the seal and the close entry; the terminal receipt names the state just before them
+                    let mut closed =
+                        json!({"status": "CLOSED", "audit_root": to_hex(&r.state.audit_root()), "wal_head": r.state.wal_head().map(|h| to_hex(&h))});
+                    if let Some(failed) = signing_failures(&r.state) {
+                        closed["signing"] = failed;
+                    }
+                    closed
                 } else {
                     receipt
                 }
@@ -828,9 +921,15 @@ impl AuditServer {
             if let Err(error) = r.dispatch.persist_members(&mut r.state) {
                 out = json!({"status":"error","code":"RING_CHECKPOINT_REFUSED","error":error,"prior_reply":out});
             }
+            for (seal, error) in &r.state.sign_failures()[r.sign_failures_told..] {
+                eprintln!("{}", json!({"status": "warning", "message": SIGN_FAILURE_NOTE, "seal": seal, "error": error}));
+            }
+            r.sign_failures_told = r.state.sign_failures().len();
         }
         // calls that can free or create work wake the long polls
-        if !matches!(name, "audit_acquire" | "audit_status" | "audit_links" | "audit_record" | "audit_terminal_receipt" | "audit_next_card") {
+        if !matches!(name, "audit_acquire" | "audit_status" | "audit_links" | "audit_record" | "audit_terminal_receipt" | "audit_next_card")
+            && !READ_TOOLS.contains(&name)
+        {
             self.changed.notify_all();
         }
         drop(g);
@@ -855,6 +954,54 @@ fn record_arg(state: &AuditState, args: &Value) -> Result<RecordId, Value> {
     }
 }
 
+/// The target of `dependents`: a record, or a document with an optional byte range of its current version.
+fn target_arg<'a>(state: &AuditState, args: &'a Value) -> Result<read::Target<'a>, Value> {
+    match (args.get("record"), args.get("doc_id").and_then(Value::as_str)) {
+        (Some(_), None) => record_arg(state, args).map(read::Target::Record),
+        (None, Some(doc_id)) => {
+            let at = |k: &str| args.get(k).map(|v| v.as_u64().map(|n| n as usize).ok_or_else(|| bad_arg(format!("'{k}' is a byte offset"))));
+            match (at("start").transpose()?, at("end").transpose()?) {
+                (None, None) => Ok(read::Target::Document { doc_id, range: None }),
+                (Some(a), Some(z)) if a < z => Ok(read::Target::Document { doc_id, range: Some((a, z)) }),
+                _ => Err(bad_arg("a range needs both 'start' and 'end', start before end")),
+            }
+        }
+        _ => Err(bad_arg("give a 'record' or a 'doc_id'")),
+    }
+}
+
+fn limit_arg(args: &Value) -> Option<usize> {
+    args.get("limit").and_then(Value::as_u64).map(|n| n as usize)
+}
+
+/// The two points of a `diff`: `from`, and `to` (default: `now`), both from 1 to `now`, `from` before `to`.
+fn points_arg(args: &Value, now: usize) -> Result<(usize, usize), Value> {
+    let point = |k: &str| args.get(k).map(|v| v.as_u64().map(|n| n as usize).ok_or_else(|| bad_arg(format!("'{k}' is a point of the journal: an integer"))));
+    let from = point("from").transpose()?.ok_or_else(|| bad_arg("missing 'from'"))?;
+    let to = point("to").transpose()?.unwrap_or(now);
+    if from == 0 || from >= to || to > now {
+        return Err(bad_arg(format!("give points from 1 to {now}, 'from' before 'to'")));
+    }
+    Ok((from, to))
+}
+
+/// The point before a withdrawal and the state there, for its answer.
+fn withdrawal_point(state: &AuditState) -> (usize, read::Snapshot) {
+    let n = state.entries().unwrap_or(0);
+    (n, read::Snapshot::of(state, n))
+}
+
+/// A withdrawal's answer names the point before it and how many claims, relations and answers fell: the operator asks
+/// `audit_fallen` with that point for the report (SPEC_V02_STEP3 section 6).
+fn withdrawal_answer(state: &AuditState, mut out: Value, (since, before): (usize, read::Snapshot)) -> Value {
+    let report = read::fallen(state, state.entries().unwrap_or(0), Some(&before), Some(1));
+    out["since"] = json!(since);
+    out["fell"] = report["rows_fallen"].clone();
+    out["quotes_gone"] = report["quotes_gone"].clone();
+    out["report"] = json!(format!("audit_fallen with since={since}"));
+    out
+}
+
 fn record_json(state: &AuditState, id: &RecordId) -> Value {
     match state.record(id) {
         Some(r) => {
@@ -875,6 +1022,9 @@ fn record_json(state: &AuditState, id: &RecordId) -> Value {
             }
             if !warnings.is_empty() {
                 out["temporal_warnings"] = json!(warnings);
+            }
+            if let Value::Object(more) = read::record_projection(state, id) {
+                out.as_object_mut().expect("object").extend(more);
             }
             out
         }
@@ -1040,6 +1190,19 @@ impl Run {
     }
 }
 
+const SIGN_FAILURE_NOTE: &str =
+    "a seal is in the journal but its signed checkpoint was not written: sbgk audit-sign --wal <run.wal> --signing-key <file> writes it";
+
+/// The seals whose signed checkpoint could not be written (SPEC_V02_STEP4 section 3): the seal stands in the journal and `sbgk
+/// audit-sign` writes the checkpoint again (Codex review of 904f1cdb, S4-05). `None` when every seal was signed.
+fn signing_failures(state: &AuditState) -> Option<Value> {
+    let failed = state.sign_failures();
+    (!failed.is_empty()).then(|| {
+        json!({"seals_not_signed": failed.iter().map(|(seal, error)| json!({"seal": seal, "error": error})).collect::<Vec<_>>(),
+               "note": SIGN_FAILURE_NOTE})
+    })
+}
+
 fn status(r: &Run) -> Value {
     let caught_up = r.caught_up();
     let (proposed, accepted, rejected) = r.state.links().iter().fold((0, 0, 0), |(p, a, x), l| match l.status {
@@ -1064,6 +1227,12 @@ fn status(r: &Run) -> Value {
            "wal_head": r.state.wal_head().map(|h| to_hex(&h)), "transaction_sequence": r.state.transaction_sequence()});
     if r.dispatch.cfg.agent_attempts.is_some() {
         out["agent_failures"] = sbgk_core::audit::agent_failures::state(&r.state);
+    }
+    if let Some(failed) = signing_failures(&r.state) {
+        out["signing"] = failed;
+    }
+    if !r.about_unmatched.is_empty() {
+        out["about_unmatched"] = json!({"questions": r.about_unmatched, "note": ABOUT_UNMATCHED_NOTE});
     }
     if r.build_scope != "full" {
         out["build_scope"] = json!(r.build_scope);
@@ -1228,8 +1397,9 @@ fn run_base(a: &Args) -> Value {
     base
 }
 
-/// A new durable run on the text files of a folder. What was taken and what was left stays on the operator's screen, not in the
-/// journal: the journal holds the text of what was taken for good, so this is the moment to see it.
+/// A new run on the text files of a folder, prepared without its journal (`start_journal` writes the genesis once every flag is
+/// checked). What was taken and what was left stays on the operator's screen, not in the journal: the journal holds the text of
+/// what was taken for good, so this is the moment to see it.
 fn create_docs_run(a: &Args, folder: &str, wal: &Path) -> AuditState {
     if a.get("manifest").is_some() || a.get("repo").is_some() {
         fail("--docs starts a run on a folder, --manifest and --repo on a pinned corpus: give one of them");
@@ -1246,10 +1416,10 @@ fn create_docs_run(a: &Args, folder: &str, wal: &Path) -> AuditState {
     let names: Vec<&str> = taken.docs.iter().map(|(id, _)| id.as_str()).collect();
     let left: Vec<Value> = taken.skipped.iter().map(|(path, why)| json!({"path": path, "reason": why})).collect();
     eprintln!("{}", json!({"status": "docs", "folder": folder, "bytes": bytes, "taken": names, "skipped": left}));
-    AuditState::create_from_docs(wal, &run_base(a), &a.req("run-id"), taken.docs).unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())))
+    AuditState::prepare_from_docs(&run_base(a), &a.req("run-id"), taken.docs).unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())))
 }
 
-/// A new durable run from the corpus manifest and the selected report paths, or from a folder.
+/// A new run from the corpus manifest and the selected report paths, or from a folder, prepared without its journal.
 fn create_run(a: &Args, wal: &Path) -> AuditState {
     if let Some(folder) = a.get("docs") {
         return create_docs_run(a, folder, wal);
@@ -1267,7 +1437,7 @@ fn create_run(a: &Args, wal: &Path) -> AuditState {
         fail("--select lists no report paths");
     }
     let bytes = std::fs::read(&manifest).unwrap_or_else(|e| fail(&format!("cannot read --manifest {manifest}: {e}")));
-    AuditState::create_from_manifest(wal, &run_base(a), &a.req("run-id"), &bytes, &selected)
+    AuditState::prepare_from_manifest(&run_base(a), &a.req("run-id"), &bytes, &selected)
         .unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())))
 }
 
@@ -1385,7 +1555,9 @@ fn coverage_context(
     mode: CoverageMode,
 ) -> Value {
     let CoverageMode { ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope } = mode;
-    let mut context = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": section_bytes});
+    // the rule the sections are cut by: a run cut by another one is not taken up again (HDR-R01)
+    let mut context = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": section_bytes,
+                             "section_rule": sbgk_core::audit::directives::SECTION_RULE});
     // durable: a control run's WAL says what was left out, and it cannot be resumed as another kind of run
     if build_scope != "full" {
         context["build_scope"] = json!(build_scope);
@@ -1429,8 +1601,18 @@ fn coverage_context(
 
 /// Whether a journal can go on under these settings: read only, so a refused start leaves the journal as it was.
 fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, resumed: bool) -> Result<(), String> {
+    // a 0.2 journal names the hash of the canonical settings in its genesis; the checkpoint below still names what differs. A run the
+    // library started names the empty settings: nothing is pinned there, and the checkpoint decides as before 0.2
+    let unpinned = sbgk_core::audit::state::settings_hash(&json!({}));
+    let pinned =
+        state.genesis_meta().filter(|meta| meta.settings_hash != unpinned).map(|meta| meta.settings_hash == sbgk_core::audit::state::settings_hash(context));
+    if pinned == Some(false) && state.checkpoint(COVERAGE_CHECKPOINT).is_none() {
+        return Err(format!(
+            "cannot resume with these settings (--section-bytes {section_bytes} and the switches of --profile): the run was started with other settings; start it again with the --profile and flags it was created with"
+        ));
+    }
     if let Some(checkpoint) = state.checkpoint(COVERAGE_CHECKPOINT) {
-        return if checkpoint["context"] == *context {
+        return if checkpoint["context"] == *context && pinned != Some(false) {
             Ok(())
         } else {
             // name what differs: a run started with another --profile differs in its switches, not only in --section-bytes
@@ -1439,6 +1621,15 @@ fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, res
             let mut keys: Vec<&String> = stored.keys().chain(given.keys()).filter(|k| stored.get(*k) != given.get(*k)).collect();
             keys.sort();
             keys.dedup();
+            if stored.get("section_rule") != given.get("section_rule") {
+                // no flag brings the run back: its task keys number sections that this kernel cuts otherwise (HDR-R01)
+                return Err(format!(
+                    "cannot resume this run: its documents were cut into sections by another rule (section rule {} here, {} in the run: a `#` line \
+                     inside a fenced code block started a section before 0.2), and its section numbers would name other bytes now; start a new run",
+                    sbgk_core::audit::directives::SECTION_RULE,
+                    stored.get("section_rule").map_or("1".to_string(), Value::to_string)
+                ));
+            }
             Err(format!(
                 "cannot resume with --section-bytes {section_bytes}: the stored configuration differs in {keys:?}; start it again with the                  --profile and flags the run was created with"
             ))
@@ -1452,6 +1643,7 @@ fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, res
 
 /// Pins the settings of a new run; a run that has them stays as it is.
 fn bind_coverage(state: &mut AuditState, context: Value) -> Result<(), String> {
+    // a 0.2 journal also pins their hash in its genesis (`settings_hash`); the checkpoint keeps them readable on resume
     if state.checkpoint(COVERAGE_CHECKPOINT).is_some() {
         return Ok(());
     }
@@ -1465,20 +1657,23 @@ fn bind_coverage(state: &mut AuditState, context: Value) -> Result<(), String> {
 
 /// The measured v0.1 default ("download, run, get what was measured"): no graph builder, reading in circles
 /// with dynamic roles, stale suspects and the temporal summary with its companions. An explicit `--build-scope` still applies.
-/// `--profile custom` takes every flag as given, the behaviour before v0.1 (the benchmark runner and the tests pass it).
+/// `--profile custom` takes every flag as given, the behaviour before v0.1 (the benchmark runner and the tests pass it). `--profile solo`
+/// is v0.1 for one reading agent: no circles and no dynamic roles, which need a team of three.
 const V01_SWITCHES: [&str; 5] = ["dynamic-roles", "circles", "stale-suspect", "temporal-summary", "summary-companions"];
+const TEAM_SWITCHES: [&str; 2] = ["dynamic-roles", "circles"];
 
 fn with_profile(a: &Args) -> Args {
     let mut a = a.clone();
-    match a.get("profile").unwrap_or("v0.1") {
+    let chosen = a.get("profile").unwrap_or("v0.1").to_string();
+    match chosen.as_str() {
         "custom" => {}
-        "v0.1" => {
-            for k in V01_SWITCHES {
+        profile @ ("v0.1" | "solo") => {
+            for k in V01_SWITCHES.iter().filter(|k| profile == "v0.1" || !TEAM_SWITCHES.contains(k)) {
                 a.sw.insert(k.to_string());
             }
             a.kv.entry("build-scope".to_string()).or_insert_with(|| "none".to_string());
         }
-        other => fail(&format!("--profile must be v0.1 or custom, not '{other}'")),
+        other => fail(&format!("--profile must be v0.1, solo or custom, not '{other}'")),
     }
     a
 }
@@ -1512,7 +1707,11 @@ pub fn cmd_audit_verify(a: &Args) {
             hash
         };
         let audit = root("audit_root").unwrap_or_else(|| fail(&format!("{p} needs an audit_root")));
-        (audit, root("engine_root"), root("session_root"), root("wal_head"))
+        // what else a receipt says of its run: a field that does not hold is a receipt of another run, though its roots may match
+        let corpus = root("corpus_manifest_hash");
+        let run_id =
+            v.get("run_id").filter(|r| !r.is_null()).map(|r| r.as_str().map(str::to_string).unwrap_or_else(|| fail(&format!("{p}: run_id must be text"))));
+        (audit, root("engine_root"), root("session_root"), root("wal_head"), corpus, run_id)
     });
     let mut states: Vec<(usize, Hash, Hash, Hash)> = Vec::new();
     let (state, read) = match AuditState::verify(Path::new(&wal), &mut |n, audit, engine, head| states.push((n, audit, engine, head))) {
@@ -1523,6 +1722,7 @@ pub fn cmd_audit_verify(a: &Args) {
         }
     };
     let entries = states.last().map_or(0, |s| s.0);
+    let checkpoint = checkpoint_check(a, &wal);
     let mut out = json!({"status": "VERIFIED", "wal": wal, "wal_bytes": read.bytes, "wal_sha256": to_hex(&read.sha256),
                          "torn_tail_bytes": read.bytes - read.complete_bytes, "run_id": state.run_id(),
                          "corpus_manifest_hash": to_hex(&state.manifest_hash()), "entries": entries, "records": state.head(),
@@ -1532,22 +1732,33 @@ pub fn cmd_audit_verify(a: &Args) {
         out["sources"] = json!({"mode": "opaque", "documents": state.source_document_count(), "set_matches_manifest_hash": state.docs_set_matches(),
                                 "put_document_entries": read.document_puts});
     }
+    if let Some((verdict, refused)) = checkpoint {
+        out["checkpoint"] = verdict;
+        if refused {
+            out["status"] = json!("CHECKPOINT_REFUSED");
+            println!("{out}");
+            std::process::exit(1);
+        }
+    }
     // listed whatever the verdict: after a cut, a mismatch is just the case where these files matter
     let earlier = torn_files(&wal);
     if !earlier.is_empty() {
         out["torn_tail_files"] = json!(earlier);
         out["note"] = json!("a recovery cut bytes off this journal's end and kept them in these files; the latest receipt tells whether anything was lost");
     }
-    if let Some((audit, engine, session, head)) = expect {
+    if let Some((audit, engine, session, head, corpus, run_id)) = expect {
         let found = states.iter().find(|s| s.1 == audit && engine.is_none_or(|e| s.2 == e) && head.is_none_or(|h| s.3 == h));
         let at = found.map(|s| s.0);
         // bytes after the last complete entry may be the entry that followed the receipt: the state is the end only with none
         let at_end = at == Some(entries) && read.bytes == read.complete_bytes;
-        let session_ok = found.is_some_and(|s| session.is_none_or(|x| x == session_root_of(&s.2, &audit)));
+        let session_ok = found.is_some_and(|s| session.is_none_or(|x| x == state.session_root_for(&s.2, &audit)));
+        let corpus_ok = corpus.is_none_or(|c| c == state.manifest_hash());
+        let run_ok = run_id.as_deref().is_none_or(|r| r == state.run_id());
         out["expected"] = json!({"audit_root": to_hex(&audit), "engine_root": engine.map(|e| to_hex(&e)),
                                  "wal_head": head.map(|h| to_hex(&h)), "found_after_entries": at, "at_end": at_end,
-                                 "session_root_matches": session.map(|_| session_ok)});
-        if at.is_none() || !session_ok || (a.sw("at-end") && !at_end) {
+                                 "session_root_matches": session.map(|_| session_ok),
+                                 "corpus_manifest_hash_matches": corpus.map(|_| corpus_ok), "run_id_matches": run_id.as_ref().map(|_| run_ok)});
+        if at.is_none() || !session_ok || !corpus_ok || !run_ok || (a.sw("at-end") && !at_end) {
             out["status"] = json!("MISMATCH");
             println!("{out}");
             std::process::exit(1);
@@ -1566,6 +1777,234 @@ pub fn cmd_audit_verify(a: &Args) {
     println!("{out}");
 }
 
+/// A signed checkpoint checked with its journal (SPEC_V02_STEP4 section 5): the signature against the trusted keys, else against
+/// the verifier key given or the one beside the checkpoint (which pins nothing); then that it names a prefix of this journal ending
+/// with a seal of the kernel. `None` without `--checkpoint`; else the verdict and whether it refuses.
+fn checkpoint_check(a: &Args, wal: &str) -> Option<(Value, bool)> {
+    let path = a.get("checkpoint")?;
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("cannot read --checkpoint {path}: {e}")));
+    let trusted = trusted_keys_arg(a);
+    let untrusted = verifier_key_arg(a, std::fs::read_to_string(Path::new(path).with_file_name("verifier.key")).ok());
+    let anchored = a.get("anchored-at");
+    let note = match sign::open_note(&text) {
+        Ok(note) => note,
+        Err(e) => return Some((json!({"file": path, "error": e.to_json()}), true)),
+    };
+    let verdict = sign::signature_verdict(&note, trusted.as_deref().unwrap_or(&[]), untrusted.as_ref(), anchored);
+    let mut out = json!({"file": path, "signature": verdict.status, "key": verdict.key, "time": verdict.time});
+    let mut refused = verdict.refused;
+    let checked = match sign::parse_checkpoint(&note.body) {
+        Ok((origin, size, root)) => sign::check_against_journal(Path::new(wal), &origin, size, &root).map(|()| (origin, size, root)),
+        Err(e) => Err(e),
+    };
+    match checked {
+        Ok((origin, size, root)) => out["names"] = json!({"origin": origin, "frames": size, "log_root": to_hex(&root)}),
+        Err(e) => {
+            out["journal"] = e.to_json();
+            refused = true;
+        }
+    }
+    Some((out, refused))
+}
+
+/// `--trusted-keys <file>`: the keys whose signatures are pinned (SPEC_V02_STEP4 section 4).
+fn trusted_keys_arg(a: &Args) -> Option<Vec<sign::TrustedKey>> {
+    a.get("trusted-keys").map(|p| {
+        let t = std::fs::read_to_string(p).unwrap_or_else(|e| fail(&format!("cannot read --trusted-keys {p}: {e}")));
+        sign::parse_trusted_keys(&t).unwrap_or_else(|e| fail(&format!("--trusted-keys {p}: {}", e.to_json())))
+    })
+}
+
+/// `--key <file or text>`, else `fallback`: a verifier key that pins nothing.
+fn verifier_key_arg(a: &Args, fallback: Option<String>) -> Option<NoteVerifier> {
+    match a.get("key") {
+        Some(k) => Some(std::fs::read_to_string(k).unwrap_or_else(|_| k.to_string())),
+        None => fallback,
+    }
+    .map(|k| NoteVerifier::parse(&k).unwrap_or_else(|e| fail(&format!("verifier key: {}", e.to_json()))))
+}
+
+/// `sbgk keygen --name <name> --out <file>`: a new signing key for checkpoints, written to a file that must not exist yet and is never
+/// printed; the verifier key, to give to whoever checks, is printed.
+pub fn cmd_keygen(a: &Args) {
+    let (name, out) = (a.req("name"), a.req("out"));
+    let signer = NoteSigner::generate(&name).unwrap_or_else(|e| fail(&e.to_json().to_string()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // readable by its owner only, where the system has such modes (architect, 11.11.2026)
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&out).unwrap_or_else(|e| fail(&format!("cannot create {out}: {e}")));
+    std::io::Write::write_all(&mut file, format!("{}\n", signer.text()).as_bytes()).unwrap_or_else(|e| fail(&format!("cannot write {out}: {e}")));
+    println!(
+        "{}",
+        json!({"status": "KEY", "verifier_key": signer.verifier().text(), "signing_key_file": out,
+                          "note": "keep the key file to yourself: whoever holds it signs as you; give the verifier key to whoever checks"})
+    );
+}
+
+/// `sbgk audit-sign --wal <run.wal> --signing-key <file> [--out <folder>]`: a checkpoint for every seal of a recorded `/3` journal,
+/// checked first as `audit-verify` checks it (SPEC_V02_STEP4 section 3), and the verifier key beside them.
+pub fn cmd_audit_sign(a: &Args) {
+    let wal = a.req("wal");
+    let key = a.req("signing-key");
+    let signer = NoteSigner::parse(&std::fs::read_to_string(&key).unwrap_or_else(|e| fail(&format!("cannot read {key}: {e}"))))
+        .unwrap_or_else(|e| fail(&format!("--signing-key {key}: {}", e.to_json())));
+    let mut heads = Vec::new();
+    let (state, _) = match AuditState::verify_states(Path::new(&wal), &mut |_, _, head| heads.push(head)) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("{}", json!({"status": "REFUSED", "wal": wal, "error": e.to_json()}));
+            std::process::exit(1);
+        }
+    };
+    if state.seals().is_empty() {
+        println!("{}", json!({"status": "NO_SEALS", "wal": wal}));
+        std::process::exit(1);
+    }
+    let dir = PathBuf::from(a.get("out").map_or(format!("{wal}.checkpoints"), str::to_string));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|e| fail(&format!("cannot create {}: {e}", dir.display())));
+    let mut written = Vec::new();
+    for (n, seal_hash) in state.seals() {
+        let body = sign::checkpoint_body(&sign::origin(state.run_id()), &heads[..=*n]);
+        let file = dir.join(format!("seal-{n}.txt"));
+        std::fs::write(&file, signer.sign(&body).unwrap_or_else(|e| fail(&e.to_json().to_string())))
+            .unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", file.display())));
+        written.push(json!({"seal": n, "frames": n + 1, "seal_hash": to_hex(seal_hash), "file": file.display().to_string()}));
+    }
+    std::fs::write(dir.join("verifier.key"), format!("{}\n", signer.verifier().text()))
+        .unwrap_or_else(|e| fail(&format!("cannot write the verifier key: {e}")));
+    println!("{}", json!({"status": "SIGNED", "wal": wal, "checkpoints": written, "verifier_key": signer.verifier().text()}));
+}
+
+/// `sbgk audit-proof --wal <run.wal> --record <id> [--seal <n>] [--checkpoint <file>] [--self-contained] [--with-status] [--out <file>]`:
+/// a quittance of one record (SPEC_V02_STEP5 section 5), cut from a recorded journal, checked whole first, and the signed checkpoint
+/// of its seal (the journal's last seal by default), with the verifier key beside that checkpoint inside. Exit 1 when refused.
+pub fn cmd_audit_proof(a: &Args) {
+    let wal = a.req("wal");
+    let record = a.req("record");
+    let refused = |e: sbgk_core::error::KernelError| -> ! {
+        println!("{}", json!({"status": "REFUSED", "wal": wal, "error": e.to_json()}));
+        std::process::exit(1)
+    };
+    let seal = match a.get("seal") {
+        Some(v) => v.parse::<usize>().unwrap_or_else(|_| fail(&format!("--seal: a frame number, not '{v}'"))),
+        None => *proof::seals_of(Path::new(&wal)).unwrap_or_else(|e| refused(e)).last().unwrap_or_else(|| fail(&format!("{wal} has no seal"))),
+    };
+    let checkpoint = PathBuf::from(a.get("checkpoint").map_or(format!("{wal}.checkpoints/seal-{seal}.txt"), str::to_string));
+    let text = std::fs::read_to_string(&checkpoint)
+        .unwrap_or_else(|e| fail(&format!("cannot read the checkpoint {}: {e}; sbgk audit-sign writes the checkpoints of a journal", checkpoint.display())));
+    let key = std::fs::read_to_string(checkpoint.with_file_name("verifier.key")).ok();
+    let opts = proof::ProofOptions { self_contained: a.sw("self-contained"), with_status: a.sw("with-status") };
+    let made = proof::build(Path::new(&wal), &record, Some(seal), &text, key.as_deref(), opts).unwrap_or_else(|e| refused(e));
+    let target = made["target"].as_str().unwrap_or_default();
+    let out = PathBuf::from(a.get("out").map_or(format!("{wal}.proofs/{}-seal-{seal}.json", &target[..16.min(target.len())]), str::to_string));
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(&format!("cannot create {}: {e}", dir.display())));
+    }
+    let bytes = proof::to_file(&made);
+    std::fs::write(&out, &bytes).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", out.display())));
+    println!(
+        "{}",
+        json!({"status": "PROOF", "file": out.display().to_string(), "target": target, "seal": seal, "mode": made["mode"],
+               "records": made["records"].as_array().map_or(0, Vec::len), "bytes": bytes.len()})
+    );
+}
+
+/// `sbgk audit-proof-verify --proof <file> [--trusted-keys <file>] [--key <verifier>] [--expect-seal <hex>] [--anchored-at YYYY-MM-DD]`:
+/// the check of a quittance alone, without its journal and without a model (SPEC_V02_STEP5 section 6). Exit 1 when refused.
+pub fn cmd_audit_proof_verify(a: &Args) {
+    let file = a.req("proof");
+    let bytes = std::fs::read(&file).unwrap_or_else(|e| fail(&format!("cannot read {file}: {e}")));
+    let trusted = trusted_keys_arg(a);
+    let key = verifier_key_arg(a, None);
+    let expect = a.get("expect-seal").map(|h| from_hex(h).filter(|x| to_hex(x) == h).unwrap_or_else(|| fail("--expect-seal: 64 lowercase hex digits")));
+    let checked = match proof::parse(&bytes) {
+        Ok(p) => proof::verify(&p, trusted.as_deref().unwrap_or(&[]), key.as_ref(), a.get("anchored-at"), expect.as_ref()),
+        Err(e) => Err(e),
+    };
+    match checked {
+        Ok(mut out) => {
+            out["proof"] = json!(file);
+            println!("{out}");
+        }
+        Err(e) => {
+            println!("{}", json!({"status": "PROOF_REFUSED", "proof": file, "error": e.to_json()}));
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `sbgk audit-read <tool> --wal <run.wal>`: the reading tools of 0.2 over a recorded journal (SPEC_V02_STEP3). The journal is
+/// checked first, as `audit-verify` checks it, and a refused journal is not read (exit 1). The tools answer as the live server's
+/// do for the same state: `status`, `dependents` (`--record`, or `--doc-id` with an optional `--start`/`--end`), `active-claims`
+/// (`--doc-id`), `diff` (`--from`, `--to`), `record` (`--record`) and `fallen` (`--since`), each with `--limit`.
+pub fn cmd_audit_read(a: &Args) {
+    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record or fallen");
+    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen") {
+        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record or fallen"));
+    }
+    let wal = a.req("wal");
+    let number = |k: &str| a.get(k).map(|v| v.parse::<usize>().unwrap_or_else(|_| fail(&format!("--{k}: an integer, not '{v}'"))));
+    let (from, to, since, limit) = (number("from"), number("to"), number("since"), number("limit"));
+    let points: Vec<usize> = [from, to, since].into_iter().flatten().collect();
+    let (state, _, entries, at) = match read::journal_points(Path::new(&wal), &points) {
+        Ok(read) => read,
+        Err(e) => {
+            println!("{}", json!({"status": "REFUSED", "wal": wal, "error": e.to_json()}));
+            std::process::exit(1);
+        }
+    };
+    let snapshot = |n: usize| at.get(&n).unwrap_or_else(|| fail(&format!("the journal has {entries} frames: a point is from 1 to {entries}, not {n}")));
+    let out = match tool.as_str() {
+        "status" => read::status(&state, entries),
+        "dependents" => {
+            let mut args = json!({});
+            for (flag, key) in [("record", "record"), ("doc-id", "doc_id")] {
+                if let Some(v) = a.get(flag) {
+                    args[key] = json!(v);
+                }
+            }
+            for (flag, key) in [("start", "start"), ("end", "end")] {
+                if let Some(v) = number(flag) {
+                    args[key] = json!(v);
+                }
+            }
+            match target_arg(&state, &args) {
+                Ok(target) => read::dependents(&state, &target, limit),
+                Err(e) => fail(&e.to_string()),
+            }
+        }
+        "active-claims" => read::active_claims(&state, a.get("doc-id"), limit),
+        "diff" => {
+            let from = from.unwrap_or_else(|| fail("diff needs --from"));
+            if from >= to.unwrap_or(entries) {
+                fail("--from must come before --to");
+            }
+            // without --to, the end: the state the check replayed to
+            let end;
+            let to = match to {
+                Some(n) => snapshot(n),
+                None => {
+                    end = read::Snapshot::of(&state, entries);
+                    &end
+                }
+            };
+            read::diff(snapshot(from), to, limit)
+        }
+        "record" => match record_arg(&state, &json!({"record": a.req("record")})) {
+            Ok(id) => record_json(&state, &id),
+            Err(e) => fail(&e.to_string()),
+        },
+        _ => read::fallen(&state, entries, since.map(snapshot), limit),
+    };
+    if a.sw("pretty") {
+        println!("{}", serde_json::to_string_pretty(&out).expect("JSON"));
+    } else {
+        println!("{out}");
+    }
+}
+
 /// The files beside `wal` that keep the tails cut off it by a recovery.
 fn torn_files(wal: &str) -> Vec<String> {
     let path = Path::new(wal);
@@ -1579,9 +2018,58 @@ fn torn_files(wal: &str) -> Vec<String> {
     found
 }
 
+/// `audit-serve --profile solo` without `--subjects` (the architect, 11.11.2026: one agent on its own folder in one command): the
+/// server makes the subjects itself, one reading agent `agent` and the owner `owner`, each with a random token, in
+/// `<run.wal>.subjects.json` beside the journal, readable by its owner only where the system has such modes. A resumed run takes
+/// the same file. The tokens are never printed: the operator reads them from the file.
+fn solo_subjects(wal: &str) -> String {
+    let path = format!("{wal}.subjects.json");
+    if !Path::new(&path).exists() {
+        let token = || sign::random_hex(24).unwrap_or_else(|e| fail(&e.to_json().to_string()));
+        let subjects = json!({"subjects": [{"token": token(), "role": "swarm", "id": "agent"}, {"token": token(), "role": "owner", "id": "owner"}]});
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&path).unwrap_or_else(|e| fail(&format!("cannot create {path}: {e}")));
+        std::io::Write::write_all(&mut file, format!("{subjects:#}\n").as_bytes()).unwrap_or_else(|e| fail(&format!("cannot write {path}: {e}")));
+    }
+    eprintln!(
+        "{}",
+        json!({"status": "subjects", "file": path, "agent": "agent", "owner": "owner",
+               "note": "--profile solo without --subjects: one reading agent and the owner, with their tokens in this file; give each its own token (SBGK_MCP_TOKEN for mcp-bridge) and keep the file to yourself"})
+    );
+    path
+}
+
+const ABOUT_UNMATCHED_NOTE: &str =
+    "no document of the run holds any term of these questions' about: their answers would leave out what the documents call otherwise; give terms the documents use";
+
 pub fn cmd_audit_serve(a: &Args) {
     let profiled_default_scope = a.get("build-scope").is_none();
-    let profiled = with_profile(a);
+    let mut profiled = with_profile(a);
+    // a run resumed from the settings file it started with: the flags that started it are the journal's now, not read again
+    let resuming = profiled.get("wal").is_some_and(|w| std::fs::metadata(w).is_ok_and(|m| m.len() > 0));
+    if resuming {
+        let started: Vec<String> = ["base-ontology", "docs", "manifest", "repo", "run-id", "select"]
+            .iter()
+            .filter(|f| profiled.from_settings.contains(**f))
+            .map(|f| f.to_string())
+            .collect();
+        for flag in &started {
+            profiled.kv.remove(flag);
+        }
+        if !started.is_empty() {
+            eprintln!(
+                "{}",
+                json!({"status": "settings", "message": "resumed: the journal holds what these flags of the settings file started the run with", "not_read": started})
+            );
+        }
+    }
+    if profiled.get("subjects").is_none() && profiled.get("profile") == Some("solo") {
+        let made = solo_subjects(&profiled.req("wal"));
+        profiled.kv.insert("subjects".to_string(), made);
+    }
     let a = &profiled;
     let v01 = a.get("profile").unwrap_or("v0.1") == "v0.1";
     // Validate every numeric startup option before creating or opening a durable run.
@@ -1683,6 +2171,12 @@ pub fn cmd_audit_serve(a: &Args) {
     if dynamic_roles && subjects.iter().any(|s| s.role == Role::Builder && refiner.as_deref() != Some(s.id.as_str())) {
         fail("--dynamic-roles has no dedicated builder subject");
     }
+    // links proposed by agents and decided by the owner need no builder, but a summary waits for one: say it before anyone waits
+    if !no_builder(build_scope) && !dynamic_roles && !subjects.iter().any(|s| s.role == Role::Builder) {
+        let message =
+            format!("--build-scope {build_scope}: --subjects names no graph builder: if no agent builds the graph, start the run with --build-scope none");
+        eprintln!("{}", json!({"status": "warning", "message": message}));
+    }
     if circle_mode && !dynamic_roles {
         fail("--circles requires --dynamic-roles");
     }
@@ -1697,7 +2191,7 @@ pub fn cmd_audit_serve(a: &Args) {
     let circles = if circle_mode {
         let wave_sections = a.num("wave-sections", circle_readers.len());
         if v01 && circle_readers.len() < 3 {
-            fail("the v0.1 profile reads in circles and needs at least three EXTEND readers: pass --profile custom for a smaller team");
+            fail("the v0.1 profile reads in circles and needs at least three EXTEND readers: pass --profile solo for one agent, or --profile custom");
         }
         if wave_sections == 0 || circle_readers.len() < 3 {
             fail("--circles needs a positive wave and at least three EXTEND readers");
@@ -1713,7 +2207,11 @@ pub fn cmd_audit_serve(a: &Args) {
     } else {
         None
     };
-    let questions = parse_questions(&read_json(&a.req("questions"), "--questions")).unwrap_or_else(|e| fail(&format!("--questions: {e}")));
+    // a new run names its questions in its genesis; a resumed run takes them from there, and --questions, if given, must agree
+    let questions_file = a.get("questions").map(|p| read_json(p, "--questions"));
+    if let Some(file) = &questions_file {
+        parse_questions(file).unwrap_or_else(|e| fail(&format!("--questions: {e}")));
+    }
     // every flag that needs no journal is settled here: opening a journal cuts a torn tail, and a mistyped flag must not come after that
     if a.sw("ontology-revisions") && !circle_mode {
         fail("--ontology-revisions needs --circles and its authenticated roster");
@@ -1735,6 +2233,30 @@ pub fn cmd_audit_serve(a: &Args) {
     // the graph builder's typed requests (U1): off unless the run gives a positive bound
     let max_requests: usize = a.num("builder-requests", 0);
     let auto_reread_limit: usize = a.num("auto-rereads", 20);
+    // the gap pass (SPEC_V02_GAP_PASS): a profile file of tiers, its limit and pack size, or the two flags alone; off by default
+    let mut gap = a.get("gap-profile").map_or_else(GapProfile::default, |p| {
+        GapProfile::from_json(&read_json(p, "--gap-profile")).unwrap_or_else(|e| fail(&format!("--gap-profile: {}", e.to_json())))
+    });
+    if gap.units_per_task == 0 {
+        gap.units_per_task = 8;
+    }
+    if a.get("gap-pass").is_some() {
+        gap.limit = a.num("gap-pass", 0usize);
+    }
+    if a.get("gap-units").is_some() {
+        gap.units_per_task = a.num("gap-units", 8usize);
+        if !(4..=8).contains(&gap.units_per_task) {
+            fail("--gap-units must be 4..8");
+        }
+    }
+    // a second reader is never the first: without circles (which need three readers) a run of one reading agent could never close
+    // such a task (Codex review of 6d2c270, GAP-03)
+    if gap.limit > 0 && !gap.second_reader_tiers.is_empty() && !circle_mode {
+        let readers = subjects.iter().filter(|s| matches!(s.role, Role::Swarm) && s.kinds.as_ref().is_none_or(|k| k.contains(&TaskKind::Request))).count();
+        if readers < 2 {
+            fail("--gap-profile names second-reader tiers: the run needs at least two swarm agents that may read");
+        }
+    }
     // backpressure (run 10A-17): first readings wait for the graph builder's backlog; 0 keeps it off
     let backpressure_records: usize = a.num("backpressure-records", 0);
     let backpressure_per_task: usize = a.num("backpressure-per-task", DispatchConfig::default().backpressure_per_task);
@@ -1763,12 +2285,37 @@ pub fn cmd_audit_serve(a: &Args) {
         if a.get("base-ontology").is_some() {
             fail(&format!("{wal} already holds a run whose genesis fixed its base ontology: resume it without --base-ontology"));
         }
-        AuditState::open(Path::new(&wal)).unwrap_or_else(|e| fail(&format!("cannot resume {wal}: {}", e.to_json())))
-    } else {
-        let state = create_run(a, Path::new(&wal));
-        remember_new_journal(Path::new(&wal));
+        let state = AuditState::open(Path::new(&wal)).unwrap_or_else(|e| fail(&format!("cannot resume {wal}: {}", e.to_json())));
+        if !state.is_v3() {
+            fail(&format!(
+                "{wal} is a journal of the 0.1 format (sbgk-session-log/2): `sbgk audit-verify` still checks it, but this server writes only the 0.2 format; finish the run with a 0.1 release, or start a new run with another --wal"
+            ));
+        }
         state
+    } else {
+        if questions_file.is_none() {
+            fail("--questions is required to start a run: the genesis names the questions of the run");
+        }
+        create_run(a, Path::new(&wal))
     };
+    // a genesis that names no questions (a run the library started) takes them from --questions, as before 0.2
+    let named = state.genesis_meta().map(|meta| meta.questions.clone()).filter(|q| q.as_array().is_some_and(|q| !q.is_empty()));
+    let questions_value = match (named, &questions_file) {
+        (Some(named), Some(file)) if named != *file => {
+            fail(&format!("--questions differs from the questions {wal} was started with: resume it without --questions, or with the same file"))
+        }
+        (Some(named), _) => named,
+        (None, Some(file)) => file.clone(),
+        (None, None) => fail(&format!("{wal} names no questions in its genesis: give --questions")),
+    };
+    let questions = parse_questions(&questions_value).unwrap_or_else(|e| fail(&format!("questions of the run: {e}")));
+    // a question whose terms no document holds would lose its answer in silence (the architect, 11.11.2026): said at the start and in
+    // every status
+    let about_unmatched: Vec<Value> =
+        questions.iter().filter(|q| state.documents_mentioning(&q.about).is_empty()).map(|q| json!({"question": q.id, "about": q.about})).collect();
+    if !about_unmatched.is_empty() {
+        eprintln!("{}", json!({"status": "warning", "message": ABOUT_UNMATCHED_NOTE, "questions": about_unmatched}));
+    }
     // said here, before any check below can stop the start: the cut has happened, and a later message would be lost with it
     if let Some((bytes, kept)) = state.dropped_tail() {
         let message =
@@ -1791,7 +2338,7 @@ pub fn cmd_audit_serve(a: &Args) {
     // reading zones and own references (run S1.2): off unless given
     let zones = zones_file.map(|v| parse_zones(&v, &state).unwrap_or_else(|e| fail(&format!("--zones: {e}")))).unwrap_or_default();
     let own_refs = a.sw("own-refs");
-    let coverage = coverage_context(
+    let mut coverage = coverage_context(
         section_bytes,
         &zones,
         own_refs,
@@ -1807,6 +2354,10 @@ pub fn cmd_audit_serve(a: &Args) {
             build_scope,
         },
     );
+    // pinned with the run's settings: a run is not resumed with another gap pass (a run without one keeps its coverage bytes)
+    if gap.limit > 0 {
+        coverage["gap_pass"] = gap.settings();
+    }
     check_coverage(&state, &coverage, section_bytes, resume).unwrap_or_else(|error| fail(&error));
     // a concept type a question selects must be one of the run's ontology (Codex review d7d9a49, D11)
     let types = state.concept_types();
@@ -1814,6 +2365,11 @@ pub fn cmd_audit_serve(a: &Args) {
         if let Some(t) = q.concept_types.iter().find(|t| !types.contains(t)) {
             fail(&format!("--questions: question {}: unknown concept type '{t}' (one of {types:?})", q.id));
         }
+    }
+    if !resume {
+        let spec = GenesisSpec { questions: questions_value.clone(), settings: coverage.clone(), operator_meta: None };
+        state.start_journal(Path::new(&wal), &spec).unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())));
+        remember_new_journal(Path::new(&wal));
     }
     if build_scope == "versions" {
         let lineage = lineage_file
@@ -1842,6 +2398,7 @@ pub fn cmd_audit_serve(a: &Args) {
         relation_lines: build_scope == "full",
         relate_hints: build_scope == "hints",
         versions: build_scope == "versions",
+        gap: gap.clone(),
         ..DispatchConfig::default()
     };
     // the control profiles have no links by any path, a reader's relation record included (Codex review of 8023910, SCOPE-01)
@@ -1864,8 +2421,20 @@ pub fn cmd_audit_serve(a: &Args) {
         build_scope,
         acknowledgements: BTreeMap::new(),
         guard: StallGuard::new(stall, Instant::now()),
+        // a run closed before a restart stays closed (its journal holds the `close` entry)
         closed: false,
+        sign_failures_told: 0,
+        about_unmatched,
     };
+    run.closed = run.state.is_closed();
+    // a seal every 256 frames and at each phase of a circle; `audit_close` writes the last one
+    run.state.set_seal_every(Some(256));
+    // every new seal signed beside the journal (SPEC_V02_STEP4 section 3)
+    if let Some(path) = a.get("signing-key") {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("cannot read --signing-key {path}: {e}")));
+        let signer = NoteSigner::parse(&text).unwrap_or_else(|e| fail(&format!("--signing-key {path}: {}", e.to_json())));
+        run.state.set_checkpoint_signer(signer, PathBuf::from(format!("{wal}.checkpoints")));
+    }
     if circle_mode {
         run.prepare(0, unix_ms()).unwrap_or_else(|e| fail(&format!("cannot recover circles: {e}")));
     }
@@ -1914,6 +2483,39 @@ mod tests {
 
     fn subj(token: &str, role: &str, id: &str) -> Value {
         json!({"token": token, "role": role, "id": id})
+    }
+
+    #[test]
+    fn a_run_cut_into_sections_by_an_earlier_rule_is_not_resumed() {
+        // Codex recheck of baa75e5, HDR-R01: a resumed run took its section numbers of the earlier rule with the boundaries of the
+        // new one, and 70 bytes were never issued
+        let dir = std::env::temp_dir().join(format!("sbgk_section_rule_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = || CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "full",
+        };
+        let current = coverage_context(128, &[], false, None, None, mode());
+        assert_eq!(current["section_rule"], json!(sbgk_core::audit::directives::SECTION_RULE));
+        let mut earlier = current.clone();
+        earlier.as_object_mut().unwrap().remove("section_rule");
+        let run = |name: &str, settings: &Value| {
+            let docs = vec![("a.md".to_string(), b"# A\n\n~~~md\n# in code\n~~~\n\ntext\n".to_vec())];
+            let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), name, docs).unwrap();
+            let spec = GenesisSpec { questions: json!([]), settings: settings.clone(), operator_meta: None };
+            state.start_journal(&dir.join(format!("{name}.wal")), &spec).unwrap();
+            bind_coverage(&mut state, settings.clone()).unwrap();
+            state
+        };
+        let refused = check_coverage(&run("earlier", &earlier), &current, 128, true).unwrap_err();
+        assert!(refused.contains("another rule") && refused.contains("start a new run"), "{refused}");
+        assert_eq!(check_coverage(&run("same", &current), &current, 128, true), Ok(()), "a run of this rule goes on");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

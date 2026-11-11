@@ -47,7 +47,7 @@ impl Fixture {
     }
 
     fn refused(&self, args: &[String]) -> Output {
-        Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(args).output().unwrap()
+        Command::new(BIN).args(["audit-serve", "--profile", "custom", "--build-scope", "none", "--listen", "127.0.0.1:0"]).args(args).output().unwrap()
     }
 }
 
@@ -61,27 +61,53 @@ struct Server {
     child: Child,
     port: u16,
     note: String,
+    /// What the server warned of before it said what it took.
+    warnings: Vec<String>,
 }
 
 impl Server {
     /// Started as a new run, `note` holds the line that says what was taken; on a resume there is none.
     fn start(args: &[String], fresh: bool) -> Server {
+        Server::start_as(&["--profile", "custom", "--build-scope", "none"], args, fresh)
+    }
+
+    fn start_as(profile: &[&str], args: &[String], fresh: bool) -> Server {
         let mut child = Command::new(BIN)
-            .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"])
+            .arg("audit-serve")
+            .args(profile)
+            .args(["--listen", "127.0.0.1:0"])
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("start audit-serve");
-        let mut note = String::new();
+        // stderr is read to its end: a closed pipe would stop the server at its next line
+        let mut err = BufReader::new(child.stderr.take().unwrap());
+        let (mut note, mut warnings) = (String::new(), Vec::new());
         if fresh {
-            BufReader::new(child.stderr.take().unwrap()).read_line(&mut note).unwrap();
+            loop {
+                let mut line = String::new();
+                if err.read_line(&mut line).unwrap() == 0 {
+                    break;
+                }
+                if line.contains("\"status\":\"docs\"") {
+                    note = line;
+                    break;
+                }
+                warnings.push(line);
+            }
         }
+        std::thread::spawn(move || {
+            let mut sink = String::new();
+            while err.read_line(&mut sink).is_ok_and(|n| n > 0) {
+                sink.clear();
+            }
+        });
         let mut first = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut first).unwrap();
         let hello: Value = serde_json::from_str(&first).unwrap_or_else(|e| panic!("first line {first:?}: {e}; note {note}"));
         assert_eq!(hello["status"], "listening");
-        Server { port: hello["port"].as_u64().unwrap() as u16, child, note }
+        Server { port: hello["port"].as_u64().unwrap() as u16, child, note, warnings }
     }
 }
 
@@ -252,6 +278,111 @@ fn a_list_that_names_the_tokens_starts_nothing() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("own command"), "{out:?}");
     assert!(!Path::new(&fx.p("run.wal")).exists(), "no journal is left behind");
+}
+
+/// One reading agent and the owner, with the measured profile made for one agent: the run reads, answers and closes.
+#[test]
+fn one_agent_finishes_a_run_with_the_solo_profile() {
+    let fx = Fixture::new("solo", &[("contract.txt", CONTRACT.as_bytes()), ("policy.md", b"# Policy\n\nThe supplier reports each quarter.\n")]);
+    let server = Server::start_as(&["--profile", "solo"], &fx.fresh(), true);
+    let (mut worker, mut owner) = (Client::connect(server.port, WORKER), Client::connect(server.port, OWNER));
+    let mut kinds = std::collections::BTreeMap::new();
+    for _ in 0..60 {
+        let t = worker.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        let (p, kind) = (t["local_id_prefix"].as_str().unwrap().to_string(), t["kind"].as_str().unwrap().to_string());
+        *kinds.entry(kind.clone()).or_insert(0) += 1;
+        let prompt = t["prompt"].as_str().unwrap();
+        let lines = match kind.as_str() {
+            "EXTEND" => {
+                let a = prompt.find("<<<\n").unwrap() + 4;
+                let section = &prompt[a..a + prompt[a..].find("\n>>>").unwrap()];
+                let quote = section.lines().map(str::trim).find(|l| l.contains("supplier")).map(str::to_string);
+                match quote {
+                    Some(q) => json!([{"kind": "observe", "local_id": format!("{p}o1"), "doc_id": doc_of(&t), "exact_quote": q, "terms": ["supplier"]},
+                                      {"kind": "claim", "local_id": format!("{p}c1"), "text": q, "subject": "supplier", "stance": "reported", "based_on": [format!("{p}o1")]}]),
+                    None => json!([]),
+                }
+            }
+            "SUMMARIZE" => {
+                let shown: Vec<String> = prompt
+                    .lines()
+                    .filter_map(|l| l.trim_start().split_once(' '))
+                    .filter(|(id, rest)| id.starts_with('@') && rest.starts_with("observe"))
+                    .map(|(id, _)| id.to_string())
+                    .collect();
+                json!([{"kind": "claim", "local_id": format!("{p}c1"), "text": "The supplier delivers and reports.", "subject": "supplier", "stance": "reported", "based_on": shown},
+                       {"kind": "done", "local_id": format!("{p}d1"), "rq_id": "RQ1", "directive_id": t["task_id"], "outcome": "answered", "answer_ids": [format!("{p}c1")]}])
+            }
+            other => panic!("no work of kind {other} for one agent: {t}"),
+        };
+        let r = worker.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}));
+        assert_eq!(r["status"], "COMMITTED", "{kind}: {r}");
+    }
+    assert!(kinds.contains_key("EXTEND") && kinds.contains_key("SUMMARIZE"), "{kinds:?}");
+    let receipt = owner.call("audit_terminal_receipt", json!({}));
+    assert_eq!(receipt["status"], "TERMINAL", "{receipt}");
+    assert_eq!(receipt["outcomes"]["RQ1"]["outcome"], "answered", "{receipt}");
+}
+
+/// The measured profile needs a team, and the server says what to do with one agent.
+#[test]
+fn the_team_profile_points_one_agent_to_solo() {
+    let fx = Fixture::new("team", &[("a.txt", b"one supplier\n")]);
+    let out = Command::new(BIN).args(["audit-serve", "--listen", "127.0.0.1:0"]).args(fx.fresh()).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--profile solo"), "{out:?}");
+}
+
+/// A graph builder nobody runs left every agent waiting without a word: the wait now says what it waits for and how not to.
+#[test]
+fn a_wait_for_a_builder_nobody_runs_says_so() {
+    let fx = Fixture::new("builder", &[("a.txt", b"one supplier\n")]);
+    let server = Server::start_as(&["--profile", "custom"], &fx.fresh(), true);
+    assert!(server.warnings.iter().any(|w| w.contains("no graph builder")), "{:?}", server.warnings);
+    let mut worker = Client::connect(server.port, WORKER);
+    let mut said = Value::Null;
+    for _ in 0..10 {
+        let t = worker.call("audit_acquire", json!({"max_wait_ms": 100}));
+        if t["status"] == "WAIT" {
+            said = t;
+            break;
+        }
+        assert_eq!(t["kind"], "EXTEND", "records wait for the builder before any summary: {t}");
+        let p = t["local_id_prefix"].as_str().unwrap();
+        let lines = json!([{"kind": "observe", "local_id": format!("{p}o1"), "doc_id": doc_of(&t), "exact_quote": "one supplier", "terms": ["supplier"]},
+                           {"kind": "claim", "local_id": format!("{p}c1"), "text": "There is one supplier.", "subject": "supplier", "stance": "reported", "based_on": [format!("{p}o1")]}]);
+        assert_eq!(worker.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}))["status"], "COMMITTED", "{t}");
+    }
+    assert!(said["message"].as_str().is_some_and(|m| m.contains("--build-scope none")), "{said}");
+}
+
+/// A receipt names its run and its corpus as well as its roots, and each of them has to hold.
+#[test]
+fn a_receipt_of_another_corpus_or_run_is_a_mismatch() {
+    let fx = Fixture::new("receipt", &[("a.txt", b"one supplier\n")]);
+    let report = start_and_stop(&fx);
+    let mut receipt = json!({"audit_root": report["audit_root"], "engine_root": report["engine_root"], "wal_head": report["wal_head"],
+                             "corpus_manifest_hash": report["corpus_manifest_hash"], "run_id": "docs-run"});
+    let check = |receipt: &Value| {
+        std::fs::write(fx.p("receipt.json"), receipt.to_string()).unwrap();
+        let out = Command::new(BIN).args(["audit-verify", "--wal", &fx.p("run.wal"), "--expect", &fx.p("receipt.json")]).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap())
+    };
+    let (code, ok) = check(&receipt);
+    assert_eq!((code, ok["status"].as_str()), (Some(0), Some("VERIFIED")), "{ok}");
+    receipt["corpus_manifest_hash"] = json!("0".repeat(64));
+    let (code, other) = check(&receipt);
+    assert_eq!((code, other["status"].as_str()), (Some(1), Some("MISMATCH")), "{other}");
+    assert_eq!(other["expected"]["corpus_manifest_hash_matches"], false);
+    receipt["corpus_manifest_hash"] = report["corpus_manifest_hash"].clone();
+    receipt["run_id"] = json!("another-run");
+    let (code, other) = check(&receipt);
+    assert_eq!((code, other["expected"]["run_id_matches"].as_bool()), (Some(1), Some(false)), "{other}");
 }
 
 #[test]

@@ -6,7 +6,7 @@
 //! The explicit submission/checkpoint APIs let it keep receipts independently of ephemeral leases and cards.
 
 use super::onto::AuditOntology;
-use super::persistence::AuditJournal;
+use super::persistence::{AuditJournal, FrameFormat};
 use super::records;
 use super::*;
 use crate::arena::{find_all, Occurrence};
@@ -26,6 +26,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 #[path = "root_cache.rs"]
 mod root_cache;
+#[path = "state_root.rs"]
+mod state_root;
 
 #[path = "attestation.rs"]
 mod attestation;
@@ -43,6 +45,57 @@ mod versions;
 /// replay as it was recorded.
 const GENESIS_FORMAT: &str = "r2r-audit-genesis/2";
 const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
+/// Format 3 (0.2, SPEC_V02_STEP2 section 4): `/3` frames, the `r2r-state-root/2` root, the rules of format 2, and a strict list of
+/// fields that names the rules, the formats of the root and the seal, the questions and the hash of the settings.
+const GENESIS_FORMAT_V3: &str = "r2r-audit-genesis/3";
+pub const RULES_VERSION: &str = "r2r-audit-rules/3";
+const SEAL_FORMAT: &str = "r2r-seal/2";
+const GENESIS_V3_KEYS: [&str; 15] = [
+    "audit_root",
+    "base_ontology",
+    "engine_container_hex",
+    "engine_root",
+    "format",
+    "manifest_hash",
+    "operator_meta",
+    "questions",
+    "rules_version",
+    "run_id",
+    "seal_format",
+    "settings_hash",
+    "source_documents",
+    "source_mode",
+    "state_root_format",
+];
+const MAX_OPERATOR_META_BYTES: usize = 4096;
+
+/// What a new `/3` journal names in its genesis besides its sources: the questions of the run, the canonical settings it runs
+/// under (hashed, `settings_hash`), and an object of the operator's that the kernel never reads.
+#[derive(Clone, Debug)]
+pub struct GenesisSpec {
+    pub questions: Value,
+    pub settings: Value,
+    pub operator_meta: Option<Value>,
+}
+
+impl Default for GenesisSpec {
+    fn default() -> Self {
+        Self { questions: json!([]), settings: json!({}), operator_meta: None }
+    }
+}
+
+/// `H("R2R-SETTINGS/2", JCS(settings))`.
+pub fn settings_hash(settings: &Value) -> Hash {
+    sha256_parts(&[b"R2R-SETTINGS/2\0", to_jcs(settings).as_bytes()])
+}
+
+/// What a `/3` genesis named, kept for the server: the questions, the settings hash, the operator's object.
+#[derive(Clone, Debug)]
+pub struct GenesisMeta {
+    pub questions: Value,
+    pub settings_hash: Hash,
+    pub operator_meta: Option<Value>,
+}
 pub const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
 /// The longest name of a supplied document: the keys of its tasks hold the name and have the limit of any identifier, so a longer name
 /// could be read and its reading never closed.
@@ -102,12 +155,54 @@ fn identifier(s: &str, key: &str) -> KResult<()> {
     Ok(())
 }
 
+/// Whether a committed command changed a circle's phase: the dispatcher's `audit:circles` checkpoint, accepted (Codex recheck of
+/// db57a93: a refused one is no boundary). One rule for the write and for the replay, on the journaled outcome.
+fn phase_changed(command: &Value, outcome: &Value) -> bool {
+    let result = &outcome["result"];
+    (command["checkpoint"]["key"] == "audit:circles" && result["checkpointed"] == true)
+        || (command["kind"] == "checkpoint" && command["key"] == "audit:circles" && result["checkpoint"] == "audit:circles")
+}
+
+/// The kernel's own ids in a `/3` journal (Codex review of 43447f4, S2-02): `seal-<n>` is the seal of the first n frames and
+/// nothing else, and `audit-close` the close. No other command takes them first and turns the kernel's own frame into a refusal.
+/// A seal and a close are the kernel's alone, under any id: a frame of another actor with one would be a seal or a close nobody
+/// counts (GAP-14 of the independent verifier).
+fn kernel_id(actor: &str, id: &str, command: &Value) -> KResult<()> {
+    let kind = command["kind"].as_str().unwrap_or("");
+    if actor != "kernel" {
+        if kind == "seal" || kind == "close" {
+            return Err(bad("actor", "a seal and a close are the kernel's: no other actor writes one"));
+        }
+        return Ok(());
+    }
+    if id.starts_with("seal-") || kind == "seal" {
+        let own = command["seal"]["log_size"].as_u64().map(|n| format!("seal-{n}"));
+        if kind != "seal" || own.as_deref() != Some(id) {
+            return Err(bad("submission_id", "the ids seal-<n> belong to the kernel's seal of the first n frames"));
+        }
+    }
+    if (id == "audit-close") != (kind == "close") {
+        return Err(bad("submission_id", "the id audit-close belongs to the kernel's close, and the close to it"));
+    }
+    Ok(())
+}
+
 fn strings(v: &Value, key: &str) -> KResult<Vec<String>> {
     let values = v.get(key).and_then(Value::as_array).ok_or_else(|| bad(key, "expected an array"))?;
     if values.len() > MAX_REFS {
         return Err(bad(key, "too many references"));
     }
     values.iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| bad(key, "all entries must be strings"))).collect()
+}
+
+/// A hash the kernel wrote into a journal: in a `/3` journal 64 lowercase hex digits and no other spelling (SPEC_V02_STEP2
+/// section 1), as the journals of the first formats also took capitals.
+fn kernel_hash(v: &Value, key: &str, v3: bool) -> KResult<Hash> {
+    let h = hash_field(v, key)?;
+    if v3 && v[key] != json!(to_hex(&h)) {
+        return Err(bad(key, "a hash of a 0.2 journal is 64 lowercase hex digits"));
+    }
+    Ok(h)
 }
 
 fn hash_field(v: &Value, key: &str) -> KResult<Hash> {
@@ -235,6 +330,12 @@ struct Data {
     withdrawal_closes_bytes: bool,
     /// The text withdrawn under that rule, by document.
     withdrawn: BTreeMap<String, BTreeSet<Vec<u8>>>,
+    /// Why each quote that went went, written once, by the command that revoked its evidence (SPEC_V02_STEP3 section 6): a later
+    /// version of the document or a later withdrawal nearby never rewrites it (Codex review of 2c6864f, S3-01, S3-02). A replay of
+    /// the commands writes it again; it enters no root, no frame and no projection.
+    fates: BTreeMap<RecordId, Value>,
+    /// The run was closed by a `close` entry of a `/3` journal (`audit_close`): it stays closed after a restart.
+    closed: bool,
 }
 
 struct Core {
@@ -242,6 +343,8 @@ struct Core {
     engine_root: Hash,
     data: Data,
     root_cache: Mutex<root_cache::Cache>,
+    /// The `r2r-state-root/2` tree of a `/3` journal; `None` for a journal of the first formats, whose root is `/1`.
+    state_tree: Mutex<Option<state_root::StateTree>>,
     /// Set while `replay_in_place` runs a command: no step of it keeps a copy to go back to. Never set on a fork.
     in_place: bool,
 }
@@ -255,8 +358,57 @@ impl Core {
             engine_root: self.engine_root,
             data: self.data.clone(),
             root_cache: Mutex::new(self.cache().clone()),
+            state_tree: Mutex::new(self.state_tree.lock().expect("state tree poisoned").clone()),
             in_place: false,
         })
+    }
+
+    /// The keys a command changes, for the `/2` root; `None` for a journal of the first formats.
+    fn dirty(&mut self) -> Option<&mut state_root::Dirty> {
+        self.state_tree.get_mut().expect("state tree poisoned").as_mut().map(|t| &mut t.dirty)
+    }
+
+    /// The status projection, one row per record in record order (`[id, kind, grounded, answer_support, fallen_by]`, `fallen_by` the
+    /// sorted grounds that no longer stand), and the dependency projection, the sorted pairs `[record, ground]` of `based_on` and of
+    /// relation ends, each hashed in its own domain. Complete as to the kernel's rule, not as to the world: a dependency an agent
+    /// did not declare is in neither.
+    fn projection_hashes(&self) -> (Hash, Hash) {
+        let (status, pairs) = self.projection_rows();
+        projection_hashes_of(&status, &pairs)
+    }
+
+    /// The rows of the two projections. `fallen_by` names the direct grounds that no longer stand (for a done that rests on a claim
+    /// on a withdrawn quote, the claim, not the quote): the first cause is found by following `fallen_by` down to a withdrawn
+    /// observation (Codex review of 43447f4, S2-03; SPEC_V02_STEP2 section 6).
+    fn projection_rows(&self) -> (Vec<Value>, Vec<Value>) {
+        let support = self.support_flags();
+        let stands = |id: &RecordId| support.get(id).is_some_and(|v| v.0);
+        let mut status = Vec::with_capacity(self.data.records.len());
+        let mut pairs = BTreeSet::new();
+        for r in &self.data.records {
+            let (grounded, established) = support.get(&r.id).copied().unwrap_or((false, false));
+            let mut grounds = r.based_on.clone();
+            if let Some((a, _, b)) = &r.ends {
+                grounds.extend([*a, *b]);
+            }
+            let mut fallen: Vec<String> = grounds.iter().filter(|g| !stands(g)).map(|g| to_hex(&g.0)).collect();
+            fallen.sort();
+            fallen.dedup();
+            status.push(json!([to_hex(&r.id.0), r.kind.name(), grounded, established, fallen]));
+            for g in grounds {
+                pairs.insert((to_hex(&r.id.0), to_hex(&g.0)));
+            }
+        }
+        let pairs: Vec<Value> = pairs.into_iter().map(|(a, b)| json!([a, b])).collect();
+        (status, pairs)
+    }
+
+    /// What a command begins with for both roots: the `/1` cache drops what it may change, the `/2` tree marks the ontology.
+    fn begin_roots(&mut self, command: &Value) {
+        self.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+        if let Some(tree) = self.state_tree.get_mut().expect("state tree poisoned").as_mut() {
+            tree.begin(command);
+        }
     }
 
     /// The session of `fork` alone: an observation binds its evidence on a staged engine and keeps it only when the record is
@@ -280,7 +432,7 @@ impl Core {
     /// state with the failure's receipt. This state is not changed.
     fn stage(&self, actor: &str, id: &str, command: &Value) -> KResult<(Self, Outcome)> {
         let mut next = self.fork()?;
-        next.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+        next.begin_roots(command);
         // a batch, the store's form of every builder operation, rolls a refused first operation back to this state: a successful
         // operation then costs one copy of the state, not two (02.11.2026, Argon's review of the builder card transaction)
         let base = Some(self);
@@ -308,7 +460,7 @@ impl Core {
     /// other than the recorded one: the caller refuses the journal as it refuses any divergence, and nothing reads the half-changed
     /// state after `seal` has written its receipt into it.
     fn replay_in_place(&mut self, actor: &str, id: &str, command: &Value) -> Outcome {
-        self.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+        self.begin_roots(command);
         self.session.reset_transients();
         self.in_place = true;
         let executed = if command["kind"] == "batch" { self.batch(actor, command, None) } else { self.execute(actor, command) };
@@ -322,6 +474,9 @@ impl Core {
     fn seal(&mut self, actor: &str, id: &str, command: &Value, outcome: &Outcome) {
         self.engine_root = self.session.engine.root();
         self.data.receipts.insert((actor.into(), id.into()), Receipt { request_hash: request_hash(actor, command), outcome: outcome.clone() });
+        if let Some(d) = self.dirty() {
+            d.receipts.insert((actor.into(), id.into()));
+        }
         self.root_cache.get_mut().expect("audit root cache poisoned").finish();
     }
 
@@ -670,6 +825,10 @@ impl Core {
             ends,
             body,
         });
+        if let Some(d) = self.dirty() {
+            d.locals.insert(local_key.clone());
+            d.ordinals.insert(ordinal_key.clone());
+        }
         self.data.locals.insert(local_key, id);
         self.data.task_ordinals.insert(ordinal_key, ordinal);
         Ok(id)
@@ -756,6 +915,9 @@ impl Core {
         }
         let link = LinkView { id, from: *from, rel: rel.into(), to: *to, status: LinkStatus::Proposed, by: by.into(), basis: basis.to_vec() };
         self.data.links.insert(id, link.clone());
+        if let Some(d) = self.dirty() {
+            d.links.insert(id);
+        }
         Ok(link)
     }
 }
@@ -801,6 +963,25 @@ pub struct AuditState {
     // The control profiles `--build-scope concepts|none`: no link between records is created by any path.
     // A run policy set by the server from its bound coverage configuration; not part of the audit root or WAL format.
     links_off: bool,
+    /// What the genesis of a `/3` journal named besides its sources; `None` for a journal of the first formats.
+    genesis: Option<GenesisMeta>,
+    /// The base ontology of a run prepared without a journal yet (`prepare_from_docs`, `prepare_from_manifest`), for its genesis.
+    pending_base: Option<Value>,
+    /// The hash of every frame of a `/3` journal, genesis first: a seal names the log tree over them.
+    frames: Vec<Hash>,
+    /// The frames up to and with the last seal (0: none yet; the genesis counts then), and the interval of automatic seals
+    /// (`set_seal_every`): a seal is due once `k` frames follow the last one.
+    sealed_at: usize,
+    seal_every: Option<usize>,
+    /// A seal was due and not written (its commit failed, or a restart came between a circle's phase change and its seal): the
+    /// next command writes it. Never part of a root or of a frame (Codex review of 43447f4, S2-02).
+    seal_pending: bool,
+    /// The seals in the journal so far: the frames each names (`log_size`) and its hash, for the reading tools (SPEC_V02_STEP3).
+    /// Read from the journal, never part of a root.
+    seals: Vec<(usize, Hash)>,
+    /// The key that signs each new seal and the folder its checkpoints go to (SPEC_V02_STEP4), and the seals left unsigned.
+    signer: Option<(super::sign::NoteSigner, PathBuf)>,
+    sign_failures: Vec<(usize, String)>,
 }
 
 /// What `AuditState::verify` read: the bytes (a torn tail included), the complete frames among them, their SHA-256 and the
@@ -827,9 +1008,64 @@ fn document_puts(command: &Value, result: &Value) -> usize {
     }
 }
 
-/// The session root that binds an engine root and an audit root (the `session_root` of a state and of a terminal receipt).
+/// The hashes of the two projections' rows, each in its own domain (SPEC_V02_STEP2 section 6).
+fn projection_hashes_of(status: &[Value], pairs: &[Value]) -> (Hash, Hash) {
+    (sha256_parts(&[b"R2R-PROJ-STATUS/2\0", to_jcs(&json!(status)).as_bytes()]), sha256_parts(&[b"R2R-PROJ-DEPS/2\0", to_jcs(&json!(pairs)).as_bytes()]))
+}
+
+/// The session root that binds an engine root and an audit root (the `session_root` of a state and of a terminal receipt) in a
+/// journal of the first formats.
 pub fn session_root_of(engine_root: &Hash, audit_root: &Hash) -> Hash {
     sha256_parts(&[b"R2R-AUDIT-SESSION/1", engine_root, audit_root])
+}
+
+/// The session root of a `/3` journal, whose audit root is `r2r-state-root/2`.
+pub fn session_root_v2(engine_root: &Hash, audit_root: &Hash) -> Hash {
+    sha256_parts(&[b"R2R-AUDIT-SESSION/2\0", engine_root, audit_root])
+}
+
+const SEAL_KEYS: [&str; 8] = ["audit_root", "engine_root", "format", "log_root", "log_size", "projections", "run_id", "wal_head"];
+
+/// `H("R2R-SEAL/2", JCS(P))`: the hash a signature and the third line of a `tlog-checkpoint` will name (step 4).
+pub fn seal_hash(seal: &Value) -> Hash {
+    sha256_parts(&[b"R2R-SEAL/2\0", to_jcs(seal).as_bytes()])
+}
+
+/// The part of a seal only the journal knows: it names the frames before it, their log tree and the last of them.
+fn check_seal_log(seal: &Value, frames: &[Hash]) -> KResult<()> {
+    let size = seal["log_size"].as_u64();
+    if size != Some(frames.len() as u64)
+        || seal["wal_head"] != json!(to_hex(frames.last().expect("the genesis frame")))
+        || seal["log_root"] != json!(to_hex(&super::trees::log_root(frames)))
+    {
+        return Err(bad("seal", "a seal names the frames before it: their number, their log tree and the last of them"));
+    }
+    Ok(())
+}
+
+/// The checks of a `/3` genesis beyond the fields both formats share: the exact list of fields, the formats and rules it names,
+/// the questions, the settings hash and the size of the operator's object. Returns what it named.
+fn genesis_v3_meta(genesis: &Value) -> KResult<GenesisMeta> {
+    let object = genesis.as_object().ok_or_else(|| bad("wal", "the genesis must be an object"))?;
+    let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    if keys != GENESIS_V3_KEYS {
+        return Err(bad("wal", "a r2r-audit-genesis/3 names exactly its fields; this one has missing or unknown fields"));
+    }
+    for (key, want) in [("rules_version", RULES_VERSION), ("state_root_format", state_root::ROOT_FORMAT), ("seal_format", SEAL_FORMAT)] {
+        if genesis[key] != want {
+            return Err(bad(key, format!("this kernel replays {want}; the journal names another")));
+        }
+    }
+    if !genesis["questions"].is_array() {
+        return Err(bad("questions", "the genesis names the questions of the run as an array"));
+    }
+    let operator_meta = match &genesis["operator_meta"] {
+        Value::Null => None,
+        meta @ Value::Object(_) if to_jcs(meta).len() <= MAX_OPERATOR_META_BYTES => Some(meta.clone()),
+        _ => return Err(bad("operator_meta", format!("operator_meta is an object of at most {MAX_OPERATOR_META_BYTES} bytes, or null"))),
+    };
+    Ok(GenesisMeta { questions: genesis["questions"].clone(), settings_hash: kernel_hash(genesis, "settings_hash", true)?, operator_meta })
 }
 
 impl AuditState {
@@ -860,6 +1096,7 @@ impl AuditState {
                 session,
                 engine_root,
                 root_cache: Mutex::default(),
+                state_tree: Mutex::new(None),
                 in_place: false,
                 data: Data {
                     run_id: "unbound".into(),
@@ -882,60 +1119,436 @@ impl AuditState {
                     checkpoints: BTreeMap::new(),
                     withdrawal_closes_bytes: true,
                     withdrawn: BTreeMap::new(),
+                    fates: BTreeMap::new(),
+                    closed: false,
                 },
             },
             journal: None,
             telemetry_frames: Vec::new(),
             links_off: false,
+            genesis: None,
+            pending_base: None,
+            frames: Vec::new(),
+            sealed_at: 0,
+            seal_pending: false,
+            seal_every: None,
+            seals: Vec::new(),
+            signer: None,
+            sign_failures: Vec::new(),
         })
     }
 
+    /// A new run with a `/3` journal and the default genesis (no questions, empty settings): the library's form.
     pub fn create(path: &Path, base_ontology: &Value, docs: &[(String, Vec<u8>)], run_id: &str, manifest_hash: Hash) -> KResult<Self> {
+        Self::create_with(path, base_ontology, docs, run_id, manifest_hash, &GenesisSpec::default())
+    }
+
+    /// A new run with a `/3` journal whose genesis names `spec`.
+    pub fn create_with(path: &Path, base_ontology: &Value, docs: &[(String, Vec<u8>)], run_id: &str, manifest_hash: Hash, spec: &GenesisSpec) -> KResult<Self> {
+        let mut state = Self::prepare_run(base_ontology, docs, run_id, manifest_hash)?;
+        state.start_journal(path, spec)?;
+        Ok(state)
+    }
+
+    /// A new run without a journal yet: everything the server checks before the genesis is written (`start_journal`).
+    fn prepare_run(base_ontology: &Value, docs: &[(String, Vec<u8>)], run_id: &str, manifest_hash: Hash) -> KResult<Self> {
         identifier(run_id, "run_id")?;
         let mut state = Self::new(base_ontology, docs)?;
         state.core.data.run_id = run_id.into();
         state.core.data.manifest_hash = manifest_hash;
-        state.attach_new_journal(path, base_ontology)?;
+        state.pending_base = Some(base_ontology.clone());
         Ok(state)
+    }
+
+    /// Write the genesis of a prepared run: a `/3` journal at `path` that names `spec`. Only a prepared run without a journal
+    /// starts one, once.
+    pub fn start_journal(&mut self, path: &Path, spec: &GenesisSpec) -> KResult<()> {
+        let base = self.pending_base.clone().ok_or_else(|| bad("wal", "only a prepared run without a journal starts one"))?;
+        self.begin_v3(spec)?;
+        self.attach_new_journal(path, &base)?;
+        self.pending_base = None;
+        Ok(())
+    }
+
+    /// Make this new state one of a `/3` journal: its genesis names `spec`, its root is `r2r-state-root/2`.
+    fn begin_v3(&mut self, spec: &GenesisSpec) -> KResult<()> {
+        if !spec.questions.is_array() {
+            return Err(bad("questions", "the questions of a run are an array"));
+        }
+        if spec.operator_meta.as_ref().is_some_and(|m| !m.is_object() || to_jcs(m).len() > MAX_OPERATOR_META_BYTES) {
+            return Err(bad("operator_meta", format!("operator_meta is an object of at most {MAX_OPERATOR_META_BYTES} bytes")));
+        }
+        self.genesis =
+            Some(GenesisMeta { questions: spec.questions.clone(), settings_hash: settings_hash(&spec.settings), operator_meta: spec.operator_meta.clone() });
+        *self.core.state_tree.get_mut().expect("state tree poisoned") = Some(state_root::StateTree::build(&self.core.data));
+        self.core.root_cache = Mutex::default();
+        Ok(())
     }
 
     /// A run on supplied files, each named by its path inside the set. They are bound by their bytes alone: no repository stands behind
     /// them. In order of the names, so that the same files give the same roots however they were found.
-    pub fn create_from_docs(path: &Path, base_ontology: &Value, run_id: &str, mut docs: Vec<(String, Vec<u8>)>) -> KResult<Self> {
+    pub fn create_from_docs(path: &Path, base_ontology: &Value, run_id: &str, docs: Vec<(String, Vec<u8>)>) -> KResult<Self> {
+        Self::create_from_docs_with(path, base_ontology, run_id, docs, &GenesisSpec::default())
+    }
+
+    pub fn create_from_docs_with(path: &Path, base_ontology: &Value, run_id: &str, docs: Vec<(String, Vec<u8>)>, spec: &GenesisSpec) -> KResult<Self> {
+        let mut state = Self::prepare_from_docs(base_ontology, run_id, docs)?;
+        state.start_journal(path, spec)?;
+        Ok(state)
+    }
+
+    /// `create_from_docs` without the journal: `start_journal` writes it.
+    pub fn prepare_from_docs(base_ontology: &Value, run_id: &str, mut docs: Vec<(String, Vec<u8>)>) -> KResult<Self> {
         if let Some((id, _)) = docs.iter().find(|(id, _)| id.len() > MAX_DOC_NAME_BYTES) {
             return Err(bad("doc_id", format!("a document name takes at most {MAX_DOC_NAME_BYTES} bytes: {id}")));
         }
         docs.sort_by(|a, b| a.0.cmp(&b.0));
         let hashes: Vec<String> = docs.iter().map(|(_, bytes)| to_hex(&sha256(bytes))).collect();
         let set = super::sources::docs_set_hash(docs.iter().zip(&hashes).map(|((id, _), hash)| (id.as_str(), hash.as_str())));
-        Self::create(path, base_ontology, &docs, run_id, set)
+        Self::prepare_run(base_ontology, &docs, run_id, set)
     }
 
+    /// The genesis of this state's journal: `/3` with the fields of `GENESIS_V3_KEYS` when the state is of that format, else the
+    /// first formats' (a scratch copy of an old journal's state, `replay_prefixes`).
     fn attach_new_journal(&mut self, path: &Path, base_ontology: &Value) -> KResult<()> {
         let container = build_container(&mut self.core.session);
-        let format = if self.core.data.withdrawal_closes_bytes { GENESIS_FORMAT } else { GENESIS_FORMAT_EXACT_SPAN };
-        let genesis = json!({"format":format,"run_id":self.core.data.run_id,"manifest_hash":to_hex(&self.core.data.manifest_hash),"source_mode":self.core.data.source_mode,"base_ontology":base_ontology,
+        let mut genesis = json!({"run_id":self.core.data.run_id,"manifest_hash":to_hex(&self.core.data.manifest_hash),"source_mode":self.core.data.source_mode,"base_ontology":base_ontology,
             "source_documents":self.core.data.source_documents,
             "engine_container_hex":to_hex(&container),"engine_root":to_hex(&self.engine_root()),"audit_root":to_hex(&self.audit_root())});
-        self.journal = Some(AuditJournal::create(path, &genesis)?);
+        self.journal = Some(match &self.genesis {
+            Some(meta) => {
+                genesis["format"] = json!(GENESIS_FORMAT_V3);
+                genesis["rules_version"] = json!(RULES_VERSION);
+                genesis["state_root_format"] = json!(state_root::ROOT_FORMAT);
+                genesis["seal_format"] = json!(SEAL_FORMAT);
+                genesis["questions"] = meta.questions.clone();
+                genesis["settings_hash"] = json!(to_hex(&meta.settings_hash));
+                genesis["operator_meta"] = meta.operator_meta.clone().unwrap_or(Value::Null);
+                AuditJournal::create(path, &genesis, FrameFormat::V3, Some(&super::trees::records_root(&[])))?
+            }
+            None => {
+                genesis["format"] = json!(if self.core.data.withdrawal_closes_bytes { GENESIS_FORMAT } else { GENESIS_FORMAT_EXACT_SPAN });
+                AuditJournal::create(path, &genesis, FrameFormat::V2, None)?
+            }
+        });
+        self.frames = self.journal.as_ref().map(|j| vec![j.head()]).unwrap_or_default();
         Ok(())
     }
 
     /// Prepare only explicitly selected, byte-verified report documents. Lexical SHA/PR references remain unresolved.
     pub fn create_from_manifest(path: &Path, base_ontology: &Value, run_id: &str, manifest_bytes: &[u8], selected: &[(String, Vec<u8>)]) -> KResult<Self> {
-        identifier(run_id, "run_id")?;
+        Self::create_from_manifest_with(path, base_ontology, run_id, manifest_bytes, selected, &GenesisSpec::default())
+    }
+
+    pub fn create_from_manifest_with(
+        path: &Path,
+        base_ontology: &Value,
+        run_id: &str,
+        manifest_bytes: &[u8],
+        selected: &[(String, Vec<u8>)],
+        spec: &GenesisSpec,
+    ) -> KResult<Self> {
+        let mut state = Self::prepare_from_manifest(base_ontology, run_id, manifest_bytes, selected)?;
+        state.start_journal(path, spec)?;
+        Ok(state)
+    }
+
+    /// `create_from_manifest` without the journal: `start_journal` writes it.
+    pub fn prepare_from_manifest(base_ontology: &Value, run_id: &str, manifest_bytes: &[u8], selected: &[(String, Vec<u8>)]) -> KResult<Self> {
         let sources = super::sources::prepare(manifest_bytes, selected)?;
-        let mut state = Self::new(base_ontology, &sources.docs)?;
-        state.core.data.run_id = run_id.into();
-        state.core.data.manifest_hash = sources.manifest_hash;
+        let mut state = Self::prepare_run(base_ontology, &sources.docs, run_id, sources.manifest_hash)?;
         state.core.data.source_mode = "git_manifest".into();
         state.core.data.source_documents = sources.identities;
+        Ok(state)
+    }
+
+    /// A run with a journal of the first formats, as 0.1 wrote them: the tests of the `/1` root and of those frames.
+    #[cfg(test)]
+    pub(crate) fn create_v2(path: &Path, base_ontology: &Value, docs: &[(String, Vec<u8>)], run_id: &str, manifest_hash: Hash) -> KResult<Self> {
+        let mut state = Self::prepare_run(base_ontology, docs, run_id, manifest_hash)?;
+        state.pending_base = None;
         state.attach_new_journal(path, base_ontology)?;
         Ok(state)
     }
 
+    /// Offline measurement only (`examples/v02_rewrite.rs`), never a migration a server does: the commands of the recorded journal at
+    /// `old` run again, in order and under their actors and ids, into a new journal at `new`, of the `/3` format when `v3` and of
+    /// the first formats otherwise. Every outcome must equal the recorded one, so only a journal under the rule of closed bytes
+    /// (`r2r-audit-genesis/2`) can be written as `/3`. Returns the entries written.
+    #[doc(hidden)]
+    pub fn rewrite_recorded(old: &Path, new: &Path, v3: bool) -> KResult<usize> {
+        Self::rewrite_recorded_sealed(old, new, v3, false)
+    }
+
+    /// `rewrite_recorded`, and with `sealed` a `/3` journal written as a 0.2 server writes one: a seal every 256 frames and at each
+    /// phase of a circle, and a seal and a close at the end. The reference journals of the independent verifier come from it
+    /// (`examples/v02_reference_journals.rs`).
+    #[doc(hidden)]
+    pub fn rewrite_recorded_sealed(old: &Path, new: &Path, v3: bool, sealed: bool) -> KResult<usize> {
+        let scan = AuditJournal::read(old)?;
+        let genesis = scan.payloads.first().ok_or_else(|| bad("wal", "genesis is required"))?;
+        if v3 && genesis["format"] != GENESIS_FORMAT {
+            return Err(bad("wal", "only a journal under the rule of closed bytes (r2r-audit-genesis/2) runs again as /3"));
+        }
+        let first = super::persistence::JournalScan {
+            format: scan.format,
+            payloads: scan.payloads[..1].to_vec(),
+            heads: scan.heads[..1].to_vec(),
+            records_roots: scan.records_roots.iter().take(1).copied().collect(),
+            bytes: 0,
+            complete_bytes: 0,
+            sha256: ZERO_HASH,
+        };
+        let mut copy = Self::replay(&first, &mut |_, _, _| Ok(()))?;
+        if v3 {
+            copy.begin_v3(&GenesisSpec::default())?;
+        }
+        copy.attach_new_journal(new, &genesis["base_ontology"])?;
+        if v3 && sealed {
+            copy.set_seal_every(Some(256));
+        }
+        for (n, payload) in scan.payloads.iter().enumerate().skip(1) {
+            let outcome = copy.commit(string(payload, "actor")?, string(payload, "submission_id")?, &payload["command"])?;
+            if outcome.value() != payload["outcome"] {
+                return Err(bad("wal", format!("entry {n} ran again to another outcome")));
+            }
+        }
+        if v3 && sealed {
+            copy.close_run()?;
+        }
+        Ok(scan.payloads.len() - 1)
+    }
+
+    /// What the genesis of a `/3` journal named; `None` for a journal of the first formats.
+    pub fn genesis_meta(&self) -> Option<&GenesisMeta> {
+        self.genesis.as_ref()
+    }
+
+    /// Whether this state's journal is of the `/3` format.
+    pub fn is_v3(&self) -> bool {
+        self.genesis.is_some()
+    }
+
+    /// Write a seal after every `k` frames of a `/3` journal (`None`: only when asked, `seal`); the server seals every 256.
+    pub fn set_seal_every(&mut self, k: Option<usize>) {
+        self.seal_every = k.filter(|k| *k > 0);
+    }
+
+    /// Write a seal (SPEC_V02_STEP2 section 7): the frames so far, the roots of this state and the hashes of its two projections.
+    /// Its outcome holds the seal and its hash. A seal right after another changes nothing and is not written again.
+    pub fn seal(&mut self) -> KResult<Value> {
+        if !self.is_v3() || self.journal.is_none() {
+            return Err(bad("seal", "only a 0.2 journal is sealed"));
+        }
+        #[cfg(test)]
+        if FAIL_SEALS.with(|n| n.replace(n.get().saturating_sub(1)) > 0) {
+            return Err(bad("seal", "a seal failed (test)"));
+        }
+        let n = self.frames.len();
+        let (status, dependencies) = self.core.projection_hashes();
+        let seal = json!({"format": SEAL_FORMAT, "run_id": self.core.data.run_id, "log_size": n, "log_root": to_hex(&super::trees::log_root(&self.frames)),
+            "wal_head": to_hex(&self.frames[n - 1]), "audit_root": to_hex(&self.audit_root()), "engine_root": to_hex(&self.engine_root()),
+            "projections": {"status": to_hex(&status), "dependencies": to_hex(&dependencies)}});
+        let id = format!("seal-{n}");
+        let hash = seal_hash(&seal);
+        match self.commit("kernel", &id, &json!({"kind": "seal", "seal": seal}))? {
+            Outcome::Value(v) => {
+                self.seals.push((n, hash));
+                self.write_checkpoint(n);
+                self.sealed_at = self.frames.len();
+                // a seal written by hand settles a seal that was due, as the replay finds it settled
+                self.seal_pending = false;
+                Ok(v)
+            }
+            Outcome::Error(e) => Err(e),
+            Outcome::Records(_) => Err(bad("seal", "unexpected records outcome")),
+        }
+    }
+
+    /// Close the run (`audit_close`): a seal, then a `close` entry, so the run stays closed after a restart.
+    pub fn close_run(&mut self) -> KResult<Value> {
+        if self.is_closed() {
+            return Ok(json!({"closed": true, "already": true}));
+        }
+        self.seal()?;
+        match self.commit("kernel", "audit-close", &json!({"kind": "close"}))? {
+            Outcome::Value(v) => Ok(v),
+            Outcome::Error(e) => Err(e),
+            Outcome::Records(_) => Err(bad("close", "unexpected records outcome")),
+        }
+    }
+
+    /// Whether a seal was due and is not written yet (the next command writes it).
+    pub fn seal_pending(&self) -> bool {
+        self.seal_pending
+    }
+
+    /// Whether a `close` entry closed the run.
+    pub fn is_closed(&self) -> bool {
+        self.core.data.closed
+    }
+
+    /// The hashes of the status and dependency projections of this state (SPEC_V02_STEP2 section 6).
+    pub fn projection_hashes(&self) -> (Hash, Hash) {
+        self.core.projection_hashes()
+    }
+
+    /// The rows of the status and dependency projections, as their hashes take them (SPEC_V02_STEP2 section 6).
+    pub fn projection_rows(&self) -> (Vec<Value>, Vec<Value>) {
+        self.core.projection_rows()
+    }
+
+    /// The rows of both projections and their hashes, from one pass over the records.
+    pub fn projections(&self) -> (Vec<Value>, Vec<Value>, (Hash, Hash)) {
+        let (status, pairs) = self.core.projection_rows();
+        let hashes = projection_hashes_of(&status, &pairs);
+        (status, pairs, hashes)
+    }
+
+    /// The seals in the journal so far: the frames each names and its hash.
+    pub fn seals(&self) -> &[(usize, Hash)] {
+        &self.seals
+    }
+
+    /// Sign every seal written from now on (SPEC_V02_STEP4 section 3): into `dir`, `seal-<n>.txt`, the C2SP checkpoint over the
+    /// frames up to and with the seal frame, and `verifier.key` beside them, a key the writer puts there and so pins nothing. A
+    /// failed write never undoes the seal: it is kept in `sign_failures`, and `sbgk audit-sign` writes it again from the journal.
+    pub fn set_checkpoint_signer(&mut self, signer: super::sign::NoteSigner, dir: PathBuf) {
+        self.signer = Some((signer, dir));
+    }
+
+    /// The seals whose checkpoint could not be written: the frame of each seal and why. The seal stands in the journal either way.
+    pub fn sign_failures(&self) -> &[(usize, String)] {
+        &self.sign_failures
+    }
+
+    fn write_checkpoint(&mut self, n: usize) {
+        let Some((signer, dir)) = &self.signer else { return };
+        let result = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(dir)?;
+            let body = super::sign::checkpoint_body(&super::sign::origin(&self.core.data.run_id), &self.frames[..=n]);
+            let note = signer.sign(&body).map_err(|e| std::io::Error::other(e.message))?;
+            std::fs::write(dir.join(format!("seal-{n}.txt")), note)?;
+            let key = dir.join("verifier.key");
+            if !key.exists() {
+                std::fs::write(key, format!("{}\n", signer.verifier().text()))?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            self.sign_failures.push((n, e.to_string()));
+        }
+    }
+
+    /// The hash of every frame of the `/3` journal this state writes, the genesis first: a signed checkpoint names the log tree
+    /// over a prefix of them (SPEC_V02_STEP4). Empty for a state without a journal of that format.
+    pub fn frame_hashes(&self) -> &[Hash] {
+        &self.frames
+    }
+
+    // What a quittance reads of a state (SPEC_V02_STEP5, `proof.rs`).
+
+    /// The records accepted so far, in the order the frames accepted them: a quittance finds a record's frame by counting.
+    pub(super) fn record_count(&self) -> usize {
+        self.core.data.records.len()
+    }
+
+    pub(super) fn record_at(&self, i: usize) -> &RecordView {
+        &self.core.data.records[i]
+    }
+
+    /// The leaf value `L` of record `i` (SPEC_V02_STEP2 section 2), as the records tree of its frame hashes it.
+    pub(super) fn record_leaf_value_at(&self, i: usize) -> Value {
+        state_root::record_leaf_value(&self.core.data, &self.core.data.records[i])
+    }
+
+    /// An observation's evidence binding: the engine's evidence id, the document version and the bytes `[start, end)`.
+    pub(super) fn evidence_binding(&self, id: &RecordId) -> Option<(Hash, Hash, usize, usize)> {
+        self.core.data.evidence.get(id).map(|b| (b.evidence, b.version, b.start, b.end))
+    }
+
+    /// The canonical bytes of an evidence node of the engine, whose SHA-256 is its id.
+    pub(super) fn evidence_node_bytes(&self, evidence: &Hash) -> Option<Vec<u8>> {
+        self.core.session.engine.evidence(evidence).map(crate::node::EvidenceNode::encode)
+    }
+
+    /// The current version of a document: its id, its chunks and their bytes.
+    pub(super) fn current_document(&self, doc_id: &str) -> Option<&crate::arena::DocEntry> {
+        self.core.session.arena.doc(doc_id)
+    }
+
+    /// The texts withdrawn from a document: a quittance never hands them out.
+    pub(super) fn withdrawn_of(&self, doc_id: &str) -> Vec<&[u8]> {
+        self.core.data.withdrawn.get(doc_id).into_iter().flatten().map(Vec::as_slice).collect()
+    }
+
+    /// The documents whose current text holds one of `terms`, case aside: whether the `about` of a question names anything in the
+    /// run's documents. A question whose terms no document holds loses its answer in silence (the architect, 11.11.2026), so the
+    /// server says so; a document whose text the run does not hold counts as not holding them.
+    pub fn documents_mentioning(&self, terms: &[String]) -> Vec<String> {
+        let terms: Vec<String> = terms.iter().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).collect();
+        let arena = &self.core.session.arena;
+        arena
+            .doc_ids()
+            .filter(|id| {
+                arena.doc(id).is_some_and(|d| {
+                    let text = String::from_utf8_lossy(&d.bytes).to_lowercase();
+                    terms.iter().any(|t| text.contains(t.as_str()))
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The frames of the journal this state writes, the genesis included; `None` for a state without one (a replay).
+    pub fn entries(&self) -> Option<usize> {
+        self.journal.as_ref().map(|j| j.sequence() as usize + 1)
+    }
+
+    /// The withdrawn texts: document, SHA-256 and length of each, never the text (the reading tools name a withdrawal by these).
+    pub fn withdrawn_texts(&self) -> Vec<(String, Hash, usize)> {
+        self.core.data.withdrawn.iter().flat_map(|(doc, texts)| texts.iter().map(move |t| (doc.clone(), sha256(t), t.len()))).collect()
+    }
+
+    /// Where an observation's quote is bound (document, version, bytes, whether that version is the document's current one) and,
+    /// when the quote no longer stands, why (SPEC_V02_STEP3 section 6), as the command that revoked it recorded it: `withdrawn`
+    /// (a withdrawal of text took it, named by the withdrawn text's hash and length and the bytes that overlapped the quote then;
+    /// `named` when the record itself was the one withdrawn) or `revoked` (the record was revoked, and no text closed with it, the
+    /// rule of the first journals). A quote whose evidence stands on an older version of its document is `version_replaced`. Never
+    /// the text of the quote: when it fell, that text is what was withdrawn. `None` for a record that is not an observation.
+    pub fn quote_fate(&self, id: &RecordId) -> Option<Value> {
+        let b = self.core.data.evidence.get(id)?;
+        let r = self.core.record(id)?;
+        let doc = r.doc_id.clone()?;
+        let on_current = self.core.session.arena.doc(&doc).is_some_and(|d| d.version_id == b.version);
+        let mut out = json!({"doc_id": doc, "version": to_hex(&b.version), "start": b.start, "end": b.end, "current_version": on_current});
+        if self.core.observe_grounded(r) {
+            return Some(out);
+        }
+        match self.core.data.fates.get(id) {
+            // what the revoking command found, never what a later state suggests (Codex review of 2c6864f, S3-01, S3-02)
+            Some(Value::Object(fate)) => out.as_object_mut().expect("object").extend(fate.clone()),
+            _ if self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED) => out["cause"] = json!("version_replaced"),
+            _ => out["cause"] = json!("revoked"),
+        }
+        Some(out)
+    }
+
     pub fn open(path: &Path) -> KResult<Self> {
         Self::recover(path, &mut |_, _, _| Ok(()), true)
+    }
+
+    /// A replay of the first `upto` frames this state's own journal holds, read through the writer's handle and never written:
+    /// `visit(n, state)` sees the state of the first `n` entries, up to `n = upto`. A live server's `diff` and report `since` take
+    /// their earlier point from it (SPEC_V02_STEP3 section 4); the frames after it are not replayed.
+    pub fn replay_own(&mut self, upto: usize, visit: &mut dyn FnMut(usize, &AuditState)) -> KResult<()> {
+        let mut scan = self.journal.as_mut().ok_or_else(|| bad("wal", "this state writes no journal"))?.scan_own()?;
+        scan.keep_first(upto.max(1));
+        Self::replay(&scan, &mut |n, state, _| {
+            visit(n, state);
+            Ok(())
+        })
+        .map(drop)
     }
 
     /// Check of a recorded journal (`sbgk audit-verify`): the checks of `open` (frame hashes, genesis sources, every entry
@@ -943,10 +1556,16 @@ impl AuditState {
     /// or locked. `visit(n, audit_root, engine_root, wal_head)` sees the state of the first `n` entries and the chain head after
     /// them, for each `n` from the genesis alone to all.
     pub fn verify(path: &Path, visit: &mut dyn FnMut(usize, Hash, Hash, Hash)) -> KResult<(Self, VerifiedJournal)> {
+        Self::verify_states(path, &mut |n, state, head| visit(n, state.audit_root(), state.engine_root(), head))
+    }
+
+    /// `verify` that hands `visit` the state of the first `n` entries itself, read only, with the chain head after them: the
+    /// reading tools take a point of the journal from it (`sbgk audit-read`, SPEC_V02_STEP3).
+    pub fn verify_states(path: &Path, visit: &mut dyn FnMut(usize, &AuditState, Hash)) -> KResult<(Self, VerifiedJournal)> {
         let scan = AuditJournal::read(path)?;
         let heads = &scan.heads;
-        let state = Self::replay(&scan.payloads, &mut |n, state, _| {
-            visit(n, state.audit_root(), state.engine_root(), heads[n - 1]);
+        let state = Self::replay(&scan, &mut |n, state, _| {
+            visit(n, state, heads[n - 1]);
             Ok(())
         })?;
         let document_puts =
@@ -968,7 +1587,21 @@ impl AuditState {
         }
         let mut copies = |n: usize, state: &mut AuditState, genesis: &Value| -> KResult<()> {
             for k in 0..want.get(&n).copied().unwrap_or(0) {
-                let mut copy = AuditState { core: state.core.fork()?, journal: None, telemetry_frames: Vec::new(), links_off: false };
+                let mut copy = AuditState {
+                    core: state.core.fork()?,
+                    journal: None,
+                    telemetry_frames: Vec::new(),
+                    links_off: false,
+                    genesis: state.genesis.clone(),
+                    pending_base: None,
+                    frames: Vec::new(),
+                    sealed_at: 0,
+                    seal_pending: false,
+                    seal_every: None,
+                    seals: Vec::new(),
+                    signer: None,
+                    sign_failures: Vec::new(),
+                };
                 copy.attach_new_journal(&scratch(n, k), &genesis["base_ontology"])?;
                 visit(n, copy);
             }
@@ -981,25 +1614,42 @@ impl AuditState {
     /// readies the journal for writing (a torn tail is cut off), as `open` does.
     fn recover(path: &Path, visit: &mut dyn FnMut(usize, &mut AuditState, &Value) -> KResult<()>, finish: bool) -> KResult<Self> {
         if !finish {
-            return Self::replay(&AuditJournal::read(path)?.payloads, visit);
+            return Self::replay(&AuditJournal::read(path)?, visit);
         }
-        let (mut journal, payloads) = AuditJournal::open(path)?;
-        let mut state = Self::replay(&payloads, visit)?;
+        let (mut journal, scan) = AuditJournal::open(path)?;
+        let mut state = Self::replay(&scan, visit)?;
         journal.finish_recovery()?;
         state.journal = Some(journal);
+        if state.is_v3() {
+            state.frames = scan.heads.clone();
+        }
         Ok(state)
     }
 
-    /// Semantic replay of the journal's payloads (genesis first) into a state with no journal attached.
-    fn replay(payloads: &[Value], visit: &mut dyn FnMut(usize, &mut AuditState, &Value) -> KResult<()>) -> KResult<Self> {
+    /// The records root of the records `self` accepted beyond the first `before`: the frame's tree of SPEC_V02_STEP2 section 2.
+    fn records_root_since(&self, before: usize) -> Hash {
+        let data = &self.core.data;
+        let leaves: Vec<Hash> =
+            data.records[before.min(data.records.len())..].iter().map(|r| super::trees::record_leaf(&state_root::record_leaf_value(data, r))).collect();
+        super::trees::records_root(&leaves)
+    }
+
+    /// Semantic replay of the journal's payloads (genesis first) into a state with no journal attached. A `/3` journal's frames
+    /// must carry a `/3` genesis and the records root of what each frame accepted; a `/2` journal a genesis of the first formats.
+    fn replay(scan: &super::persistence::JournalScan, visit: &mut dyn FnMut(usize, &mut AuditState, &Value) -> KResult<()>) -> KResult<Self> {
+        let payloads = &scan.payloads;
         let genesis = payloads.first().ok_or_else(|| bad("wal", "genesis is required"))?;
-        if genesis["format"] != GENESIS_FORMAT && genesis["format"] != GENESIS_FORMAT_EXACT_SPAN {
-            return Err(bad("wal", "unsupported audit genesis"));
+        let v3 = scan.format == FrameFormat::V3;
+        let known =
+            if v3 { genesis["format"] == GENESIS_FORMAT_V3 } else { genesis["format"] == GENESIS_FORMAT || genesis["format"] == GENESIS_FORMAT_EXACT_SPAN };
+        if !known {
+            return Err(bad("wal", "unsupported audit genesis, or a genesis of another format than its frames"));
         }
+        let meta = if v3 { Some(genesis_v3_meta(genesis)?) } else { None };
         let mut state = Self::new(&genesis["base_ontology"], &[])?;
-        state.core.data.withdrawal_closes_bytes = genesis["format"] == GENESIS_FORMAT;
+        state.core.data.withdrawal_closes_bytes = genesis["format"] != GENESIS_FORMAT_EXACT_SPAN;
         state.core.data.run_id = string(genesis, "run_id")?.into();
-        state.core.data.manifest_hash = hash_field(genesis, "manifest_hash")?;
+        state.core.data.manifest_hash = kernel_hash(genesis, "manifest_hash", v3)?;
         state.core.data.source_mode = string(genesis, "source_mode")?.into();
         if !matches!(state.core.data.source_mode.as_str(), "opaque" | "git_manifest") {
             return Err(bad("source_mode", "unsupported source identity mode"));
@@ -1029,26 +1679,55 @@ impl AuditState {
             }
         }
         state.core.engine_root = state.core.session.engine.root();
-        if hash_field(genesis, "engine_root")? != state.engine_root() || hash_field(genesis, "audit_root")? != state.audit_root() {
+        if let Some(meta) = meta {
+            state.genesis = Some(meta);
+            *state.core.state_tree.get_mut().expect("state tree poisoned") = Some(state_root::StateTree::build(&state.core.data));
+            if scan.records_roots[0] != super::trees::records_root(&[]) {
+                return Err(bad("wal", "the genesis frame accepts no record; its records root must be the empty root"));
+            }
+        }
+        if kernel_hash(genesis, "engine_root", v3)? != state.engine_root() || kernel_hash(genesis, "audit_root", v3)? != state.audit_root() {
             return Err(bad("wal", "genesis roots do not match the recovered state"));
         }
         for (n, payload) in payloads.iter().enumerate().skip(1) {
             visit(n, &mut state, genesis)?;
+            let before = state.core.data.records.len();
             let actor = string(payload, "actor")?;
             let request_id = string(payload, "submission_id")?;
             let request_hash = request_hash(actor, &payload["command"]);
-            if request_hash != hash_field(payload, "request_hash")? {
+            if request_hash != kernel_hash(payload, "request_hash", v3)? {
                 return Err(bad("wal", "request hash mismatch"));
             }
             if state.core.data.receipts.contains_key(&(actor.into(), request_id.into())) {
                 return Err(bad("wal", "duplicate persisted submission"));
             }
+            if v3 {
+                kernel_id(actor, request_id, &payload["command"]).map_err(|e| bad("wal", format!("a frame takes an id of the kernel's own: {}", e.message)))?;
+                if state.is_closed() {
+                    return Err(bad("wal", "a frame after the close: the close is the last frame of a journal"));
+                }
+            }
+            if v3 && payload["command"]["kind"] == "seal" {
+                check_seal_log(&payload["command"]["seal"], &scan.heads[..n])?;
+                // the frames up to and with the seal itself: the next one is due `k` frames after it
+                state.sealed_at = n + 1;
+                state.seal_pending = false;
+            } else if v3 && phase_changed(&payload["command"], &payload["outcome"]) {
+                // a circle's phase changed and no seal follows yet: the next command after the restart writes it
+                state.seal_pending = true;
+            }
             let outcome = state.prepare_recorded(actor, request_id, payload)?;
             if outcome.value() != payload["outcome"]
-                || state.engine_root() != hash_field(payload, "engine_root")?
-                || state.audit_root() != hash_field(payload, "audit_root")?
+                || state.engine_root() != kernel_hash(payload, "engine_root", v3)?
+                || state.audit_root() != kernel_hash(payload, "audit_root", v3)?
             {
                 return Err(bad("wal", "semantic replay diverged from the committed outcome/roots"));
+            }
+            if v3 && state.records_root_since(before) != scan.records_roots[n] {
+                return Err(bad("wal", "the records root of a frame does not match the records it accepted"));
+            }
+            if v3 && payload["command"]["kind"] == "seal" && payload["outcome"]["kind"] != "error" {
+                state.seals.push((n, seal_hash(&payload["command"]["seal"])));
             }
             state.project_telemetry(payload);
         }
@@ -1086,7 +1765,15 @@ impl AuditState {
         self.core.engine_root
     }
     pub fn session_root(&self) -> Hash {
-        session_root_of(&self.engine_root(), &self.audit_root())
+        self.session_root_for(&self.engine_root(), &self.audit_root())
+    }
+    /// The session root of these roots under this journal's format (`session_root_v2` for `/3`, else `session_root_of`).
+    pub fn session_root_for(&self, engine_root: &Hash, audit_root: &Hash) -> Hash {
+        if self.is_v3() {
+            session_root_v2(engine_root, audit_root)
+        } else {
+            session_root_of(engine_root, audit_root)
+        }
     }
     pub fn wal_head(&self) -> Option<Hash> {
         self.journal.as_ref().map(AuditJournal::head)
@@ -1291,6 +1978,13 @@ impl AuditState {
     fn commit(&mut self, actor: &str, id: &str, command: &Value) -> KResult<Outcome> {
         identifier(actor, "actor")?;
         identifier(id, "submission_id")?;
+        if self.is_v3() {
+            kernel_id(actor, id, command)?;
+            // nothing is written that a `/3` journal refuses on replay (SPEC_V02_STEP2 section 1)
+            if !super::persistence::safe_integers(command) {
+                return Err(bad("command", "a number of a 0.2 journal is an integer from 0 to 2^53-1"));
+            }
+        }
         let hash = request_hash(actor, command);
         if let Some(receipt) = self.core.data.receipts.get(&(actor.into(), id.into())) {
             return if receipt.request_hash == hash {
@@ -1302,10 +1996,29 @@ impl AuditState {
         if self.journal.is_none() {
             return Err(bad("wal_path", "audit mutations require a durable v2 journal").expected(json!({"wal_path":"required"})));
         }
+        // the close is the journal's last frame: a retry above still has its receipt, nothing new is written (GAP-15 of the
+        // independent verifier)
+        if self.is_v3() && self.core.data.closed {
+            return Err(bad("kind", "the run is closed: nothing more is written to its journal"));
+        }
         // staged on one fork; the state is replaced only once the journal holds the command (01.11.2026 measurement: a fork to stage
         // on, forked again inside, cost a whole copy of the state per command)
         let (next_core, outcome) = self.core.stage(actor, id, command)?;
-        let next = Self { core: next_core, journal: None, telemetry_frames: Vec::new(), links_off: false };
+        let next = Self {
+            core: next_core,
+            journal: None,
+            telemetry_frames: Vec::new(),
+            links_off: false,
+            genesis: self.genesis.clone(),
+            pending_base: None,
+            frames: Vec::new(),
+            sealed_at: 0,
+            seal_pending: false,
+            seal_every: None,
+            seals: Vec::new(),
+            signer: None,
+            sign_failures: Vec::new(),
+        };
         // the storage invariant of the control profiles, judged by what the staged command did and not by its shape, so no
         // composition carries a link past it: a relation record of the swarm, a link operation of the builder, or either inside a
         // batch (Codex reviews of 8023910, SCOPE-01, and of 3ee34e9, SCOPE-03: a submit inside a batch stored a relation)
@@ -1315,9 +2028,26 @@ impl AuditState {
         }
         let payload = json!({"actor":actor,"submission_id":id,"request_hash":to_hex(&hash),"command":command,"outcome":outcome.value(),
             "engine_root":to_hex(&next.engine_root()),"audit_root":to_hex(&next.audit_root())});
-        self.journal.as_mut().expect("checked journal").append(&payload)?;
+        // the frame is the body and the header in one object: one level over the body (SPEC_V02_STEP2 section 11)
+        if self.is_v3() && 1 + super::persistence::json_depth(&payload) > super::persistence::MAX_FRAME_DEPTH {
+            return Err(bad("command", "a frame of a 0.2 journal nests at most 64 levels"));
+        }
+        let records_root = self.is_v3().then(|| next.records_root_since(self.core.data.records.len()));
+        self.journal.as_mut().expect("checked journal").append(&payload, records_root.as_ref())?;
         self.core = next.core;
         self.project_telemetry(&payload);
+        if self.is_v3() {
+            self.frames.push(self.journal.as_ref().expect("checked journal").head());
+            let due = self.seal_every.is_some_and(|k| self.frames.len() >= self.sealed_at.max(1) + k);
+            // a circle's phase changed (the dispatcher's `audit:circles` checkpoint): a boundary of the run worth a seal
+            let phase = self.seal_every.is_some() && phase_changed(command, &outcome.value());
+            let pending = self.seal_every.is_some() && self.seal_pending;
+            if (due || phase || pending) && command["kind"] != "seal" && command["kind"] != "close" {
+                // the command is in the journal: its receipt stands whatever becomes of the seal, and a seal that fails stays due
+                // for the next command (Codex review of 43447f4, S2-02)
+                self.seal_pending = self.seal().is_err();
+            }
+        }
         Ok(outcome)
     }
 
@@ -1569,6 +2299,9 @@ impl Core {
                 let accepted_name = normalize(&concept.name) == term || concept.aliases.iter().any(|a| normalize(a) == term);
                 let state = if concept.status == "accepted" && accepted_name { "accepted" } else { "proposed" };
                 self.data.mappings.insert((id, term.clone(), concept_id), state.into());
+                if let Some(d) = self.dirty() {
+                    d.mappings.insert((id, term.clone(), concept_id));
+                }
                 let mut decision = json!({"op":"map_term","by":actor,"record":to_hex(&id.0),"concept":to_hex(&concept_id.0),"status":state});
                 if let Some(subject) = map_subject {
                     decision["subject"] = json!(subject);
@@ -1615,6 +2348,10 @@ impl Core {
                 if next == LinkStatus::Accepted {
                     self.data.acceptance_basis.insert(id, basis.clone());
                 }
+                if let Some(d) = self.dirty() {
+                    d.links.insert(id);
+                    d.acceptance.insert(id);
+                }
                 self.data.decisions.push(json!({"op":"link_status","link":to_hex(&id.0),"status":next.name(),"by":actor,
                     "basis":basis.iter().map(|x|to_hex(&x.0)).collect::<Vec<_>>()}));
                 link_value(&self.data.links[&id])
@@ -1643,6 +2380,9 @@ impl Core {
                 }
                 if self.data.source_documents.get(id).is_none_or(|d| d["kind"] == "opaque") {
                     self.data.source_documents.insert(id.into(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(text.as_bytes()))}));
+                    if let Some(d) = self.dirty() {
+                        d.sources.insert(id.into());
+                    }
                 }
                 json!({"document_version":to_hex(&self.session.arena.doc(id).expect("inserted document").version_id)})
             }
@@ -1656,7 +2396,17 @@ impl Core {
                 let went_with_another = closing.is_some() && self.session.engine.status_of(&evidence) == Some(EV_REVOKED);
                 let hit = closing.as_ref().map(|(doc, text)| self.quotes_on(doc, text.as_bytes())).unwrap_or_default();
                 if !went_with_another {
-                    self.revoke_evidence(evidence)?;
+                    if self.session.engine.status_of(&evidence) != Some(EV_REVOKED) {
+                        // the record named, and every other record on the same evidence: its own text closes with it under the
+                        // rule of closed bytes; under the first rule nothing else does
+                        let fate = |s: &Self, id: &RecordId| match &closing {
+                            Some((doc, text)) => json!({"cause": "withdrawn", "named": *id == record, "withdrawal": s.withdrawal(doc, text.as_bytes(), id)}),
+                            None => json!({"cause": "revoked", "named": *id == record}),
+                        };
+                        self.revoke_with_fates(evidence, &fate)?;
+                    } else {
+                        self.revoke_evidence(evidence)?;
+                    }
                 }
                 match closing {
                     Some((doc, text)) => json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, Some(record))?}),
@@ -1692,7 +2442,46 @@ impl Core {
                     return Err(bad("to", "checkpoint must extend the current contiguous cursor within the ingest stream"));
                 }
                 self.data.checkpoints.insert(key.into(), command.clone());
+                if let Some(d) = self.dirty() {
+                    d.checkpoints.insert(key.into());
+                }
                 json!({"checkpoint":key,"cursor":to})
+            }
+            // a 0.2 journal only: the run closed by `audit_close`, and the seals (SPEC_V02_STEP2 sections 5 and 7)
+            "close" if self.dirty().is_some() => {
+                check_keys(command, &["kind"])?;
+                if actor != "kernel" {
+                    return Err(bad("actor", "only the kernel closes a run"));
+                }
+                if self.data.closed {
+                    return Err(bad("kind", "the run is already closed"));
+                }
+                self.data.closed = true;
+                if let Some(d) = self.dirty() {
+                    d.meta = true;
+                }
+                json!({"closed": true})
+            }
+            "seal" if self.dirty().is_some() => {
+                check_keys(command, &["kind", "seal"])?;
+                if actor != "kernel" {
+                    return Err(bad("actor", "only the kernel writes a seal"));
+                }
+                let seal = &command["seal"];
+                let mut keys: Vec<&str> = seal.as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
+                keys.sort_unstable();
+                let (status, dependencies) = self.projection_hashes();
+                // the kernel's part of the seal, read on the state before it; the journal's part is the caller's (`check_seal_log`)
+                if keys != SEAL_KEYS
+                    || seal["format"] != SEAL_FORMAT
+                    || seal["run_id"] != json!(self.data.run_id)
+                    || seal["audit_root"] != json!(to_hex(&self.root()))
+                    || seal["engine_root"] != json!(to_hex(&self.engine_root))
+                    || seal["projections"] != json!({"status": to_hex(&status), "dependencies": to_hex(&dependencies)})
+                {
+                    return Err(bad("seal", "a seal names this state: its run, its roots and the hashes of its projections"));
+                }
+                json!({"seal": seal, "seal_hash": to_hex(&seal_hash(seal))})
             }
             _ => return Err(KernelError::new(Code::UnknownOp, "unknown audit operation").field("kind")),
         };
@@ -1727,13 +2516,49 @@ impl Core {
         hit
     }
 
+    /// A withdrawal as the report of what fell names it for one quote it took: the document, the hash and length of the withdrawn
+    /// text, the version and the bytes of the occurrence that overlapped the quote, as they were when it went.
+    /// `span` is an occurrence on the quote's own version: for a quote bound to an earlier version than the one the text closed in,
+    /// bytes of two versions do not compare, and it is null (Codex recheck of baa75e5, S3-R01).
+    fn withdrawal(&self, doc_id: &str, text: &[u8], quote: &RecordId) -> Value {
+        let doc = self.session.arena.doc(doc_id);
+        let binding = self.data.evidence.get(quote);
+        let span = doc
+            .zip(binding)
+            .filter(|(d, b)| d.version_id == b.version)
+            .and_then(|(d, b)| find_all(&d.bytes, text).into_iter().find(|o| o.start < b.end && b.start < o.end))
+            .map(|o| json!([o.start, o.end]));
+        json!({"doc_id": doc_id, "sha256": to_hex(&sha256(text)), "bytes": text.len(), "version": doc.map(|d| to_hex(&d.version_id)), "span": span})
+    }
+
+    /// Revoke an evidence and write why for every record bound to it that has no cause yet: two readers may quote the same bytes,
+    /// one evidence under two records (Codex recheck of baa75e5, S3-R01).
+    fn revoke_with_fates(&mut self, evidence: Hash, fate: &dyn Fn(&Self, &RecordId) -> Value) -> KResult<()> {
+        self.revoke_evidence(evidence)?;
+        let bound: Vec<RecordId> = self
+            .data
+            .records
+            .iter()
+            .filter(|r| !self.data.fates.contains_key(&r.id) && self.data.evidence.get(&r.id).is_some_and(|b| b.evidence == evidence))
+            .map(|r| r.id)
+            .collect();
+        let fates: Vec<(RecordId, Value)> = bound.into_iter().map(|id| (id, fate(self, &id))).collect();
+        self.data.fates.extend(fates);
+        Ok(())
+    }
+
     /// The rest of a withdrawal: the quotes found before it go, and the text stays closed. The count leaves out the record named.
     fn close_text(&mut self, doc_id: &str, text: Vec<u8>, hit: Vec<(usize, usize, Hash, RecordId)>, named: Option<RecordId>) -> KResult<u64> {
         let also = hit.iter().filter(|(_, _, _, id)| Some(*id) != named).count() as u64;
         for (_, _, evidence, _) in hit {
             if self.session.engine.status_of(&evidence) != Some(EV_REVOKED) {
-                self.revoke_evidence(evidence)?;
+                // this withdrawal is why the quotes on this evidence went: a later one cannot claim them (S3-02)
+                let fate = |s: &Self, id: &RecordId| json!({"cause": "withdrawn", "named": Some(*id) == named, "withdrawal": s.withdrawal(doc_id, &text, id)});
+                self.revoke_with_fates(evidence, &fate)?;
             }
+        }
+        if let Some(d) = self.dirty() {
+            d.withdrawn.insert((doc_id.to_string(), sha256(&text)));
         }
         self.data.withdrawn.entry(doc_id.to_string()).or_default().insert(text);
         Ok(also)
@@ -1756,6 +2581,17 @@ impl Core {
                 failed_index = Some(index);
                 break;
             }
+            // a seal names the prefix of the journal and is checked as a frame of its own; a close ends the run after its seal
+            // (Codex review of 43447f4, S2-01: a seal inside a batch named a prefix no check compared)
+            #[cfg(test)]
+            let nested = NESTED_FRAMES.with(std::cell::Cell::get);
+            #[cfg(not(test))]
+            let nested = false;
+            if (operation["kind"] == "seal" || operation["kind"] == "close") && !nested {
+                failure = Some(bad("kind", "a seal or a close is a frame of its own, never an operation of a batch"));
+                failed_index = Some(index);
+                break;
+            }
             let previous = if self.in_place || (index == 0 && base.is_some()) { None } else { Some(self.fork()?) };
             match self.execute(actor, operation) {
                 Ok(Outcome::Records(report)) => {
@@ -1774,7 +2610,7 @@ impl Core {
                             // the state as `stage` began the batch on it
                             None => {
                                 let mut fresh = base.expect("the base of a staged batch").fork()?;
-                                fresh.root_cache.get_mut().expect("audit root cache poisoned").begin(command);
+                                fresh.begin_roots(command);
                                 fresh
                             }
                         };
@@ -1823,6 +2659,23 @@ impl AuditStore for AuditState {
     }
     fn doc_text(&self, doc_id: &str) -> Option<String> {
         self.core.session.arena.doc(doc_id).and_then(|d| String::from_utf8(d.bytes.clone()).ok())
+    }
+    fn quoted_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
+        let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
+        // the bytes the kernel bound each quote to, in the document's present version, while its evidence stands
+        self.core
+            .data
+            .records
+            .iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .filter_map(|r| self.core.data.evidence.get(&r.id))
+            .filter(|b| b.version == doc.version_id && self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
+            .map(|b| (b.start, b.end))
+            .collect()
+    }
+    fn closed_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
+        let (Some(doc), Some(closed)) = (self.core.session.arena.doc(doc_id), self.core.data.withdrawn.get(doc_id)) else { return Vec::new() };
+        closed.iter().flat_map(|text| find_all(&doc.bytes, text)).map(|o| (o.start, o.end)).collect()
     }
     fn submit_records(&mut self, actor: &str, directive: &str, scope: &Scope, lines: &[Value]) -> SubmitReport {
         // Compatibility entry point for the first builder/dispatcher skeleton. Production transports should supply the
@@ -1984,6 +2837,14 @@ impl AuditStore for AuditState {
     fn root(&self) -> Hash {
         self.audit_root()
     }
+    fn epoch(&self) -> Hash {
+        // a 0.2 journal: the chain head, read at no cost; the first formats keep the audit root
+        if self.is_v3() {
+            self.frames.last().copied().unwrap_or(ZERO_HASH)
+        } else {
+            self.audit_root()
+        }
+    }
 }
 
 fn decode_hex(hex: &str) -> KResult<Vec<u8>> {
@@ -2011,6 +2872,10 @@ thread_local! {
     static COPY_REPLAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Tests only: the copies of the state made on this thread.
     static FORKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Tests only: a batch takes a seal or a close as an operation, the way before 09.11.2026, to write the journal a replay refuses.
+    static NESTED_FRAMES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests only: the next n seals fail before they reach the journal.
+    static FAIL_SEALS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

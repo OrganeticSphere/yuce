@@ -167,6 +167,13 @@ fn a_copy_may_name_its_grounds_in_full_and_a_wrong_id_is_refused() {
         let r = a.d.submit(&mut a.s, &task, "repair", &[claim("copy", &[&id], KEPT_TEXT), done(&t, &["copy"])], 101);
         assert_eq!(r["dropped_copies"], json!(["copy"]), "{name}: {r}");
     }
+    // without the `@`, as the dispatcher adds it before the store reads the line
+    let mut a = withdrawn_under(&[0, 1], false);
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    let task = t["task_id"].as_str().unwrap().to_string();
+    let bare = a.quotes[2].short()[1..].to_string();
+    let r = a.d.submit(&mut a.s, &task, "repair", &[claim("copy", &[&bare], KEPT_TEXT), done(&t, &["copy"])], 101);
+    assert_eq!(r["dropped_copies"], json!(["copy"]), "bare: {r}");
     let mut a = withdrawn_under(&[0, 1], false);
     let t = a.d.acquire(&a.s, "repair", true, 100);
     let task = t["task_id"].as_str().unwrap().to_string();

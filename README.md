@@ -94,15 +94,20 @@ The environment for agent teams is the audit server, `sbgk audit-serve`:
   or not (`audit_withdraw_text`). That closes those bytes in the document: every stored quote overlapping them goes with it,
   and a new quote overlapping them is refused. Every record whose
   required grounds include one of those quotes loses its support at once; since all entries of `based_on` are required,
-  one withdrawn quote is enough. Records grounded independently of it stay available, and history is not rewritten. A claim in an answer also
+  one withdrawn quote is enough. Records grounded independently of it stay available, and history is not rewritten. The report of
+  what fell (`audit_fallen`, or `sbgk audit-read fallen` over the journal) names each record that lost a ground, the quotes that went
+  (by their bytes, without their text), the quotes under it that still stand, and claims on other sources that say much the same. A claim in an answer also
   carries a time label for its reader: `CURRENT_UNCERTAIN` (a claim that rested on an earlier and a later report lost the
   later quote; the kernel opens a task on that report and warns the next summary) or `LATEST_KNOWN` (no later state is known
   to the kernel, which is not proof that the state is current). With the
   experimental graph, accepted `supersedes` links add `CITES_REPLACED` (its quotes include an earlier state that was
   replaced, and none of the replacing one) and `CITES_EARLIER_AND_LATER` (quotes of both).
-* **Hash-chained journal.** Each accepted transaction is one frame of an append-only journal (`sbgk-session-log/2`):
-  canonical JSON (RFC 8785), linked by SHA-256 to the previous frame, written and synced before the new state is
-  published. Reopening a journal replays it and checks that it reproduces the same `audit_root` and `engine_root`.
+* **Hash-chained journal.** Each accepted transaction is one frame of an append-only journal (`sbgk-session-log/3`):
+  canonical JSON (RFC 8785), a header that names the body by its hash and the accepted records by the root of their tree,
+  linked by SHA-256 to the previous header, written and synced before the new state is published. Reopening a journal
+  replays it and checks that it reproduces the same `audit_root` and `engine_root`. The server seals the journal from time
+  to time: the frames so far, the roots of the state and the hashes of what stands and what rests on what.
+  Journals of 0.1 (`sbgk-session-log/2`) still verify.
 * **Coordination.** Work is cut into tasks. Each task is leased to one agent at a time; an expired lease is taken back.
   A retry with the same submission id returns the original receipt instead of committing twice. Readers work in circles
   (reading, then answering), with roles given per task. When the run is complete, the owner closes it (`audit_close`), and agents that ask for work
@@ -133,8 +138,6 @@ see [LIMITATIONS.md](LIMITATIONS.md).
   through, and the server's role check is the only filter. The agent id and the token come from the bridge's
   configuration. Give each agent a restricted profile: `--allow-tools`, `--agent-id` and its own token. The servers have
   no TLS; a non-loopback `--listen` address needs `--allow-remote` (and, for `mcp-serve`, `--token`).
-* **A closed run opens again on a restart.** `audit_close` is held in memory, not in the journal: a server started on the same
-  journal is open again.
 * **Verification costs model calls.** Link checks and re-reads after a withdrawal are extra work for the agents.
 * **Size.** Up to 8 agents at once are recommended for 0.1, and runs of a few thousand records: the cost of a commit and of
   reopening the journal grows with it. A real run's journal of about 3,000 records reopens in about 2 s, as does a journal of
@@ -164,6 +167,25 @@ the same commands). The Python client is on PyPI:
 ```bash
 pip install organetic-yuce
 ```
+
+### One agent on your own folder
+
+A folder of UTF-8 text files, one question, one agent (Claude Code, Cursor or any MCP client):
+
+```bash
+cat > questions.json <<'EOF'
+[{"id": "q1", "text": "What do these documents say about refunds?", "about": ["refund"]}]
+EOF
+sbgk audit-serve --profile solo --docs ./my-docs --questions questions.json --run-id mine --wal mine.wal --listen 127.0.0.1:8787
+```
+
+`--profile solo` runs one reading agent without a graph builder. Without `--subjects` the server writes `mine.wal.subjects.json`
+beside the journal with two tokens, `agent` for your agent and `owner` for you, and never prints them. Join your MCP client as
+`agent` with the bridge entry below (`--agent-id agent`, its token in `SBGK_MCP_TOKEN`). `about` names the words your documents
+use for the topic: if no document holds any of them, the server says so at the start and in `audit_status`.
+
+The same flags fit in one file: `sbgk audit-serve --settings settings.json`, with relative paths taken from the file's folder.
+`examples/settings/` holds one you can run as it is.
 
 The examples below are in this repository, not in the release archives. To build from source with a current stable Rust
 toolchain and run the tests:
@@ -226,11 +248,13 @@ EOF
 ```
 
 Without further flags the server runs the measured v0.1 profile: no graph builder, reading in circles with dynamic roles,
-stale suspects and the dated summary. It needs at least three reading agents, as above. `--profile custom` takes every flag as
+stale suspects and the dated summary. It needs at least three reading agents, as above; `--profile solo` is the same for one agent,
+without circles and dynamic roles. `--profile custom` takes every flag as
 given instead (for example a dedicated `builder` subject with the experimental `--build-scope full`).
 
 The first line of output gives the address and the initial `audit_root`. Each new run needs a new `--wal` path; started
-again on an existing journal without `--manifest` or `--docs`, the server resumes that run.
+again on an existing journal without `--manifest` or `--docs`, the server resumes that run: give it the same `--questions` and the
+same profile, as neither is in the journal.
 
 Your own documents need no manifest: `--docs` takes the UTF-8 text files of a folder, such as contracts, policies, logs or code.
 
@@ -253,6 +277,14 @@ state of it exits 1. With `--at-end` that state must also be the journal's last.
 and every entry check out, not that this is the journal a receipt names: only `--expect` says that. Keep the receipt where the journal's writer cannot change it, for example in a
 protected git commit or a CI artifact: a party that can rewrite the whole journal can also rewrite its hash chain.
 
+A 0.2 server started with `--signing-key` (made by `sbgk keygen`) signs every seal into a checkpoint beside the journal, in the
+C2SP `signed-note` format; `sbgk audit-verify --wal demo.wal --checkpoint <file> --trusted-keys <file>` checks the signature and
+that the checkpoint names this journal's frames. Keep the checkpoint where the journal's writer cannot change it.
+
+`sbgk audit-read <tool> --wal demo.wal` reads a recorded journal after the same check: `status`, `dependents --record <id>` (or
+`--doc-id`), `active-claims`, `diff --from <n> [--to <n>]`, `record --record <id>` and `fallen [--since <n>]`, where a point `<n>`
+is a number of frames, as in a seal. They answer as the owner's tools of the live server do.
+
 An MCP client joins as one agent through the bridge, for example with this `.mcp.json` entry:
 
 ```json
@@ -269,13 +301,14 @@ The owner joins the same way with the owner's token and its tools:
 {"mcpServers": {"r2r-owner": {
   "command": "/path/to/sbgk",
   "args": ["mcp-bridge", "--connect", "127.0.0.1:8787", "--agent-id", "owner",
-           "--allow-tools", "audit_status,audit_record,audit_revoke,audit_withdraw_text,audit_terminal_receipt"],
+           "--allow-tools", "audit_status,audit_record,audit_fallen,audit_revoke,audit_withdraw_text,audit_terminal_receipt"],
   "env": {"SBGK_MCP_TOKEN": "replace-with-a-secret-4"}}}}
 ```
 
 The bridge adds the token to every message, so the token stays in the bridge's environment and out of the model's prompt.
 It refuses `shutdown` unless started with `--allow-shutdown`, so a worker cannot stop the shared server. The agent calls `audit_acquire`, does what the directive asks, and sends its JSON lines with
-`audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_revoke`, `audit_withdraw_text` and `audit_close`.
+`audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_dependents`, `audit_active_claims`, `audit_diff`,
+`audit_fallen`, `audit_revoke`, `audit_withdraw_text` and `audit_close`.
 
 More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core/src/audit/README.md).
 
