@@ -30,7 +30,9 @@ struct Fixture {
 
 impl Fixture {
     fn new(tag: &str) -> Self {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce =
+            format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(), UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let dir = std::env::temp_dir().join(format!("sbgk_review_mcp_diag_8716_{tag}_{}_{nonce}", std::process::id()));
         std::fs::create_dir(&dir).expect("create a unique, positively owned fixture directory");
         let wal = dir.join("run.wal");

@@ -179,7 +179,12 @@ mod tests {
 
     impl Folder {
         fn new(tag: &str, files: &[(&str, &[u8])]) -> Folder {
-            let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let nonce = format!(
+                "{}-{}",
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
             let root = std::env::temp_dir().join(format!("sbgk_docs_{tag}_{}_{nonce}", std::process::id()));
             for (name, bytes) in files {
                 let path = root.join(name);

@@ -17,10 +17,12 @@ impl Drop for TempPath {
 }
 
 fn temp(name: &str) -> TempPath {
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     TempPath(std::env::temp_dir().join(format!(
-        "r2r_proof_{name}_{}_{}.jsonl",
+        "r2r_proof_{name}_{}_{}-{}.jsonl",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )))
 }
 
@@ -101,6 +103,20 @@ fn a_quittance_of_a_claim_on_two_quotes_checks_without_the_journal_in_both_modes
     // a quittance of an observation alone: one record
     let proof = build_of(&r, &r.observations[0][..12], ProofOptions::default()).unwrap();
     assert_eq!(verify(&proof, &[], None, None, None).unwrap()["records"], 1);
+}
+
+/// A record is named as the reading tools show it: the short form `@` and 16 hex digits names the same record as the whole id
+/// (the first stub run of 0.2 was told that a record of its answer had been written after the seal); a name that is no id is told so.
+#[test]
+fn a_quittance_takes_the_short_form_of_an_id_the_reading_tools_show() {
+    let r = run("short", |_, _| {});
+    let whole = build_of(&r, &r.claim, ProofOptions::default()).unwrap();
+    let short = build_of(&r, &format!("@{}", &r.claim[..16]), ProofOptions::default()).unwrap();
+    assert_eq!(to_file(&short), to_file(&whole));
+    let refused = build_of(&r, "t3_c1", ProofOptions::default()).unwrap_err();
+    assert!(refused.message.contains("is no record id"), "{}", refused.message);
+    let refused = build_of(&r, &format!("@{}", "0".repeat(16)), ProofOptions::default()).unwrap_err();
+    assert!(refused.message.contains("no record @0000"), "{}", refused.message);
 }
 
 /// Every scalar of a quittance, by its path.

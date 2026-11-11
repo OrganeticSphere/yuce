@@ -61,13 +61,13 @@ The server no longer resumes a 0.1 journal: finish it with a 0.1 release.
   An anchored day is a day of the calendar or the check refuses; the days a key is valid hold for a revoked key too; a note
   with a control character other than the line end is refused whole. A server that could not write a seal's checkpoint says so
   in `audit_status` and in the reply of `audit_close` (`signing`) and on stderr; the seal stands, `audit-sign` writes it later.
-* **Quittances (`yuce-proof/1`).** `sbgk audit-proof --wal <run.wal> --record <id>` cuts one file that shows a record with every
-  record it rests on, down to its quotes, under the signed checkpoint of a seal; `sbgk audit-proof-verify --proof <file>` checks it
-  alone, without the journal and without a model, with the key statuses of a checkpoint and `--expect-seal` for an anchored seal.
-  `--self-contained` adds the bytes of every quote with its document version's chunk list, `--with-status` the status projection of
-  the seal. A quittance proves that the records were written before the seal (and with the projection, that they stood at it), not
-  that they stand now. It is cut only of records that stand at the seal, carries no hypothesis of a model, and a self-contained
-  one hands out no chunk that holds withdrawn text.
+* **Quittances (`yuce-proof/1`).** `sbgk audit-proof --wal <run.wal> --record <id>` (the whole id, or the `@` short form the
+  reading tools show) cuts one file that shows a record with every record it rests on, down to its quotes, under the signed
+  checkpoint of a seal; `sbgk audit-proof-verify --proof <file>` checks it alone, without the journal and without a model, with
+  the key statuses of a checkpoint and `--expect-seal` for an anchored seal. `--self-contained` adds the bytes of every quote with
+  its document version's chunk list, `--with-status` the status projection of the seal. A quittance proves that the records were
+  written before the seal (and with the projection, that they stood at it), not that they stand now. It is cut only of records
+  that stand at the seal, carries no hypothesis of a model, and a self-contained one hands out no chunk that holds withdrawn text.
 * **The index beside a journal (`sbgk audit-index`).** A SQLite database any tool reads (`<run.wal>.index.sqlite`): frames,
   records with their frame and leaf hash, grounds, quotes, seals and the status of every record. It is rebuilt from the journal at
   any time and adds the rows of new frames to an index of the frames before them; `--check` compares it with the journal row by

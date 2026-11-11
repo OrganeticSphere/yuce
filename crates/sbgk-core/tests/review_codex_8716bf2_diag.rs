@@ -19,7 +19,12 @@ impl Drop for Wal {
 
 #[test]
 fn a_later_duplicate_local_id_does_not_mislabel_an_earlier_valid_observe_basis() {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("review_diag_8716_{}_{nonce}.jsonl", std::process::id())));
     let docs = vec![("d1".to_string(), b"# Topic\nAlpha fact is reported.\nBeta fact is reported.\n".to_vec())];
     let mut state = AuditState::create(&wal.0, &AuditOntology::base(), &docs, "review-diag-8716", sha256(b"scripted-fixture")).unwrap();

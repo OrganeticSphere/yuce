@@ -21,7 +21,12 @@ impl Drop for Wal {
 }
 
 fn wal(tag: &str) -> Wal {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     Wal(std::env::temp_dir().join(format!("sbgk_codex77a_{tag}_{}_{nonce}.jsonl", std::process::id())))
 }
 

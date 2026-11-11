@@ -342,7 +342,12 @@ fn stdio_transport_speaks_the_same_protocol() {
 // ------------------------------------------------------------------ Stage B
 
 fn temp_path(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     std::env::temp_dir().join(format!("sbgk_{tag}_{}_{nanos}.jsonl", std::process::id()))
 }
 

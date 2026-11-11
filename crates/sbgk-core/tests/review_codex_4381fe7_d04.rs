@@ -8,7 +8,12 @@ use serde_json::json;
 
 #[test]
 fn d04_cross_type_reserved_name_is_not_rebound_through_an_alias_of_another_concept() {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = std::env::temp_dir().join(format!("review_final_d04_{}_{nonce}.jsonl", std::process::id()));
     let docs = vec![("d1".to_string(), b"The reserved name denotes the existing component.".to_vec())];
     let mut s = AuditState::create(&wal, &AuditOntology::base(), &docs, "review-final-d04", sha256(b"review-fixture")).unwrap();

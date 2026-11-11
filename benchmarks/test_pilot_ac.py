@@ -78,6 +78,13 @@ class Stub(unittest.TestCase):
         self.assertTrue(all(x["local_id"].startswith("t3_") for x in lines))
         self.assertIn(lines[0]["exact_quote"], R1)
 
+    def test_a_gap_task_gets_an_explicit_empty_answer(self):
+        # an empty reply is a broken answer to the runner; a stub that wrote nothing to a gap task stopped the first pre-flight of 0.2
+        prompt = ("Answer with at most 32 JSON lines; every local_id starts with t68_.\n\nTASK GAP: the reading of report d_1 recorded nothing "
+                  "from the units below.\nUNITS doc_id=\"d_1\":\n[1] (bytes 0..20)\n<<<\n" + R1 + "\n>>>\nIf there is deliberately "
+                  "nothing to add, reply exactly [].")
+        self.assertEqual(P.StubModel().complete(prompt)[0], "[]")
+
 
 class Team(unittest.TestCase):
     def test_the_lead_gets_every_report_path_and_a_short_name_is_refused(self):

@@ -61,7 +61,12 @@ fn serve_resumes_from_its_log_after_a_kill() {
     let reference = r.ask(r#"{"op":"state"}"#);
     r.kill();
 
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = std::env::temp_dir().join(format!("sbgk_serve_wal_{}_{nanos}.jsonl", std::process::id()));
     let wal_s = wal.to_str().unwrap();
     let mut a: Vec<&str> = base.to_vec();

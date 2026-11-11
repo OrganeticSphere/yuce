@@ -81,11 +81,15 @@ fn capture(s: &AuditState, record: &str, opts: ProofOptions) -> KResult<Captured
     let count = s.record_count();
     let id_of = |i: usize| to_hex(&s.record_at(i).id.0);
     let index: HashMap<String, usize> = (0..count).map(|i| (id_of(i), i)).collect();
-    let want = record.to_ascii_lowercase();
+    // the id as the reading tools show it: whole, or its first hex digits, with or without the `@` of the short form
+    let want = record.strip_prefix('@').unwrap_or(record).to_ascii_lowercase();
+    if !want.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(refuse("record", format!("{record} is no record id: give the id or its short form, @ and 8 hex digits or more")));
+    }
     let found: Vec<usize> = (0..count).filter(|&i| id_of(i).starts_with(&want)).collect();
     let target = match found[..] {
         [i] if want.len() >= 8 => i,
-        [] => return Err(refuse("record", format!("no record {record} in the journal up to this seal: one written after it needs a later seal"))),
+        [] => return Err(refuse("record", format!("no record {record} in the journal up to this seal (a record written after it needs a later seal)"))),
         _ => return Err(refuse("record", format!("{record} names more than one record or is shorter than 8 hex digits"))),
     };
     // the record and every record it rests on, through `based_on` and the ends of a relation, down to the observations

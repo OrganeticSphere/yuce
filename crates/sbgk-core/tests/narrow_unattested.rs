@@ -15,7 +15,12 @@ impl Drop for Wal {
     }
 }
 fn fresh(revisions: bool, attest: bool) -> (Wal, AuditState, ConceptId, ConceptId, Vec<RecordId>) {
-    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("narrow-{n}-{}.wal", std::process::id())));
     let mut o = AuditOntology::base();
     o["seed_status"] = json!("provisional");
@@ -233,7 +238,12 @@ fn end_attestation_needs_the_name_in_a_report_not_a_mapping() {
 fn an_end_attestation_written_before_the_text_rule_replays_by_its_mappings() {
     // Codex review R01: by 3592a94, a seed the report names but nothing was mapped to; the rule then made it unattested
     let bytes = include_bytes!("data/unattested_3592a94.wal");
-    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("legacy-attestation-{n}-{}.wal", std::process::id())));
     std::fs::write(&w.0, bytes).unwrap();
     let s = AuditState::open(&w.0).unwrap();

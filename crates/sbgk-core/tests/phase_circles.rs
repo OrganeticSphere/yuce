@@ -16,7 +16,12 @@ impl Drop for Wal {
     }
 }
 fn fresh() -> (Wal, AuditState) {
-    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("circle_{}_{n}.wal", std::process::id())));
     let docs = (0..9).map(|i| (format!("d{i}"), format!("# Topic {i}\nThe topic has condition {i}.\n").into_bytes())).collect::<Vec<_>>();
     let s = AuditState::create(&w.0, &AuditOntology::base(), &docs, "circles-toy", sha256(b"toy")).unwrap();

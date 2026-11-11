@@ -14,7 +14,12 @@ impl Drop for Wal {
     }
 }
 fn fresh(tag: &str) -> (Wal, AuditState, [RecordId; 2]) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_d01_d02_{tag}_{}_{nonce}.jsonl", std::process::id())));
     let text = b"First independent evidence.\nSecond independent evidence.\n".to_vec();
     let mut s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), text)], tag, sha256(tag.as_bytes())).unwrap();

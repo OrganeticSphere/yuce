@@ -22,7 +22,12 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(tag: &str) -> Fixture {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = format!(
+            "{}-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let dir = std::env::temp_dir().join(format!("sbgk_audit_mcp_review_{tag}_{}_{nonce}", std::process::id()));
         std::fs::create_dir_all(dir.join("repo/reports")).unwrap();
         // Exactly two 64-byte ASCII sections, without headings or blank-line packing boundaries.

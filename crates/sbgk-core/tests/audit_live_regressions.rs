@@ -19,7 +19,12 @@ impl Drop for Wal {
 }
 
 fn fresh(tag: &str) -> (Wal, AuditState) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_live_regr_{tag}_{}_{nonce}.jsonl", std::process::id())));
     let docs = vec![("d1".to_string(), b"# First\nTopic A is reported.\n".to_vec()), ("d2".to_string(), b"# Second\nTopic B is reported.\n".to_vec())];
     let state = AuditState::create(&wal.0, &AuditOntology::base(), &docs, "live-regressions", sha256(b"toy")).unwrap();

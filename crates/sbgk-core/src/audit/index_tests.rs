@@ -17,10 +17,12 @@ impl Drop for TempPath {
 }
 
 fn temp(name: &str) -> TempPath {
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     TempPath(std::env::temp_dir().join(format!(
-        "r2r_index_{name}_{}_{}.jsonl",
+        "r2r_index_{name}_{}_{}-{}.jsonl",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )))
 }
 
