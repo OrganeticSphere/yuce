@@ -8,7 +8,12 @@ impl Drop for Wal {
     }
 }
 fn state() -> (Wal, AuditState, Scope) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let path = Wal(std::env::temp_dir().join(format!("root-cache-{}-{nonce}.wal", std::process::id())));
     // the cache serves the `/1` root of the first formats
     let mut s = AuditState::create_v2(

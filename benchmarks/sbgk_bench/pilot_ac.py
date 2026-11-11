@@ -857,7 +857,8 @@ class StubModel:
             return self._summarize(prompt), {}, 0.0
         if "TASK RELATE" in prompt:
             return self._relate(prompt), {}, 0.0
-        if "TASK INVESTIGATE" in prompt or "TASK REREAD" in prompt or "TASK CHECK_COVERAGE" in prompt or "TASK FIND_LINK_BASIS" in prompt:
+        # the gap pass of 0.2 (TASK GAP): the stub finds nothing in the units, so each tier closes after its empty packs
+        if any(f"TASK {kind}" in prompt for kind in ("INVESTIGATE", "REREAD", "CHECK_COVERAGE", "FIND_LINK_BASIS", "GAP:")):
             return "[]", {}, 0.0
         if prompt.startswith("ARM A WORKER"):
             return "\n".join(f"- [{doc}] \"{line}\"" for doc, line in a_findings(prompt)), {}, 0.0

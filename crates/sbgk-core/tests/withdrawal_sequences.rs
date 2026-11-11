@@ -138,7 +138,12 @@ fn quote(s: &mut AuditState, m: &mut Model, rng: &mut Rng, step: usize) {
 }
 
 fn run(seed: u64) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let journal = Journal(std::env::temp_dir().join(format!("sbgk_sequences_{}_{seed}_{nonce}.wal", std::process::id())));
     let mut rng = Rng(seed);
     let mut m = Model::default();

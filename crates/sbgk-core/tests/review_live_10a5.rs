@@ -23,7 +23,12 @@ const R1: &str = "# Gate\nThe gate blocks a validator version mismatch.\n";
 const R2: &str = "# Notes\nThe release checklist was signed by the owner.\n";
 
 fn fresh(tag: &str) -> (Wal, AuditState) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_live10a5_{tag}_{}_{nonce}.jsonl", std::process::id())));
     let docs = vec![("r1".to_string(), R1.as_bytes().to_vec()), ("r2".to_string(), R2.as_bytes().to_vec())];
     let state = AuditState::create(&wal.0, &AuditOntology::base(), &docs, "live-10a5", sha256(b"toy")).unwrap();
@@ -112,7 +117,12 @@ fn an_ambiguous_quote_gets_the_shortest_unique_extension_inside_its_section() {
     let text =
         "# A\nintro words here\nArchitect disposition:\nCOMPATIBLE ONLY.\nalpha end\n# B\nother words\nArchitect disposition:\nCOMPATIBLE ONLY.\nbeta end\n";
     let split = text.find("# B").unwrap();
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_live10a6_ext_{}_{nonce}.jsonl", std::process::id())));
     let mut s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), text.as_bytes().to_vec())], "ext", sha256(b"ext")).unwrap();
     let hint = |s: &AuditState, quote: &str, ranges: Vec<(String, usize, usize)>| {
@@ -196,7 +206,12 @@ fn a_unique_extension_on_the_left_is_found_past_a_long_word_on_the_right() {
     let long = "x".repeat(400);
     let text = format!("# A\nuniqueLeft SHARED {long}\n# B\nother SHARED tail\n");
     let split = text.find("# B").unwrap();
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_codexd1f_left_{}_{nonce}.jsonl", std::process::id())));
     let s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), text.as_bytes().to_vec())], "left", sha256(b"left")).unwrap();
     let scope = Scope { docs: vec!["d".into()], topic: None, ranges: vec![("d".into(), 0, split)] };

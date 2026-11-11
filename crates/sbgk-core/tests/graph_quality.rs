@@ -22,7 +22,12 @@ fn fresh(q: Value) -> (Wal, AuditState, Vec<RecordId>, Vec<RecordId>) {
     fresh_with(q, &["w1", "w2", "w3"])
 }
 fn fresh_with(q: Value, readers: &[&str]) -> (Wal, AuditState, Vec<RecordId>, Vec<RecordId>) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("quality-{nonce}-{}.wal", std::process::id())));
     let mut o = AuditOntology::base();
     o["concepts"] = json!([{"type":"Component","name":"reactor","aliases":["unit"]},{"type":"Limitation","name":"out of scope","aliases":["excluded area"]},{"type":"Component","name":"neutron gate","aliases":[]}]);
@@ -214,7 +219,12 @@ fn evolution_requires_mapping_and_different_dated_reports() {
 fn explicit_order_pairs_undated_reports_against_their_id_order_and_no_order_pairs_nothing() {
     // Codex review R03: undated 'z' comes before 'a' by the explicit order only
     let detect = |order: Value| {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = format!(
+            "{}-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let w = Wal(std::env::temp_dir().join(format!("quality-order-{nonce}-{}.wal", std::process::id())));
         let mut o = AuditOntology::base();
         o["concepts"] = json!([{"type":"Component","name":"alpha","aliases":[]}]);
@@ -265,7 +275,12 @@ fn manifest_dates_order_pages_without_front_matter_and_pages_of_one_date_pair_no
         ("docs/specification/2025-06-18/deprecated.mdx", "2025-06-18", "Alpha state is listed."),
     ];
     let detect = |dated: bool, reopen: bool| {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = format!(
+            "{}-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let w = Wal(std::env::temp_dir().join(format!("quality-dates-{nonce}-{}.wal", std::process::id())));
         let entries = pages
             .iter()
@@ -351,7 +366,12 @@ fn a_withdrawn_replacement_rereads_its_page_also_when_both_pages_carry_one_date(
         ("reports/release.mdx", "In release V the port became 9090. Another notice confirms port 9090."),
     ];
     let reread = |dates: Option<[&str; 2]>, reopen: bool| {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = format!(
+            "{}-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let w = Wal(std::env::temp_dir().join(format!("quality-mdate-{nonce}-{}.wal", std::process::id())));
         let entries = pages
             .iter()
@@ -899,7 +919,12 @@ fn a_readers_claim_is_not_told_the_suspicion_of_another_claim_on_its_quote() {
     // state replaces the old one and then loses its quote. The old pump claim is a stale suspect; the valve claim beside it is not,
     // and its answer must not call it historical or uncertain
     const OLD: &str = "Pump A is OFF. Valve B is OPEN.";
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("quality-neighbour-{nonce}-{}.wal", std::process::id())));
     let docs = [("old", "2024-01-01", OLD), ("new", "2025-01-01", "Pump A is ON."), ("confirm", "2026-01-01", "Pump A was OFF in 2024.")]
         .map(|(id, date, text)| (id.to_string(), format!("+++\ndate = \"{date}\"\n+++\n{text}\n").into_bytes()));

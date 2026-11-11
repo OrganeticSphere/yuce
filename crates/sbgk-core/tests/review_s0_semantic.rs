@@ -20,7 +20,12 @@ impl Drop for Wal {
 const DOC: &str = "# Sync\nThe base moved to 5b2d8e476f1a3c9e0b4d7f2a8c5e1b3d6f9a0c4e after PR #125.\nIt does not authorize implementation beyond the documentation scope. The gate stays open.\n";
 
 fn task(tag: &str) -> (Wal, AuditState, Dispatcher, String, String) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_s0_{tag}_{}_{nonce}.jsonl", std::process::id())));
     let s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), DOC.as_bytes().to_vec())], "s0", sha256(b"s0")).unwrap();
     let q = ResearchQuestion { id: "RQ1".into(), text: "What moved?".into(), about: vec!["base".into()], ..Default::default() };
@@ -73,7 +78,12 @@ fn the_builder_does_not_map_a_term_to_a_concept_of_another_commit() {
     use sbgk_core::audit::builder::{Builder, BuilderConfig};
     use sbgk_core::audit::{AuditStore, Scope};
     let doc = "# Heads\nThe validation of head 9e4b1d73 is stale after the correction.\nThe validation of head 2c6e0a85 is stale for the commit.\n";
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_s0_map_{}_{nonce}.jsonl", std::process::id())));
     let mut s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), doc.as_bytes().to_vec())], "s0map", sha256(b"s0map")).unwrap();
     let r = s.submit_records(

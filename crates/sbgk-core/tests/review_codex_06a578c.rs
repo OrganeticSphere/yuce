@@ -17,7 +17,12 @@ impl Drop for Wal {
 }
 
 fn fresh(doc: &str, tag: &str) -> (Wal, AuditState) {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let wal = Wal(std::env::temp_dir().join(format!("sbgk_codex06_{tag}_{}_{nonce}.wal", std::process::id())));
     let s = AuditState::create(&wal.0, &AuditOntology::base(), &[("d".into(), doc.as_bytes().to_vec())], "codex06", sha256(b"fixture")).unwrap();
     (wal, s)

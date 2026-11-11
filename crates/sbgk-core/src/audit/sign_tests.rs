@@ -64,10 +64,12 @@ impl Drop for TempPath {
 
 #[test]
 fn the_checkpoint_of_a_seal_names_the_journal_up_to_and_with_its_seal_frame() {
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let path = TempPath(std::env::temp_dir().join(format!(
-        "r2r_sign_{}_{}.jsonl",
+        "r2r_sign_{}_{}-{}.jsonl",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )));
     let spec = GenesisSpec { questions: json!([]), settings: json!({"format": "fixture"}), operator_meta: None };
     let mut s =

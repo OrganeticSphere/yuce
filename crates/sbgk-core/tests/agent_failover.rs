@@ -17,7 +17,12 @@ impl Drop for Wal {
     }
 }
 fn fresh(tag: &str, limit: u32) -> (Wal, AuditState) {
-    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = format!(
+        "{}-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let w = Wal(std::env::temp_dir().join(format!("c0-failover-{tag}-{}-{n}.wal", std::process::id())));
     let mut s = AuditState::create(
         &w.0,

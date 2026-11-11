@@ -248,7 +248,12 @@ mod tests {
 
     #[test]
     fn one_log_one_owner_and_options_survive_without_targets() {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = format!(
+            "{}-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let path = std::env::temp_dir().join(format!("sbgk_journal_lock_{}_{nanos}.jsonl", std::process::id()));
         let mut sw = swarm();
         sw.cfg.default_k = 9;
