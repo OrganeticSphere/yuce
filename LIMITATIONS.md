@@ -35,7 +35,6 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   can report a torn tail that is not there.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
   `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
-* `audit_close` is not journaled: a server restarted on the same journal is open again.
 * **A journal holds the full text of its sources.** Whoever checks a journal gets them: to publish a journal is to publish its
   documents. A journal cannot be checked without their text.
 * `sbgk audit-serve` takes two kinds of sources: Markdown pinned by commit and SHA-256 (`--manifest`), or the UTF-8 text files of a
@@ -69,6 +68,28 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   is not touched. The text an agent writes is another matter: a later answer can repeat withdrawn content in other words, and how
   often it does is measured, not prevented. A note that a claim lost its later quote speaks for that claim: another record may
   still show the later state.
+* **What the reading tools can prove.** The projections are complete as to the kernel's rule: every `based_on` and relation end
+  the records declare. They are not complete as to the world: a dependency an agent did not declare is in no projection, so
+  `dependents` and the report of what fell cannot show it. From the journal the report proves what stands, what fell and which
+  quote went. Its twins are found by comparing words, a heuristic that misses a claim worded otherwise and can name one that only
+  sounds alike; what it says to reread is advice.
+* **What a signed checkpoint proves.** Only that the holder of the key claimed that the journal of that many frames has that
+  root. A key file next to the journal, or a checkpoint kept in the operator's own repository, does not protect against the
+  operator: an anchor out of the writer's reach does, and a third-party witness is not in this version. Without a trusted keys file
+  the check says `key not pinned`, and without `--anchored-at` it says the time of the signature is not pinned: until a witness,
+  the only clock is the day the checkpoint was anchored.
+  `sbgk keygen` makes the key file readable by its owner only where the system has such modes (Unix); on Windows the file takes
+  the permissions of its folder, so keep it in a folder only you can read.
+* **What a quittance proves.** That a record and every record it rests on were in the journal the kernel sealed, under a signed
+  checkpoint; with the status projection inside, that they stood at that seal. Not that they stand now: that takes a later seal
+  and its status. A quittance of an older seal is checked against an anchor of that same seal only, until a witness can prove two
+  seals consistent. A self-contained quittance checks a quote's bytes against its document version, not its place in the document:
+  the byte offsets are the kernel's word, under the signature. With `--with-status` the receiver sees the id, kind and status
+  of every record of the run, not only of the target: no text, but what the run holds. There is no quittance of a record that
+  fell: that it fell is shown by the status projection or the withdrawn section of the state, not by a quittance.
+* **A withdrawal takes away support; it does not erase.** The journal keeps the withdrawn text: in the documents of its first entry
+  and in the quotes stored before the withdrawal, and whatever is read or indexed from the journal can show it. Erasing a text on
+  request, as a law may require, is not something the kernel does.
 * **Journals before 0.1.6 keep a narrower rule.** They refused only the exact span, so a wider quote could bring withdrawn text
   back as a new record, with its support. A recorded outcome has to replay as it was recorded, so those journals keep that rule
   and verify as before. In the published runs it happened once: in DeepSeek series 1 a reader widened the refused sentence by 15
@@ -116,8 +137,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 * The Python client ([clients/python](clients/python)) is a thin client of the server's tools, with no model or loop of its own. It
   installs as `organetic-yuce`: the name `yuce` on PyPI belongs to an unrelated project.
-* Settings as a file and a page to edit them, and agents of any model joining and leaving with their own profile, are planned
-  for 0.2.
+* Settings as a file and a page to edit them are planned for 0.2. Agents of any model joining and leaving with their own profile
+  come later, with rights per agent.
 * TLS: the servers listen on loopback by default and have no TLS. See [SECURITY.md](SECURITY.md).
 
 ## Platforms

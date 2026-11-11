@@ -129,8 +129,9 @@ fn a_manifest_source_persists_its_exact_tuple_unresolved_metadata_and_roots_and_
     drop(state);
     let log = std::fs::read_to_string(&wal.0).unwrap();
     let genesis: Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
-    assert_eq!(genesis["payload"]["manifest_hash"], to_hex(&sha256(&manifest_bytes)));
-    assert_eq!(genesis["payload"]["source_documents"][&expected_id], descriptor);
+    // a 0.2 frame holds its entry in `body`
+    assert_eq!(genesis["body"]["manifest_hash"], to_hex(&sha256(&manifest_bytes)));
+    assert_eq!(genesis["body"]["source_documents"][&expected_id], descriptor);
     let recovered = AuditState::open(&wal.0).unwrap();
     assert_eq!(identity(&recovered), expected_roots);
     assert_eq!(recovered.docs(), std::slice::from_ref(&expected_id));
@@ -141,9 +142,11 @@ fn a_manifest_source_persists_its_exact_tuple_unresolved_metadata_and_roots_and_
 
 #[test]
 fn an_undated_manifest_keeps_its_roots_and_a_declared_date_changes_only_the_descriptor() {
-    // the roots of this fixture at 17769a8, before a manifest entry could declare a date: an undated manifest keeps them
+    // the roots of this fixture: the engine root at 17769a8, before a manifest entry could declare a date, and the audit root of
+    // the 0.2 format (`r2r-state-root/2`; the `/1` root of 0.1 was eb317f32...). An undated manifest keeps them, and the second pins
+    // the bytes of the new root
     const ENGINE_ROOT: &str = "61eb4cb329a5d3a8b3bd43fdd1103c0172b6f1d0d57280002faf36661d1eef0c";
-    const AUDIT_ROOT: &str = "eb317f322fa15c1899642e103797f144292d9b14391064522d5a570abbaee70f";
+    const AUDIT_ROOT: &str = "67b1466a30c5d65a649af0df20d1f1e82b8ab16e7ff09ef87ebaa9a20f83c4c0";
     let create = |m: &Value| {
         let wal = TempWal::new();
         let selected = [(REPORT_PATH.into(), REPORT.as_bytes().to_vec())];

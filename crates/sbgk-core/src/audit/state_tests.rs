@@ -38,6 +38,17 @@ fn state(path: &Path) -> AuditState {
     .unwrap()
 }
 
+fn state_v2(path: &Path) -> AuditState {
+    AuditState::create_v2(
+        path,
+        &AuditOntology::base(),
+        &[("policy".into(), b"Prior witness.\nNew witness.\n".to_vec())],
+        "failure-regression",
+        sha256(b"frozen manifest fixture"),
+    )
+    .unwrap()
+}
+
 fn observation(local_id: &str, quote: &str) -> Value {
     json!({"kind":"observe","local_id":local_id,"doc_id":"policy","exact_quote":quote,"terms":["witness"]})
 }
@@ -113,7 +124,7 @@ fn a_sync_failure_never_publishes_staged_state_and_recovery_deduplicates_the_una
 #[test]
 fn semantic_replay_failure_preserves_the_unterminated_tail_even_when_frame_hashes_are_valid() {
     let path = TempPath::new();
-    let mut state = state(&path.0);
+    let mut state = state_v2(&path.0);
     let report = state.submit_records_id("accepted", "worker", "task", &scope(), &[observation("e", "Prior witness.")]);
     assert!(report.error.is_none(), "{:?}", report.error);
     assert_eq!(report.accepted.len(), 1);
@@ -134,7 +145,8 @@ fn semantic_replay_failure_preserves_the_unterminated_tail_even_when_frame_hashe
 
     // Prove this is not a framing/hash rejection. Do not finish recovery here:
     // the State layer has not yet accepted the command's claimed post-roots.
-    let (journal, payloads) = AuditJournal::open(&path.0).unwrap();
+    let (journal, scan) = AuditJournal::open(&path.0).unwrap();
+    let payloads = scan.payloads;
     assert_eq!(payloads.len(), 2);
     assert_eq!(payloads[1]["audit_root"], json!(to_hex(&ZERO_HASH)));
     drop(journal);
@@ -194,7 +206,8 @@ fn with_links_off_no_path_stores_a_link_and_nothing_is_journaled_for_it() {
 /// audit roots are returned; the journal is at `path`.
 fn fork_scenario(path: &Path) -> Vec<(Hash, Hash)> {
     let docs = [("a".to_string(), b"Alpha one.\nAlpha two.\nAlpha three.\n".to_vec()), ("b".to_string(), b"Beta one.\nBeta two.\n".to_vec())];
-    let mut s = AuditState::create(path, &AuditOntology::base(), &docs, "fork-differential", sha256(b"fork differential manifest")).unwrap();
+    // the frames of the first formats: the forgery tests below rewrite them (the /3 ones have their own)
+    let mut s = AuditState::create_v2(path, &AuditOntology::base(), &docs, "fork-differential", sha256(b"fork differential manifest")).unwrap();
     let mut roots = Vec::new();
     let mut step = |s: &AuditState| {
         // the direct grounding of an observation is the grounding of the pass over every record, after every command
@@ -383,7 +396,7 @@ fn verify_replays_like_open_but_leaves_every_byte_of_the_journal_including_a_tor
     assert_eq!(seen[1].3, read.wal_head, "the head after the last complete frame");
     assert_ne!(seen[0].3, seen[1].3, "each state has the chain head after its own frames");
     assert_eq!(read.bytes - read.complete_bytes, 47, "the torn tail is read, not cut");
-    assert_eq!(session_root_of(&end.1, &end.0), end.2);
+    assert_eq!(session_root_v2(&end.1, &end.0), end.2);
     assert!(verified.wal_head().is_none(), "no journal is readied for writing");
     drop(verified);
     assert_eq!(std::fs::read(&path.0).unwrap(), bytes, "verify cuts nothing: the torn tail stays");
@@ -789,7 +802,11 @@ fn a_journal_of_the_first_format_keeps_the_exact_span_rule() {
 fn a_new_journal_records_the_rule_of_closed_bytes() {
     let path = TempPath::new();
     drop(state(&path.0));
-    assert!(std::fs::read_to_string(&path.0).unwrap().lines().next().unwrap().contains(GENESIS_FORMAT));
+    let genesis = std::fs::read_to_string(&path.0).unwrap().lines().next().unwrap().to_string();
+    assert!(genesis.contains(GENESIS_FORMAT_V3) && genesis.contains(RULES_VERSION), "{genesis}");
+    let old = TempPath::new();
+    drop(state_v2(&old.0));
+    assert!(std::fs::read_to_string(&old.0).unwrap().lines().next().unwrap().contains(GENESIS_FORMAT));
 }
 
 /// The order of two withdrawals does not decide what stays open: a quote that went with a narrower one can still be withdrawn, and the
@@ -928,4 +945,632 @@ fn a_document_name_leaves_room_for_the_keys_of_its_tasks() {
     let key = format!("task:reread:{id}#99999");
     let check = json!({"kind":"checkpoint","key":key,"from":0,"to":0,"context":{}});
     s.submit_operations_id("key", "kernel", &[check], None).unwrap();
+}
+
+// ---- the 0.2 journal (SPEC_V02_STEP2) ----
+
+fn claim(local_id: &str, text: &str, based_on: &[&str]) -> Value {
+    json!({"kind":"claim","local_id":local_id,"text":text,"subject":"witness","stance":"reported","based_on":based_on})
+}
+
+fn v3_spec() -> GenesisSpec {
+    GenesisSpec {
+        questions: json!([{"id": "RQ1", "text": "What is witnessed?"}]),
+        settings: json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": 4096}),
+        operator_meta: Some(json!({"team": "fixture"})),
+    }
+}
+
+fn v3_run(path: &Path) -> AuditState {
+    let docs = [("policy".to_string(), b"Prior witness.\nNew witness.\n".to_vec())];
+    let mut s = AuditState::create_with(path, &AuditOntology::base(), &docs, "v3-run", sha256(b"v3 manifest"), &v3_spec()).unwrap();
+    let r = s.submit_records_id(
+        "seed",
+        "worker",
+        "task",
+        &scope(),
+        &[observation("o1", "Prior witness."), observation("o2", "New witness."), claim("c1", "Witnessed twice.", &["o1", "o2"])],
+    );
+    assert!(r.error.is_none(), "{:?}", r.error);
+    s.submit_operations_id("ck", "kernel", &[], Some(json!({"key":"k","from":0,"to":1,"context":{}}))).unwrap();
+    assert_eq!(s.revoke_observation("owner", &r.accepted[0]).unwrap(), 0);
+    s
+}
+
+/// Writes `/3` frames with a valid header chain and body hashes: only the replay can tell what is wrong with them.
+fn chained_v3(path: &Path, mut frames: Vec<Value>) {
+    let mut previous = ZERO_HASH;
+    let mut bytes = String::new();
+    for frame in &mut frames {
+        frame["header"]["previous"] = json!(to_hex(&previous));
+        frame["header"]["body_hash"] = json!(to_hex(&crate::audit::persistence::body_hash(&frame["body"])));
+        previous = sha256_parts(&[b"R2R-FRAME-HDR/2\0", to_jcs(&frame["header"]).as_bytes()]);
+        frame["hash"] = json!(to_hex(&previous));
+        bytes.push_str(&to_jcs(frame));
+        bytes.push('\n');
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn a_v3_journal_names_its_genesis_and_reopens_and_verifies_to_the_same_roots() {
+    let path = TempPath::new();
+    let s = v3_run(&path.0);
+    let end = (s.audit_root(), s.engine_root(), s.session_root(), s.wal_head());
+    assert_eq!(end.2, session_root_v2(&end.1, &end.0));
+    drop(s);
+    let text = std::fs::read_to_string(&path.0).unwrap();
+    let genesis: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(genesis["header"]["format"], "sbgk-session-log/3");
+    let g = &genesis["body"];
+    assert_eq!(
+        (g["format"].as_str(), g["rules_version"].as_str(), g["state_root_format"].as_str(), g["seal_format"].as_str()),
+        (Some(GENESIS_FORMAT_V3), Some(RULES_VERSION), Some("r2r-state-root/2"), Some(SEAL_FORMAT))
+    );
+    assert_eq!(g["questions"], v3_spec().questions);
+    assert_eq!(g["settings_hash"], json!(to_hex(&settings_hash(&v3_spec().settings))));
+    assert_eq!(g["operator_meta"], json!({"team": "fixture"}));
+    let reopened = AuditState::open(&path.0).unwrap();
+    assert_eq!((reopened.audit_root(), reopened.engine_root(), reopened.session_root(), reopened.wal_head()), end);
+    let meta = reopened.genesis_meta().expect("a /3 genesis");
+    assert_eq!((meta.questions.clone(), meta.settings_hash), (v3_spec().questions, settings_hash(&v3_spec().settings)));
+    drop(reopened);
+    let (verified, read) = AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
+    assert_eq!((verified.audit_root(), Some(read.wal_head)), (end.0, end.3));
+    // the seed frame accepted three records: its records root is their tree; the checkpoint frame accepted none
+    let frames: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_ne!(frames[1]["header"]["records_root"], json!(to_hex(&crate::audit::trees::records_root(&[]))));
+    assert_eq!(frames[2]["header"]["records_root"], json!(to_hex(&crate::audit::trees::records_root(&[]))));
+}
+
+#[test]
+fn every_forged_body_records_root_and_genesis_field_of_a_v3_journal_is_refused() {
+    let path = TempPath::new();
+    drop(v3_run(&path.0));
+    let frames: Vec<Value> = std::fs::read_to_string(&path.0).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let work = TempPath::new();
+    chained_v3(&work.0, frames.clone());
+    AuditState::verify(&work.0, &mut |_, _, _, _| {}).expect("a faithful rechain verifies");
+    for n in 1..frames.len() {
+        for (field, forged) in
+            [("audit_root", json!(to_hex(&ZERO_HASH))), ("engine_root", json!(to_hex(&ZERO_HASH))), ("outcome", json!({"kind":"value","result":{}}))]
+        {
+            let mut changed = frames.clone();
+            changed[n]["body"][field] = forged;
+            chained_v3(&work.0, changed);
+            assert!(AuditState::verify(&work.0, &mut |_, _, _, _| {}).is_err(), "entry {n}: forged {field} was accepted");
+        }
+        let mut changed = frames.clone();
+        changed[n]["header"]["records_root"] = json!(to_hex(&sha256(b"other records")));
+        chained_v3(&work.0, changed);
+        let refusal = AuditState::verify(&work.0, &mut |_, _, _, _| {}).err().unwrap_or_else(|| panic!("entry {n}: a forged records root was accepted"));
+        assert!(refusal.message.contains("records root"), "{refusal}");
+    }
+    for (field, forged, expected) in [
+        ("rules_version", json!("r2r-audit-rules/9"), "this kernel replays"),
+        ("state_root_format", json!("r2r-state-root/1"), "this kernel replays"),
+        ("operator_meta", json!({"blob": "x".repeat(5000)}), "operator_meta"),
+        ("questions", json!("not a list"), "questions"),
+        ("extra", json!(1), "missing or unknown fields"),
+    ] {
+        let mut changed = frames.clone();
+        changed[0]["body"][field] = forged;
+        chained_v3(&work.0, changed);
+        let refusal = AuditState::verify(&work.0, &mut |_, _, _, _| {}).err().unwrap_or_else(|| panic!("genesis {field} was accepted"));
+        assert!(refusal.message.contains(expected), "{field}: {refusal}");
+    }
+    // a /3 frame chain with a genesis of the first formats
+    let mut changed = frames.clone();
+    changed[0]["body"]["format"] = json!(GENESIS_FORMAT);
+    chained_v3(&work.0, changed);
+    assert!(AuditState::verify(&work.0, &mut |_, _, _, _| {}).is_err());
+}
+
+#[test]
+fn a_seal_names_the_frames_the_roots_and_the_projections_and_a_forged_seal_is_refused() {
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0);
+    let frames_before = s.transaction_sequence().unwrap() as usize + 1;
+    let (status, deps) = s.projection_hashes();
+    let out = s.seal().unwrap();
+    let seal = &out["seal"];
+    assert_eq!(seal["log_size"], json!(frames_before));
+    assert_eq!(seal["projections"], json!({"status": to_hex(&status), "dependencies": to_hex(&deps)}));
+    assert_eq!(out["seal_hash"], json!(to_hex(&seal_hash(seal))));
+    let end = s.audit_root();
+    drop(s);
+    assert_eq!(AuditState::open(&path.0).unwrap().audit_root(), end);
+    let frames: Vec<Value> = std::fs::read_to_string(&path.0).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let n = frames.len() - 1;
+    let work = TempPath::new();
+    for (field, forged) in [
+        ("log_root", json!(to_hex(&ZERO_HASH))),
+        ("log_size", json!(1)),
+        ("wal_head", json!(to_hex(&ZERO_HASH))),
+        ("audit_root", json!(to_hex(&ZERO_HASH))),
+        ("projections", json!({"status": to_hex(&ZERO_HASH), "dependencies": to_hex(&deps)})),
+    ] {
+        let mut changed = frames.clone();
+        changed[n]["body"]["command"]["seal"][field] = forged.clone();
+        changed[n]["body"]["outcome"]["result"]["seal"][field] = forged;
+        changed[n]["body"]["request_hash"] = json!(to_hex(&request_hash("kernel", &changed[n]["body"]["command"])));
+        chained_v3(&work.0, changed);
+        assert!(AuditState::verify(&work.0, &mut |_, _, _, _| {}).is_err(), "a seal with a forged {field} was accepted");
+    }
+}
+
+#[test]
+fn a_closed_run_stays_closed_after_a_restart_and_seals_before_it_closes() {
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0);
+    assert!(!s.is_closed());
+    let open_root = s.audit_root();
+    s.close_run().unwrap();
+    assert!(s.is_closed());
+    assert_ne!(s.audit_root(), open_root, "closed is a leaf of the state");
+    assert_eq!(s.close_run().unwrap()["already"], json!(true));
+    let end = s.audit_root();
+    drop(s);
+    let reopened = AuditState::open(&path.0).unwrap();
+    assert!(reopened.is_closed());
+    assert_eq!(reopened.audit_root(), end);
+    drop(reopened);
+    let text = std::fs::read_to_string(&path.0).unwrap();
+    let kinds: Vec<String> =
+        text.lines().skip(1).map(|l| serde_json::from_str::<Value>(l).unwrap()["body"]["command"]["kind"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(kinds[kinds.len() - 2..], ["seal".to_string(), "close".to_string()]);
+    // a journal of the first formats has no such entry
+    let old = TempPath::new();
+    let mut v2 = state_v2(&old.0);
+    assert!(v2.close_run().is_err());
+    assert!(v2.seal().is_err());
+}
+
+#[test]
+fn seals_come_every_k_frames_and_the_epoch_of_a_v3_journal_is_its_chain_head() {
+    let path = TempPath::new();
+    let docs = [("policy".to_string(), b"Prior witness.\nNew witness.\n".to_vec())];
+    let mut s = AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "v3-seals", sha256(b"m"), &v3_spec()).unwrap();
+    s.set_seal_every(Some(3));
+    for i in 0..7 {
+        s.submit_operations_id(&format!("ck{i}"), "kernel", &[], Some(json!({"key":format!("k{i}"),"from":0,"to":0,"context":{}}))).unwrap();
+    }
+    assert_eq!(AuditStore::epoch(&s), s.wal_head().unwrap());
+    drop(s);
+    let text = std::fs::read_to_string(&path.0).unwrap();
+    let seals: Vec<usize> =
+        text.lines().enumerate().filter(|(_, l)| serde_json::from_str::<Value>(l).unwrap()["body"]["command"]["kind"] == "seal").map(|(n, _)| n).collect();
+    assert_eq!(seals, vec![4, 8], "a seal once three frames follow the genesis or the last seal");
+    let reopened = AuditState::open(&path.0).unwrap();
+    assert_eq!(AuditStore::epoch(&reopened), reopened.wal_head().unwrap());
+}
+
+#[test]
+fn the_incremental_state_root_is_the_full_build_after_every_kind_of_change() {
+    // `root()` compares the two at every call in a test build; this run touches every keyed section
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0);
+    s.withdraw_text("owner", "policy", "New witness.").unwrap();
+    s.put_document("owner", "extra", b"Extra witness.\n").unwrap();
+    let r = s.submit_records_id(
+        "more",
+        "worker2",
+        "task2",
+        &Scope { docs: vec!["extra".into()], ..Default::default() },
+        &[json!({"kind":"observe","local_id":"x","doc_id":"extra","exact_quote":"Extra witness.","terms":["witness"]})],
+    );
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let root = s.audit_root();
+    drop(s);
+    assert_eq!(AuditState::open(&path.0).unwrap().audit_root(), root);
+}
+
+fn command_kinds(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str::<Value>(l).unwrap()["body"]["command"]["kind"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+fn forged_prefix_seal(s: &AuditState) -> Value {
+    let (status, deps) = s.projection_hashes();
+    json!({"kind": "seal", "seal": {"format": SEAL_FORMAT, "run_id": s.core.data.run_id, "log_size": 0, "log_root": to_hex(&ZERO_HASH),
+        "wal_head": to_hex(&ZERO_HASH), "audit_root": to_hex(&s.audit_root()), "engine_root": to_hex(&s.engine_root()),
+        "projections": {"status": to_hex(&status), "dependencies": to_hex(&deps)}}})
+}
+
+#[test]
+fn a_seal_or_a_close_is_never_an_operation_of_a_batch_and_a_journal_with_one_does_not_verify() {
+    // Codex review of 43447f4, S2-01: a seal inside a batch named a journal prefix that no check compared, and the journal verified
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0);
+    s.seal().unwrap();
+    for (id, op) in [("nested-seal", forged_prefix_seal(&s)), ("nested-close", json!({"kind": "close"}))] {
+        let out = s.submit_operations_id(id, "kernel", &[op], None).unwrap();
+        assert_eq!((&out["accepted_operations"], &out["failed_index"]), (&json!(0), &json!(0)), "{out}");
+        assert!(out["error"].to_string().contains("frame of its own"), "{out}");
+    }
+    assert!(!s.is_closed());
+    drop(s);
+    AuditState::verify(&path.0, &mut |_, _, _, _| {}).expect("refused batches verify");
+    // the journal of a kernel that took the nested seal, as before the fix: the replay refuses it
+    let old = TempPath::new();
+    let mut w = v3_run(&old.0);
+    w.seal().unwrap();
+    let forged = forged_prefix_seal(&w);
+    NESTED_FRAMES.with(|n| n.set(true));
+    let out = w.submit_operations_id("nested-seal", "kernel", &[forged], None);
+    NESTED_FRAMES.with(|n| n.set(false));
+    assert_eq!(out.unwrap()["accepted_operations"], json!(1));
+    drop(w);
+    let refusal = AuditState::verify(&old.0, &mut |_, _, _, _| {}).err().expect("a journal with a seal inside a batch was verified");
+    assert!(refusal.message.contains("diverged"), "{refusal}");
+    assert!(AuditState::open(&old.0).is_err());
+}
+
+#[test]
+fn the_ids_of_the_seal_and_the_close_are_the_kernels_and_a_failed_seal_leaves_its_command_standing() {
+    // Codex review of 43447f4, S2-02: a batch took the id of the next seal, the automatic seal was refused, and the command it
+    // followed came back as an error though the journal held it
+    let path = TempPath::new();
+    let docs = [("policy".to_string(), b"Prior witness.\n".to_vec())];
+    let mut s = AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "v3-pending", sha256(b"m"), &v3_spec()).unwrap();
+    let ck = |k: &str| json!({"key": k, "from": 0, "to": 0, "context": {}});
+    for id in ["seal-3", "audit-close"] {
+        let refusal = s.submit_operations_id(id, "kernel", &[], Some(ck("k"))).err().unwrap_or_else(|| panic!("a batch took the id {id}"));
+        assert!(refusal.message.contains("belong"), "{refusal}");
+    }
+    s.set_seal_every(Some(256));
+    FAIL_SEALS.with(|n| n.set(1));
+    let phase = json!({"key": "audit:circles", "from": 0, "to": 0, "context": {"circle": 1}});
+    let out = s.submit_operations_id("phase-1", "kernel", &[], Some(phase.clone())).expect("the command stands though its seal failed");
+    assert_eq!(out["checkpointed"], json!(true));
+    assert!(s.seal_pending());
+    assert_eq!(s.submit_operations_id("phase-1", "kernel", &[], Some(phase)).unwrap(), out, "a retry gets the receipt of the command");
+    s.submit_operations_id("next", "kernel", &[], Some(ck("k1"))).unwrap();
+    assert!(!s.seal_pending(), "the next command wrote the seal");
+    drop(s);
+    assert_eq!(command_kinds(&path.0), ["batch", "batch", "seal"]);
+    AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
+    // a restart between a circle's phase change and its seal: the first command after it writes the seal
+    let mut r = AuditState::open(&path.0).unwrap();
+    assert!(!r.seal_pending());
+    r.submit_operations_id("phase-2", "kernel", &[], Some(json!({"key": "audit:circles", "from": 0, "to": 0, "context": {"circle": 2}}))).unwrap();
+    drop(r);
+    let mut r = AuditState::open(&path.0).unwrap();
+    assert!(r.seal_pending());
+    r.set_seal_every(Some(256));
+    r.submit_operations_id("after", "kernel", &[], Some(ck("k2"))).unwrap();
+    assert!(!r.seal_pending());
+    drop(r);
+    let kinds = command_kinds(&path.0);
+    assert_eq!(kinds[kinds.len() - 3..], ["batch", "batch", "seal"]);
+    AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
+    // Codex recheck of db57a93: a refused phase change is no boundary, live or after a restart
+    let mut r = AuditState::open(&path.0).unwrap();
+    r.set_seal_every(Some(256));
+    let refused = r.submit_operations_id("phase-bad", "kernel", &[], Some(json!({"key": "audit:circles", "from": 7, "to": 7, "context": {}}))).unwrap();
+    assert_eq!(refused["checkpointed"], json!(false), "{refused}");
+    assert!(!r.seal_pending());
+    drop(r);
+    let mut r = AuditState::open(&path.0).unwrap();
+    assert!(!r.seal_pending(), "a refused phase change left no seal due");
+    // and a seal written by hand settles one that was due
+    r.set_seal_every(Some(256));
+    FAIL_SEALS.with(|n| n.set(1));
+    r.submit_operations_id("phase-3", "kernel", &[], Some(json!({"key": "audit:circles", "from": 0, "to": 0, "context": {"circle": 3}}))).unwrap();
+    assert!(r.seal_pending());
+    r.seal().unwrap();
+    assert!(!r.seal_pending(), "the seal by hand settled the due one");
+    r.submit_operations_id("plain", "kernel", &[], Some(ck("k3"))).unwrap();
+    drop(r);
+    let kinds = command_kinds(&path.0);
+    assert_eq!(kinds[kinds.len() - 4..], ["batch", "batch", "seal", "batch"], "no second seal after the one by hand");
+    AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
+}
+
+#[test]
+fn fallen_by_names_the_direct_grounds_that_no_longer_stand() {
+    // Codex review of 43447f4, S2-03: observe -> claim -> done, the observe withdrawn. The claim names the observe and the done
+    // names the claim; the first cause is the end of the chain (SPEC_V02_STEP2 section 6)
+    let path = TempPath::new();
+    let docs = [("policy".to_string(), b"Prior witness.\n".to_vec())];
+    let mut s = AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "v3-fallen", sha256(b"m"), &v3_spec()).unwrap();
+    let done = json!({"kind": "done", "local_id": "d1", "rq_id": "RQ1", "directive_id": "task", "answer_ids": ["c1"], "outcome": "answered"});
+    let r = s.submit_records_id("seed", "worker", "task", &scope(), &[observation("o1", "Prior witness."), claim("c1", "Witnessed.", &["o1"]), done]);
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let (o, c, d) = (r.accepted[0], r.accepted[1], r.accepted[2]);
+    let (before, _) = s.core.projection_rows();
+    assert!(before.iter().all(|row| row[4] == json!([])), "nothing has fallen yet");
+    s.revoke_observation("owner", &o).unwrap();
+    let (rows, _) = s.core.projection_rows();
+    let fallen = |id: &RecordId| rows.iter().find(|row| row[0] == json!(to_hex(&id.0))).expect("a row per record")[4].clone();
+    assert_eq!((fallen(&o), fallen(&c), fallen(&d)), (json!([]), json!([to_hex(&o.0)]), json!([to_hex(&c.0)])));
+}
+
+#[test]
+fn the_store_gives_the_gap_pass_the_bytes_of_standing_quotes_and_of_withdrawn_text() {
+    // SPEC_V02_GAP_PASS section 3: a unit is no gap when a standing quote or withdrawn text overlaps it
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0); // "Prior witness." was quoted and its quote withdrawn; "New witness." stands
+    let text = "Prior witness.\nNew witness.\n";
+    let at = |q: &str| {
+        let i = text.find(q).unwrap();
+        (i, i + q.len())
+    };
+    // a withdrawn quote closes its text too
+    assert_eq!(AuditStore::quoted_spans(&s, "policy"), vec![at("New witness.")]);
+    assert_eq!(AuditStore::closed_spans(&s, "policy"), vec![at("Prior witness.")]);
+    s.withdraw_text("owner", "policy", "New witness.").unwrap();
+    assert!(AuditStore::quoted_spans(&s, "policy").is_empty(), "the withdrawal took the quote with it");
+    let mut closed = AuditStore::closed_spans(&s, "policy");
+    closed.sort_unstable();
+    assert_eq!(closed, vec![at("Prior witness."), at("New witness.")]);
+}
+
+#[test]
+fn the_report_withholds_the_bytes_of_a_gone_quote_inside_a_wider_quote_that_stands() {
+    // Codex review of 2c6864f, S3-03: under the rule of the first journals a wider quote stands over a narrower one that went;
+    // the report gave the wider quote's whole text, the gone quote's bytes with it
+    let path = TempPath::new();
+    let base = AuditOntology::base();
+    let mut s = AuditState::new(&base, &[("policy".into(), b"Prior witness.\nNew witness.\n".to_vec())]).unwrap();
+    s.core.data.run_id = "first-format".into();
+    s.core.data.withdrawal_closes_bytes = false;
+    s.attach_new_journal(&path.0, &base).unwrap();
+    let lines = [observation("o1", "Prior witness."), observation("o2", "Prior witness.\nNew"), claim("c1", "Witnessed.", &["o1", "o2"])];
+    let r = s.submit_records_id("seed", "worker", "seed", &scope(), &lines);
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let (o1, o2, c1) = (r.accepted[0], r.accepted[1], r.accepted[2]);
+    s.revoke_observation("owner", &o1).unwrap();
+    assert!(s.is_grounded(&o2) && !s.is_grounded(&c1), "the wider quote stands by the exact-span rule, the claim fell");
+    let entries = s.entries().unwrap();
+    let report = crate::audit::read::fallen(&s, entries, None, None);
+    let row = &report["rows"][0];
+    assert_eq!((row["id"].clone(), row["gone"][0]["cause"].clone(), row["gone"][0]["named"].clone()), (json!(to_hex(&c1.0)), json!("revoked"), json!(true)));
+    let standing = &row["standing"][0];
+    assert_eq!(
+        (standing["id"].clone(), standing["quote"].clone(), standing["withheld"].clone()),
+        (json!(to_hex(&o2.0)), json!("[withheld]\nNew"), json!([[0, 14]]))
+    );
+    assert!(!report.to_string().contains("Prior witness"), "{report}");
+    drop(s);
+    let (s, _, entries, _) = crate::audit::read::journal_points(&path.0, &[]).unwrap();
+    assert_eq!(crate::audit::read::fallen(&s, entries, None, None), report, "the journal reads alike");
+}
+
+#[test]
+fn the_seal_and_projection_hashes_give_the_vectors_written_from_the_spec_text() {
+    // computed by another session from the text of SPEC_V02_STEP2 alone, for the independent verifier `yuce-verify`
+    // (SBGK/VECTORS_INDEPENDENT_VERIFIER_20261110.json, V7 and V8)
+    let (status, dependencies) = projection_hashes_of(&[], &[]);
+    assert_eq!(to_hex(&status), "88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875");
+    assert_eq!(to_hex(&dependencies), "65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133");
+    let state_root = "6102326a854af6dbcd524b7d0f8b0834ee9f3e79c0dded78925323c092a34741";
+    let seal = json!({"format": "r2r-seal/2", "run_id": "vector-run", "log_size": 3,
+                      "log_root": "3e68089e94499e6df51727b8b615320676ff1e203d8b77551e28502e685da147",
+                      "wal_head": "c9609d57fb2cffdcebc4c3834042f827576269e1556438ab854c8acf694cfed9",
+                      "audit_root": state_root, "engine_root": "11".repeat(32),
+                      "projections": {"status": to_hex(&status), "dependencies": to_hex(&dependencies)}});
+    assert_eq!(to_hex(&seal_hash(&seal)), "30f2caab8a2e00b324a3c42993822f7318be44dfd2068b8557427e44b68c6f72");
+    let session = session_root_v2(&[0x11; 32], &from_hex(state_root).unwrap());
+    assert_eq!(to_hex(&session), "92bd027e0f65b39feac22b7ce1ddf60aafaa5955b7700056afa614811e917d79");
+    assert_eq!(to_hex(&settings_hash(&json!({}))), "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e");
+}
+
+#[test]
+fn a_real_record_leaf_and_its_frame_records_root() {
+    // the vector V2 of the independent verifier with a real record: an observation and a claim on it, as one frame accepts them
+    let path = TempPath::new();
+    let docs = [("policy".to_string(), b"Prior witness.\n".to_vec())];
+    let mut s = AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "vector-record", sha256(b"m"), &v3_spec()).unwrap();
+    let r = s.submit_records_id("seed", "worker", "task", &scope(), &[observation("o1", "Prior witness."), claim("c1", "Witnessed.", &["o1"])]);
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let values: Vec<Value> = s.core.data.records.iter().map(|r| state_root::record_leaf_value(&s.core.data, r)).collect();
+    let leaves: Vec<Hash> = values.iter().map(super::super::trees::record_leaf).collect();
+    drop(s); // the writer's lock keeps other readers out on Windows
+    let frames = frames_of(&path.0);
+    let last = frames.last().unwrap();
+    assert_eq!(last["header"]["records_root"], json!(to_hex(&super::super::trees::records_root(&leaves))), "the frame names the root of its two records");
+    // pinned in VECTORS_INDEPENDENT_VERIFIER_20261110.json as V2_real (the leaf values' JCS are there too)
+    assert_eq!(
+        leaves.iter().map(|l| to_hex(l)).collect::<Vec<_>>(),
+        ["b635f5edec501dc2abee35d22ffd97d64978faec23dc11fc54fb0ebc0621fb50", "2a2317d6c6cfca54d42dfb6da4c3d5ca04b6cc1fca50bc31841aef9dfef3cfc2"]
+    );
+    assert_eq!(last["header"]["records_root"], "6f99214ff9e8891fd0945b8394b24ee522d1eb9c45f3e5c5aaf4e0276020edcf");
+    if std::env::var("PRINT_VECTORS").is_ok() {
+        for v in &values {
+            println!("leaf_value_jcs {}", to_jcs(v));
+        }
+    }
+}
+
+/// Frames of a `/3` journal with their hashes made whole again after a change: each request hash, body hash, header hash and the
+/// next `previous`, as a forger would, so only the rule under test can refuse the copy.
+fn rechained_v3(mut frames: Vec<Value>) -> String {
+    let mut previous = to_hex(&ZERO_HASH);
+    for f in frames.iter_mut() {
+        if let (Some(actor), true) = (f["body"]["actor"].as_str().map(str::to_string), f["body"].get("request_hash").is_some()) {
+            f["body"]["request_hash"] = json!(to_hex(&request_hash(&actor, &f["body"]["command"])));
+        }
+        f["header"]["body_hash"] = json!(to_hex(&super::persistence::body_hash(&f["body"])));
+        f["header"]["previous"] = json!(previous);
+        let hash = sha256_parts(&[b"R2R-FRAME-HDR/2\0", to_jcs(&f["header"]).as_bytes()]);
+        f["hash"] = json!(to_hex(&hash));
+        previous = to_hex(&hash);
+    }
+    frames.iter().map(|f| format!("{}\n", to_jcs(f))).collect()
+}
+
+fn refusal(text: &str) -> String {
+    let copy = TempPath::new();
+    std::fs::write(&copy.0, text).unwrap();
+    AuditState::verify(&copy.0, &mut |_, _, _, _| {}).err().map(|e| e.message).unwrap_or_default()
+}
+
+#[test]
+fn a_0_2_journal_spells_a_hash_one_way_and_holds_only_safe_integers() {
+    // rules of SPEC_V02_STEP2 section 1 for the independent verifier (GAP-01, GAP-12): another reader parses the journal alike
+    let path = TempPath::new();
+    let mut s =
+        AuditState::create_with(&path.0, &AuditOntology::base(), &[("policy".to_string(), b"Prior witness.\n".to_vec())], "rules", sha256(b"m"), &v3_spec())
+            .unwrap();
+    let r = s.submit_records_id("seed", "worker", "task", &scope(), &[observation("o1", "Prior witness.")]);
+    assert!(r.error.is_none(), "{:?}", r.error);
+    // a command with a number that is not a safe integer is refused and not written
+    let entries = s.entries().unwrap();
+    let float = s.submit_operations_id("float", "kernel", &[], Some(json!({"key": "k", "from": 0, "to": 0, "context": {"share": 0.5}})));
+    assert!(float.unwrap_err().message.contains("integer"));
+    let big = s.submit_operations_id("big", "kernel", &[], Some(json!({"key": "k", "from": 0, "to": 0, "context": {"n": 1u64 << 53}})));
+    assert!(big.unwrap_err().message.contains("integer"));
+    assert_eq!(s.entries().unwrap(), entries, "nothing was written");
+    drop(s);
+    let frames = frames_of(&path.0);
+    assert_eq!(refusal(&rechained_v3(frames.clone())), "", "the copy made whole again verifies");
+    // the frame hash in capitals: same meaning, another file
+    let mut upper = frames.clone();
+    let last = upper.len() - 1;
+    upper[last]["hash"] = json!(upper[last]["hash"].as_str().unwrap().to_uppercase());
+    let text: String = upper.iter().map(|f| format!("{}\n", to_jcs(f))).collect();
+    assert!(refusal(&text).contains("hash mismatch"), "{}", refusal(&text));
+    // a root the kernel wrote, in capitals, with every hash made whole again
+    let mut root = frames.clone();
+    root[last]["body"]["audit_root"] = json!(root[last]["body"]["audit_root"].as_str().unwrap().to_uppercase());
+    assert!(refusal(&rechained_v3(root)).contains("lowercase"));
+    // a float in a body, every hash made whole again
+    let mut float = frames.clone();
+    float[last]["body"]["command"]["share"] = json!(0.5);
+    assert!(refusal(&rechained_v3(float)).contains("integer"));
+}
+
+#[test]
+fn a_seal_names_the_roots_of_the_frame_before_it_and_a_close_follows_the_last_seal() {
+    // SPEC_V02_STEP2 section 7 for the independent verifier (GAP-10): P.audit_root and P.engine_root are the roots in the body of
+    // frame n-1; the seal frame's own body names the state with the seal's receipt; a closed run ends with seal, close
+    let path = TempPath::new();
+    let mut s = AuditState::create_with(
+        &path.0,
+        &AuditOntology::base(),
+        &[("policy".to_string(), b"Prior witness.\nNew witness.\n".to_vec())],
+        "seals",
+        sha256(b"m"),
+        &v3_spec(),
+    )
+    .unwrap();
+    s.submit_records_id("a", "worker", "a", &scope(), &[observation("o1", "Prior witness.")]);
+    s.seal().unwrap();
+    s.submit_records_id("b", "worker", "b", &scope(), &[observation("o1", "New witness.")]);
+    s.close_run().unwrap();
+    drop(s);
+    let frames = frames_of(&path.0);
+    let seals: Vec<usize> = (0..frames.len()).filter(|i| frames[*i]["body"]["command"]["kind"] == "seal").collect();
+    assert_eq!(seals.len(), 2);
+    for n in seals {
+        let (body, before) = (&frames[n]["body"], &frames[n - 1]["body"]);
+        let p = &body["command"]["seal"];
+        assert_eq!((&p["audit_root"], &p["engine_root"]), (&before["audit_root"], &before["engine_root"]), "frame {n}");
+        assert_ne!(body["audit_root"], p["audit_root"], "the seal frame's own state has the seal's receipt");
+        assert_eq!((p["log_size"].as_u64(), &p["wal_head"]), (Some(n as u64), &frames[n - 1]["hash"]));
+        assert_eq!((body["actor"].as_str(), body["submission_id"].as_str()), (Some("kernel"), Some(format!("seal-{n}").as_str())));
+        assert_eq!(body["outcome"], json!({"kind": "value", "result": {"seal": p, "seal_hash": to_hex(&seal_hash(p))}}));
+    }
+    let close = frames.last().unwrap();
+    assert_eq!((close["body"]["command"].clone(), close["body"]["submission_id"].as_str()), (json!({"kind": "close"}), Some("audit-close")));
+    assert_eq!(frames[frames.len() - 2]["body"]["command"]["kind"], "seal", "one close frame after the last seal");
+}
+
+#[test]
+fn a_seal_and_a_close_are_the_kernels_and_nothing_follows_the_close() {
+    // GAP-14 and GAP-15 of the independent verifier: no other actor writes a seal or a close, and the close is the last frame,
+    // when the kernel writes and when it replays
+    let path = TempPath::new();
+    let mut s = AuditState::create_with(
+        &path.0,
+        &AuditOntology::base(),
+        &[("policy".to_string(), b"Prior witness.\nNew witness.\n".to_vec())],
+        "closing",
+        sha256(b"m"),
+        &v3_spec(),
+    )
+    .unwrap();
+    s.submit_records_id("a", "worker", "a", &scope(), &[observation("o1", "Prior witness.")]);
+    let entries = s.entries().unwrap();
+    for kind in ["seal", "close"] {
+        let refused = s.commit("owner", &format!("my-{kind}"), &json!({"kind": kind})).unwrap_err();
+        assert!(refused.message.contains("the kernel's"), "{kind}: {}", refused.message);
+    }
+    assert_eq!(s.entries().unwrap(), entries, "nothing was written");
+    s.close_run().unwrap();
+    let closed = s.entries().unwrap();
+    let late = s.submit_records_id("b", "worker", "b", &scope(), &[observation("o1", "New witness.")]);
+    assert!(late.error.is_some() && late.accepted.is_empty(), "nothing is accepted after the close");
+    assert!(s.seal().is_err() && s.withdraw_text("owner", "policy", "New witness.").is_err());
+    assert_eq!(s.close_run().unwrap()["already"], true);
+    assert_eq!(s.entries().unwrap(), closed, "the close is the last frame");
+    drop(s);
+    let frames = frames_of(&path.0);
+    assert_eq!(refusal(&rechained_v3(frames.clone())), "", "the journal as written verifies");
+    // a frame after the close, every hash made whole
+    let mut after = frames.clone();
+    let mut extra = frames[1].clone();
+    extra["body"]["submission_id"] = json!("late");
+    extra["header"]["seq"] = json!(frames.len());
+    after.push(extra);
+    assert!(refusal(&rechained_v3(after)).contains("after the close"));
+    // a seal frame of another actor, every hash made whole
+    let mut foreign = frames.clone();
+    let seal = foreign.iter().position(|f| f["body"]["command"]["kind"] == "seal").unwrap();
+    foreign[seal]["body"]["actor"] = json!("owner");
+    assert!(refusal(&rechained_v3(foreign)).contains("the kernel's"));
+}
+
+#[test]
+fn a_frame_of_a_0_2_journal_nests_at_most_64_levels() {
+    // architect, 11.11.2026: a rule of the format, so any reader with 64 levels of room reads every journal
+    let path = TempPath::new();
+    let mut s =
+        AuditState::create_with(&path.0, &AuditOntology::base(), &[("policy".to_string(), b"Prior witness.\n".to_vec())], "depth", sha256(b"m"), &v3_spec())
+            .unwrap();
+    s.submit_records_id("a", "worker", "a", &scope(), &[observation("o1", "Prior witness.")]);
+    let entries = s.entries().unwrap();
+    let nested = |depth: usize| (0..depth).fold(json!(1), |inner, _| json!({"n": inner}));
+    // the checkpoint frame is the frame, the body, the command and the checkpoint over the nesting: four levels
+    let deep = s.submit_operations_id("deep", "kernel", &[], Some(json!({"key": "k", "from": 0, "to": 0, "context": nested(62)})));
+    assert!(deep.unwrap_err().message.contains("64 levels"));
+    assert_eq!(s.entries().unwrap(), entries, "nothing was written");
+    s.submit_operations_id("fits", "kernel", &[], Some(json!({"key": "k", "from": 0, "to": 0, "context": nested(50)}))).unwrap();
+    drop(s);
+    let frames = frames_of(&path.0);
+    assert!(frames.iter().all(|f| super::persistence::json_depth(f) <= 64));
+    let mut forged = frames.clone();
+    let last = forged.len() - 1;
+    forged[last]["body"]["command"]["checkpoint"]["context"] = nested(70);
+    assert!(refusal(&rechained_v3(forged)).contains("64 levels"));
+}
+
+/// Codex review of 904f1cdb, S4-06: the genesis frame passes no command check, and the limits of a `/3` frame held only on reading
+/// it back. A run is not created with a genesis its own check would refuse, and no journal is left behind.
+#[test]
+fn a_0_2_genesis_holds_the_limits_of_a_frame_before_anything_is_written() {
+    let docs = [("policy".to_string(), b"Prior witness.\n".to_vec())];
+    let deep = (0..80).fold(json!(0), |inner, _| json!([inner]));
+    for (meta, why) in
+        [(json!({"deep": deep}), "64 levels"), (json!({"x": 0.5}), "integers"), (json!({"x": -1}), "integers"), (json!({"x": 1u64 << 53}), "integers")]
+    {
+        let path = TempPath::new();
+        let spec = GenesisSpec { operator_meta: Some(meta.clone()), ..v3_spec() };
+        let refused = AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "genesis-limits", sha256(b"m"), &spec)
+            .err()
+            .unwrap_or_else(|| panic!("{meta} was accepted"));
+        assert!(refused.message.contains(why), "{meta}: {}", refused.message);
+        assert!(!path.0.exists(), "{meta}: no journal is left");
+    }
+    // within the limits the run is created, and its journal checks
+    let path = TempPath::new();
+    let fits = (0..40).fold(json!(0), |inner, _| json!([inner]));
+    let spec = GenesisSpec { operator_meta: Some(json!({"fits": fits, "n": (1u64 << 53) - 1})), ..v3_spec() };
+    drop(AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "genesis-limits", sha256(b"m"), &spec).unwrap());
+    AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
 }

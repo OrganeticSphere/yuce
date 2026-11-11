@@ -5,6 +5,11 @@
 //! Only that final step may discard an unterminated, unacknowledged last frame.
 //! V2 frames use exactly the canonical JSON emitted here, followed by one LF.
 //! Noncanonical whitespace or duplicate object fields are rejected, not normalized.
+//!
+//! A journal is written in one frame format from its genesis on. `sbgk-session-log/2` (0.1) hashes the whole frame;
+//! `sbgk-session-log/3` (0.2, SPEC_V02_STEP2 section 1) splits it into a header and a body, and the frame hash covers the header,
+//! which names the body by its hash and the records the frame accepted by the root of their tree. This layer checks the chain, the
+//! body hashes and the frame hashes; the records root is the state's to check on replay.
 
 use crate::error::{Code, KResult, KernelError};
 use crate::hash::{from_hex, sha256, sha256_parts, to_hex, Hash, ZERO_HASH};
@@ -15,14 +20,27 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub(crate) const FORMAT: &str = "sbgk-session-log/2";
+pub(crate) const FORMAT_V3: &str = "sbgk-session-log/3";
 const DOMAIN: &[u8] = b"R2R-AUDIT-WAL/2";
+const HEADER_DOMAIN: &[u8] = b"R2R-FRAME-HDR/2\0";
+const BODY_DOMAIN: &[u8] = b"R2R-FRAME-BODY/2\0";
 const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LOG_BYTES: u64 = 1024 * 1024 * 1024;
 const FRAME_KEYS: [&str; 6] = ["format", "wal_op", "seq", "previous", "payload", "hash"];
+const FRAME_KEYS_V3: [&str; 3] = ["body", "hash", "header"];
+const HEADER_KEYS: [&str; 6] = ["body_hash", "format", "previous", "records_root", "seq", "wal_op"];
+
+/// The frame format of a journal, fixed by its genesis frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameFormat {
+    V2,
+    V3,
+}
 
 #[derive(Debug)]
 pub(crate) struct AuditJournal {
     file: File,
+    format: FrameFormat,
     path: PathBuf,
     dropped_tail: Option<(u64, PathBuf)>,
     seq: u64,
@@ -36,14 +54,55 @@ pub(crate) struct AuditJournal {
 }
 
 /// What a bounded read of the journal found: the payloads of its complete frames (genesis first), the chain head after each
-/// frame, the bytes read (a torn tail included) and their SHA-256.
+/// frame, the records root each `/3` frame names (empty for `/2`), the bytes read (a torn tail included) and their SHA-256.
 #[derive(Debug)]
 pub(crate) struct JournalScan {
+    pub format: FrameFormat,
     pub payloads: Vec<Value>,
     pub heads: Vec<Hash>,
+    pub records_roots: Vec<Hash>,
     pub bytes: u64,
     pub complete_bytes: u64,
     pub sha256: Hash,
+}
+
+/// A hash as a `/3` journal spells it: 64 lowercase hex digits, nothing else (SPEC_V02_STEP2 section 1).
+pub(crate) fn lower_hex(v: &Value) -> Option<Hash> {
+    let s = v.as_str()?;
+    from_hex(s).filter(|h| to_hex(h) == s)
+}
+
+/// The deepest a frame of a `/3` journal nests, its outer object counting one (architect, 11.11.2026): any reader with that much
+/// room reads every journal, far under the 128 levels the kernel's own reader allows.
+pub(crate) const MAX_FRAME_DEPTH: usize = 64;
+
+/// The depth of a JSON value: a scalar 0, an object or array one more than its deepest member.
+pub(crate) fn json_depth(v: &Value) -> usize {
+    match v {
+        Value::Array(a) => 1 + a.iter().map(json_depth).max().unwrap_or(0),
+        Value::Object(m) => 1 + m.values().map(json_depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Whether every number in `v` is an integer from 0 to 2^53-1, the only numbers of a `/3` journal (SPEC_V02_STEP2 section 1): a
+/// reader in another language parses them exactly, and RFC 8785 writes them one way.
+pub(crate) fn safe_integers(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.as_u64().is_some_and(|n| n < 1 << 53),
+        Value::Array(a) => a.iter().all(safe_integers),
+        Value::Object(m) => m.values().all(safe_integers),
+        _ => true,
+    }
+}
+
+impl JournalScan {
+    /// The first `n` frames only, for a replay up to that point (`AuditState::replay_own`).
+    pub(crate) fn keep_first(&mut self, n: usize) {
+        self.payloads.truncate(n);
+        self.heads.truncate(n);
+        self.records_roots.truncate(n);
+    }
 }
 
 fn error(message: impl Into<String>) -> KernelError {
@@ -68,7 +127,44 @@ fn frame(seq: u64, previous: &Hash, payload: &Value) -> KResult<(Vec<u8>, Hash)>
     let canonical = to_jcs(&outer);
     let hash = sha256_parts(&[DOMAIN, canonical.as_bytes()]);
     outer["hash"] = json!(to_hex(&hash));
-    let mut bytes = to_jcs(&outer).into_bytes();
+    sized(to_jcs(&outer).into_bytes(), hash)
+}
+
+/// The body hash of a `/3` frame: `H("R2R-FRAME-BODY/2", JCS(body))`.
+pub(crate) fn body_hash(body: &Value) -> Hash {
+    sha256_parts(&[BODY_DOMAIN, to_jcs(body).as_bytes()])
+}
+
+/// The header of a `/3` frame (SPEC_V02_STEP2 section 1); a quittance carries it without the body.
+pub(crate) fn header_v3(seq: u64, previous: &Hash, body_hash: &Hash, records_root: &Hash) -> Value {
+    json!({"body_hash": to_hex(body_hash), "format": FORMAT_V3, "previous": to_hex(previous),
+        "records_root": to_hex(records_root), "seq": seq, "wal_op": if seq == 0 { "genesis" } else { "audit" }})
+}
+
+/// The keys of a `/3` frame header, in JCS order.
+pub(crate) const HEADER_KEYS_V3: [&str; 6] = HEADER_KEYS;
+
+/// The hash of a `/3` frame: `H("R2R-FRAME-HDR/2", JCS(header))`.
+pub(crate) fn header_hash(header: &Value) -> Hash {
+    sha256_parts(&[HEADER_DOMAIN, to_jcs(header).as_bytes()])
+}
+
+fn frame_v3(seq: u64, previous: &Hash, body: &Value, records_root: &Hash) -> KResult<(Vec<u8>, Hash)> {
+    let header = header_v3(seq, previous, &body_hash(body), records_root);
+    let hash = header_hash(&header);
+    let frame = json!({"body": body, "hash": to_hex(&hash), "header": header});
+    // the reader's limits of a `/3` frame hold for every frame the writer makes, the genesis included, which no command check
+    // sees (Codex review of 904f1cdb, S4-06): nothing is written that the journal's own check would refuse
+    if !safe_integers(&frame) {
+        return Err(error("a frame of a 0.2 journal holds only integers from 0 to 2^53-1"));
+    }
+    if json_depth(&frame) > MAX_FRAME_DEPTH {
+        return Err(error("a frame of a 0.2 journal nests at most 64 levels"));
+    }
+    sized(to_jcs(&frame).into_bytes(), hash)
+}
+
+fn sized(mut bytes: Vec<u8>, hash: Hash) -> KResult<(Vec<u8>, Hash)> {
     bytes.push(b'\n');
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(error("audit WAL frame exceeds 64 MiB"));
@@ -76,14 +172,25 @@ fn frame(seq: u64, previous: &Hash, payload: &Value) -> KResult<(Vec<u8>, Hash)>
     Ok((bytes, hash))
 }
 
+fn encode(format: FrameFormat, seq: u64, previous: &Hash, payload: &Value, records_root: Option<&Hash>) -> KResult<(Vec<u8>, Hash)> {
+    match (format, records_root) {
+        (FrameFormat::V2, None) => frame(seq, previous, payload),
+        (FrameFormat::V3, Some(root)) => frame_v3(seq, previous, payload, root),
+        (FrameFormat::V2, Some(_)) => Err(error("a sbgk-session-log/2 frame names no records root")),
+        (FrameFormat::V3, None) => Err(error("a sbgk-session-log/3 frame needs its records root")),
+    }
+}
+
 impl AuditJournal {
-    /// Create a new log. Existing paths, including empty files, are never replaced.
-    pub(crate) fn create(path: &Path, genesis: &Value) -> KResult<Self> {
-        let (bytes, hash) = frame(0, &ZERO_HASH, genesis)?;
+    /// Create a new log. Existing paths, including empty files, are never replaced. A `/3` genesis names the records root of its
+    /// frame (the empty root); a `/2` genesis names none.
+    pub(crate) fn create(path: &Path, genesis: &Value, format: FrameFormat, records_root: Option<&Hash>) -> KResult<Self> {
+        let (bytes, hash) = encode(format, 0, &ZERO_HASH, genesis, records_root)?;
         let file = OpenOptions::new().read(true).write(true).create_new(true).open(path).map_err(|e| io_error("create", e))?;
         lock(&file)?;
         let mut journal = Self {
             file,
+            format,
             path: path.to_path_buf(),
             dropped_tail: None,
             seq: 0,
@@ -100,14 +207,15 @@ impl AuditJournal {
         Ok(journal)
     }
 
-    /// Validate the complete frames, returning their payloads including genesis.
+    /// Validate the complete frames, returning what the scan found, payloads from genesis on.
     /// The file stays untouched until the caller validates semantic replay.
-    pub(crate) fn open(path: &Path) -> KResult<(Self, Vec<Value>)> {
+    pub(crate) fn open(path: &Path) -> KResult<(Self, JournalScan)> {
         let mut file = OpenOptions::new().read(true).write(true).open(path).map_err(|e| io_error("open", e))?;
         lock(&file)?;
         let scan = Self::scan(&mut file)?;
         let journal = Self {
             file,
+            format: scan.format,
             path: path.to_path_buf(),
             dropped_tail: None,
             seq: (scan.payloads.len() - 1) as u64,
@@ -119,7 +227,7 @@ impl AuditJournal {
             #[cfg(test)]
             fail_sync_once: false,
         };
-        Ok((journal, scan.payloads))
+        Ok((journal, scan))
     }
 
     /// The checks of `open` on a file opened for reading only and without the writer's lock: nothing can be cut or appended,
@@ -127,6 +235,20 @@ impl AuditJournal {
     /// lock blocks reading (Windows): check a stopped journal.
     pub(crate) fn read(path: &Path) -> KResult<JournalScan> {
         Self::scan(&mut File::open(path).map_err(|e| io_error("open", e))?)
+    }
+
+    /// The checks of `read` through the writer's own handle, whose lock excludes every other handle on Windows: the frames written
+    /// so far, for a live server's reading tools (SPEC_V02_STEP3). The cursor goes back where it was, and the writer appends on.
+    pub(crate) fn scan_own(&mut self) -> KResult<JournalScan> {
+        let position = self.file.stream_position().map_err(|e| io_error("seek", e))?;
+        self.file.seek(SeekFrom::Start(0)).map_err(|e| io_error("seek", e))?;
+        let scan = Self::scan(&mut self.file);
+        // a writer whose place could not be restored writes nothing more (Codex review of 2c6864f): reopen and replay first
+        if let Err(e) = self.file.seek(SeekFrom::Start(position)) {
+            self.poisoned = true;
+            return Err(io_error("seek", e));
+        }
+        scan
     }
 
     /// Read at most `MAX_LOG_BYTES` (one byte more is a refusal, so a file that grows after the length check cannot slip
@@ -149,13 +271,25 @@ impl AuditJournal {
         }
         let mut payloads = Vec::new();
         let mut heads = Vec::new();
+        let mut records_roots = Vec::new();
         let mut previous = ZERO_HASH;
+        let mut format = None;
         for (index, line) in bytes[..complete - 1].split(|b| *b == b'\n').enumerate() {
             if line.len() + 1 > MAX_FRAME_BYTES {
                 return Err(error(format!("audit WAL frame {index} exceeds 64 MiB")));
             }
             let mut value: Value = serde_json::from_slice(line).map_err(|e| error(format!("audit WAL frame {index}: bad JSON: {e}")))?;
             let outer = value.as_object().ok_or_else(|| error(format!("audit WAL frame {index} must be an object")))?;
+            // the genesis frame fixes the format of the journal; a frame of the other format later fails that format's checks
+            let this = *format.get_or_insert(if outer.contains_key("header") { FrameFormat::V3 } else { FrameFormat::V2 });
+            if this == FrameFormat::V3 {
+                let (body, head, records_root) = Self::check_v3(index, line, value, &previous)?;
+                payloads.push(body);
+                heads.push(head);
+                records_roots.push(records_root);
+                previous = head;
+                continue;
+            }
             if outer.get("format").and_then(Value::as_str) != Some(FORMAT) {
                 return Err(error(format!("audit WAL frame {index}: expected {FORMAT}; legacy or unknown format is not accepted")));
             }
@@ -187,7 +321,65 @@ impl AuditJournal {
             heads.push(computed);
             previous = computed;
         }
-        Ok(JournalScan { payloads, heads, bytes: bytes.len() as u64, complete_bytes: complete as u64, sha256: sha256(&bytes) })
+        Ok(JournalScan {
+            format: format.expect("a complete genesis frame"),
+            payloads,
+            heads,
+            records_roots,
+            bytes: bytes.len() as u64,
+            complete_bytes: complete as u64,
+            sha256: sha256(&bytes),
+        })
+    }
+
+    /// The checks of one `/3` frame: exact fields, canonical bytes, sequence, chain, body hash and frame hash. Returns the body,
+    /// the frame hash and the records root its header names.
+    fn check_v3(index: usize, line: &[u8], mut value: Value, previous: &Hash) -> KResult<(Value, Hash, Hash)> {
+        let at = |message: &str| error(format!("audit WAL frame {index}: {message}"));
+        let outer = value.as_object().expect("checked object");
+        if outer.len() != FRAME_KEYS_V3.len() || FRAME_KEYS_V3.iter().any(|key| !outer.contains_key(*key)) {
+            return Err(error(format!("audit WAL frame {index} has missing or unknown fields")));
+        }
+        let header = outer["header"].as_object().ok_or_else(|| at("header must be an object"))?;
+        if header.get("format").and_then(Value::as_str) != Some(FORMAT_V3) {
+            return Err(at(&format!("expected {FORMAT_V3}; a frame of another format is not accepted in this journal")));
+        }
+        if header.len() != HEADER_KEYS.len() || HEADER_KEYS.iter().any(|key| !header.contains_key(*key)) {
+            return Err(error(format!("audit WAL frame {index} header has missing or unknown fields")));
+        }
+        if line != to_jcs(&value).as_bytes() {
+            return Err(at("noncanonical JSON or duplicate fields"));
+        }
+        // the one form of a number in a `/3` frame (SPEC_V02_STEP2 section 1): another reader parses no float or big integer
+        // differently
+        if !safe_integers(&value) {
+            return Err(at("a number that is not an integer from 0 to 2^53-1"));
+        }
+        if json_depth(&value) > MAX_FRAME_DEPTH {
+            return Err(at("a frame nests deeper than 64 levels"));
+        }
+        let seq = header["seq"].as_u64().ok_or_else(|| at("seq must be a nonnegative integer"))?;
+        if seq != index as u64 {
+            return Err(at("sequence mismatch"));
+        }
+        let operation = if index == 0 { "genesis" } else { "audit" };
+        if header["wal_op"] != operation {
+            return Err(at(&format!("expected wal_op {operation}")));
+        }
+        // a hash is spelled one way only, 64 lowercase hex digits: the frame hash is outside every hash, and a capital there
+        // would make another file of the same journal
+        if lower_hex(&header["previous"]) != Some(*previous) {
+            return Err(at("previous hash mismatch"));
+        }
+        let records_root = lower_hex(&header["records_root"]).ok_or_else(|| at("invalid records root"))?;
+        if lower_hex(&header["body_hash"]) != Some(body_hash(&outer["body"])) {
+            return Err(at("body hash mismatch"));
+        }
+        let computed = sha256_parts(&[HEADER_DOMAIN, to_jcs(&outer["header"]).as_bytes()]);
+        if lower_hex(&outer["hash"]) != Some(computed) {
+            return Err(at("hash mismatch"));
+        }
+        Ok((value["body"].take(), computed, records_root))
     }
 
     /// Called only after the parent has successfully replayed the payloads.
@@ -252,8 +444,8 @@ impl AuditJournal {
         self.dropped_tail.as_ref().map(|(n, p)| (*n, p.as_path()))
     }
 
-    /// Append and synchronize a whole transaction before acknowledging it.
-    pub(crate) fn append(&mut self, payload: &Value) -> KResult<()> {
+    /// Append and synchronize a whole transaction before acknowledging it. A `/3` journal takes the records root of the frame.
+    pub(crate) fn append(&mut self, payload: &Value, records_root: Option<&Hash>) -> KResult<()> {
         if self.poisoned {
             return Err(error("audit WAL writer is poisoned; reopen and replay before continuing"));
         }
@@ -261,7 +453,7 @@ impl AuditJournal {
             return Err(error("audit WAL semantic recovery must finish before append"));
         }
         let seq = self.seq.checked_add(1).ok_or_else(|| error("audit WAL sequence exhausted"))?;
-        let (bytes, hash) = frame(seq, &self.head, payload)?;
+        let (bytes, hash) = encode(self.format, seq, &self.head, payload, records_root)?;
         self.write_frame(&bytes)?;
         self.seq = seq;
         self.head = hash;
@@ -298,6 +490,11 @@ impl AuditJournal {
         self.seq
     }
 
+    #[cfg(test)]
+    pub(crate) fn format(&self) -> FrameFormat {
+        self.format
+    }
+
     /// Simulate a full write followed by a failed durability barrier. The bytes
     /// may be replayable after reopening, but this writer must return no ACK.
     #[cfg(test)]
@@ -330,9 +527,9 @@ mod tests {
 
     fn committed() -> (TempPath, Vec<u8>) {
         let path = TempPath::new();
-        let mut journal = AuditJournal::create(&path.0, &json!({"engine": "genesis", "audit": {}})).unwrap();
-        journal.append(&json!({"command": "first", "receipt": {"accepted": 2}})).unwrap();
-        journal.append(&json!({"command": "second", "cursor": 2})).unwrap();
+        let mut journal = AuditJournal::create(&path.0, &json!({"engine": "genesis", "audit": {}}), FrameFormat::V2, None).unwrap();
+        journal.append(&json!({"command": "first", "receipt": {"accepted": 2}}), None).unwrap();
+        journal.append(&json!({"command": "second", "cursor": 2}), None).unwrap();
         drop(journal);
         let bytes = std::fs::read(&path.0).unwrap();
         (path, bytes)
@@ -352,23 +549,25 @@ mod tests {
     #[test]
     fn round_trip_returns_genesis_and_requires_semantic_recovery_before_append() {
         let (path, original) = committed();
-        let (mut journal, payloads) = AuditJournal::open(&path.0).unwrap();
+        let (mut journal, scan) = AuditJournal::open(&path.0).unwrap();
+        let payloads = scan.payloads;
         assert_eq!(
             payloads,
             vec![json!({"engine": "genesis", "audit": {}}), json!({"command": "first", "receipt": {"accepted": 2}}), json!({"command": "second", "cursor": 2})]
         );
         assert_eq!(journal.sequence(), 2);
         let old_head = journal.head();
-        assert!(journal.append(&json!({"command": "not yet"})).is_err());
+        assert!(journal.append(&json!({"command": "not yet"}), None).is_err());
         assert_eq!(snapshot(&mut journal), original);
         journal.finish_recovery().unwrap();
         journal.finish_recovery().unwrap();
-        journal.append(&json!({"command": "third"})).unwrap();
+        journal.append(&json!({"command": "third"}), None).unwrap();
         assert_eq!(journal.sequence(), 3);
         assert_ne!(journal.head(), old_head);
         let new_head = journal.head();
         drop(journal);
-        let (back, payloads) = AuditJournal::open(&path.0).unwrap();
+        let (back, scan) = AuditJournal::open(&path.0).unwrap();
+        let payloads = scan.payloads;
         assert_eq!(back.head(), new_head);
         assert_eq!(payloads.len(), 4);
         assert_eq!(payloads[3], json!({"command": "third"}));
@@ -377,16 +576,16 @@ mod tests {
     #[test]
     fn an_existing_file_and_a_locked_log_are_never_replaced() {
         let path = TempPath::new();
-        let mut owner = AuditJournal::create(&path.0, &json!({"genesis": true})).unwrap();
+        let mut owner = AuditJournal::create(&path.0, &json!({"genesis": true}), FrameFormat::V2, None).unwrap();
         let original = snapshot(&mut owner);
-        assert!(AuditJournal::create(&path.0, &Value::Null).is_err());
+        assert!(AuditJournal::create(&path.0, &Value::Null, FrameFormat::V2, None).is_err());
         assert!(AuditJournal::open(&path.0).unwrap_err().message.contains("in use"));
         assert_eq!(snapshot(&mut owner), original);
         drop(owner);
         assert!(AuditJournal::open(&path.0).is_ok());
         let empty = TempPath::new();
         std::fs::write(&empty.0, []).unwrap();
-        assert!(AuditJournal::create(&empty.0, &Value::Null).is_err());
+        assert!(AuditJournal::create(&empty.0, &Value::Null, FrameFormat::V2, None).is_err());
         assert_eq!(std::fs::read(&empty.0).unwrap(), Vec::<u8>::new());
     }
 
@@ -397,10 +596,11 @@ mod tests {
         torn.extend_from_slice(b"{\"format\":\"sbgk-session-log/2\",\"payload\":\"");
         torn.extend_from_slice(&[0xf0, 0x9f]); // even a half-written UTF-8 code point belongs to the uncommitted tail
         std::fs::write(&path.0, &torn).unwrap();
-        let (mut unvalidated, payloads) = AuditJournal::open(&path.0).unwrap();
+        let (mut unvalidated, scan) = AuditJournal::open(&path.0).unwrap();
+        let payloads = scan.payloads;
         assert_eq!(payloads.len(), 3);
         assert_eq!(snapshot(&mut unvalidated), torn);
-        assert!(unvalidated.append(&json!({})).is_err());
+        assert!(unvalidated.append(&json!({}), None).is_err());
         drop(unvalidated); // a semantic replay failure must not truncate the original file
         assert_eq!(std::fs::read(&path.0).unwrap(), torn);
         let (mut recovered, _) = AuditJournal::open(&path.0).unwrap();
@@ -409,7 +609,7 @@ mod tests {
         let (dropped, kept) = recovered.dropped_tail().map(|(n, p)| (n, p.to_path_buf())).expect("the tail is reported");
         assert_eq!(dropped as usize, torn.len() - original.len());
         assert_eq!(std::fs::read(&kept).unwrap(), torn[original.len()..]);
-        recovered.append(&json!({"after_recovery": true})).unwrap();
+        recovered.append(&json!({"after_recovery": true}), None).unwrap();
         std::fs::remove_file(kept).unwrap();
     }
 
@@ -499,44 +699,151 @@ mod tests {
     #[test]
     fn an_io_failure_poisons_the_writer_and_never_advances_its_receipt_head() {
         let path = TempPath::new();
-        let mut journal = AuditJournal::create(&path.0, &json!({"genesis": true})).unwrap();
+        let mut journal = AuditJournal::create(&path.0, &json!({"genesis": true}), FrameFormat::V2, None).unwrap();
         let original = snapshot(&mut journal);
         let head = journal.head();
         // A read-only replacement produces a deterministic write error on Windows and Unix.
         journal.file = File::open(&path.0).unwrap();
-        assert!(journal.append(&json!({"must_not_ack": true})).is_err());
+        assert!(journal.append(&json!({"must_not_ack": true}), None).is_err());
         assert_eq!(journal.head(), head);
         assert_eq!(journal.sequence(), 0);
-        assert!(journal.append(&Value::Null).unwrap_err().message.contains("poisoned"));
+        assert!(journal.append(&Value::Null, None).unwrap_err().message.contains("poisoned"));
         assert!(journal.finish_recovery().unwrap_err().message.contains("poisoned"));
         assert_eq!(std::fs::read(&path.0).unwrap(), original);
         drop(journal);
-        let (mut back, payloads) = AuditJournal::open(&path.0).unwrap();
+        let (mut back, scan) = AuditJournal::open(&path.0).unwrap();
+        let payloads = scan.payloads;
         assert_eq!(payloads.len(), 1);
         back.finish_recovery().unwrap();
-        back.append(&json!({"reopened": true})).unwrap();
+        back.append(&json!({"reopened": true}), None).unwrap();
     }
 
     #[test]
     fn a_sync_failure_after_the_write_is_unacknowledged_but_replayable() {
         let path = TempPath::new();
-        let mut journal = AuditJournal::create(&path.0, &json!({"genesis": true})).unwrap();
+        let mut journal = AuditJournal::create(&path.0, &json!({"genesis": true}), FrameFormat::V2, None).unwrap();
         let old_head = journal.head();
         let transaction = json!({"command": "accepted prefix", "receipt": {"submission_id": "once", "accepted": 2}});
         journal.inject_sync_failure_once();
-        let failure = journal.append(&transaction).unwrap_err();
+        let failure = journal.append(&transaction, None).unwrap_err();
         assert!(failure.message.contains("injected audit WAL sync failure"));
         assert_eq!(journal.sequence(), 0, "no acknowledged sequence is published");
         assert_eq!(journal.head(), old_head, "no acknowledged head is published");
         assert_eq!(snapshot(&mut journal).iter().filter(|b| **b == b'\n').count(), 2, "the complete transaction reached write_all");
-        assert!(journal.append(&transaction).unwrap_err().message.contains("poisoned"));
+        assert!(journal.append(&transaction, None).unwrap_err().message.contains("poisoned"));
         drop(journal);
         // A successful write without a successful sync can survive. Recovery
         // includes its receipt so the parent can deduplicate the caller's retry.
-        let (mut recovered, payloads) = AuditJournal::open(&path.0).unwrap();
+        let (mut recovered, scan) = AuditJournal::open(&path.0).unwrap();
+        let payloads = scan.payloads;
         assert_eq!(payloads, vec![json!({"genesis": true}), transaction]);
         assert_eq!(recovered.sequence(), 1);
         assert_ne!(recovered.head(), old_head);
         recovered.finish_recovery().unwrap();
+    }
+
+    fn committed_v3() -> (TempPath, Vec<u8>) {
+        let path = TempPath::new();
+        let empty = crate::audit::trees::records_root(&[]);
+        let mut journal = AuditJournal::create(&path.0, &json!({"engine": "genesis", "audit": {}}), FrameFormat::V3, Some(&empty)).unwrap();
+        journal.append(&json!({"command": "first", "receipt": {"accepted": 2}}), Some(&sha256(b"two records"))).unwrap();
+        journal.append(&json!({"command": "second", "cursor": 2}), Some(&empty)).unwrap();
+        drop(journal);
+        let bytes = std::fs::read(&path.0).unwrap();
+        (path, bytes)
+    }
+
+    #[test]
+    fn a_v3_journal_round_trips_its_bodies_records_roots_and_header_chain() {
+        let (path, original) = committed_v3();
+        // read before opening: the writer's lock excludes other readers on Windows
+        let line = String::from_utf8(original).unwrap().lines().nth(1).unwrap().to_string();
+        let (mut journal, scan) = AuditJournal::open(&path.0).unwrap();
+        assert_eq!(scan.format, FrameFormat::V3);
+        assert_eq!(journal.format(), FrameFormat::V3);
+        assert_eq!(scan.payloads[1], json!({"command": "first", "receipt": {"accepted": 2}}));
+        assert_eq!(scan.records_roots[1], sha256(b"two records"));
+        assert_eq!(scan.records_roots[2], crate::audit::trees::records_root(&[]));
+        // the frame hash covers the header, and the header names the body by its hash
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(frame["header"]["body_hash"], json!(to_hex(&body_hash(&frame["body"]))));
+        assert_eq!(scan.heads[1], sha256_parts(&[HEADER_DOMAIN, to_jcs(&frame["header"]).as_bytes()]));
+        assert_eq!(frame["header"]["previous"], json!(to_hex(&scan.heads[0])));
+        assert!(journal.append(&json!({"x": 1}), None).is_err(), "not before recovery");
+        journal.finish_recovery().unwrap();
+        assert!(journal.append(&json!({"x": 1}), None).unwrap_err().message.contains("needs its records root"));
+        journal.append(&json!({"x": 1}), Some(&ZERO_HASH)).unwrap();
+        assert_eq!(journal.sequence(), 3);
+    }
+
+    #[test]
+    fn a_v3_journal_refuses_every_tampered_header_field_body_and_a_v2_frame() {
+        let (path, original) = committed_v3();
+        let lines: Vec<&[u8]> = original.split_inclusive(|b| *b == b'\n').collect();
+        let good: Value = serde_json::from_slice(lines[1]).unwrap();
+        let mut variants: Vec<(Value, &str)> = Vec::new();
+        for (field, value) in [
+            ("body_hash", json!(to_hex(&ZERO_HASH))),
+            ("previous", json!(to_hex(&ZERO_HASH))),
+            ("records_root", json!(to_hex(&ZERO_HASH))),
+            ("seq", json!(7)),
+            ("wal_op", json!("genesis")),
+            ("format", json!("sbgk-session-log/2")),
+        ] {
+            let mut changed = good.clone();
+            changed["header"][field] = value;
+            variants.push((changed, field));
+        }
+        let mut body = good.clone();
+        body["body"]["receipt"]["accepted"] = json!(3);
+        variants.push((body, "body"));
+        let mut extra = good.clone();
+        extra["header"]["extra"] = json!(1);
+        variants.push((extra, "extra header field"));
+        let mut outer = good.clone();
+        outer["payload"] = json!({});
+        variants.push((outer, "extra outer field"));
+        for (changed, what) in variants {
+            let line = format!("{}\n", to_jcs(&changed)).into_bytes();
+            let bytes = [lines[0], line.as_slice(), lines[2]].concat();
+            std::fs::write(&path.0, &bytes).unwrap();
+            assert!(AuditJournal::open(&path.0).is_err(), "{what} was accepted");
+            assert_eq!(std::fs::read(&path.0).unwrap(), bytes);
+        }
+        // a frame of the old format inside a /3 journal
+        let (v2, _) = frame(1, &ZERO_HASH, &json!({"command": "first"})).unwrap();
+        let bytes = [lines[0], v2.as_slice()].concat();
+        std::fs::write(&path.0, &bytes).unwrap();
+        assert!(AuditJournal::open(&path.0).is_err());
+        // and a /3 frame inside a /2 journal
+        let (_old_path, old) = committed();
+        let old_lines: Vec<&[u8]> = old.split_inclusive(|b| *b == b'\n').collect();
+        std::fs::write(&path.0, [old_lines[0], lines[1]].concat()).unwrap();
+        assert!(AuditJournal::open(&path.0).is_err());
+    }
+
+    /// The vector of an independent implementation of the specification (SBGK/SPEC_V02_STEP2, sections 0 and 1).
+    #[test]
+    fn the_frame_hash_matches_the_vector_of_an_independent_implementation() {
+        let zero = to_hex(&ZERO_HASH);
+        let header = json!({"body_hash": zero, "format": FORMAT_V3, "previous": zero, "records_root": zero, "seq": 0, "wal_op": "genesis"});
+        let hash = sha256_parts(&[HEADER_DOMAIN, to_jcs(&header).as_bytes()]);
+        assert_eq!(to_hex(&hash), "1310c31dca390da882b78a5209ce0bce9ec5cc21c610682216da72a31569e99b");
+    }
+}
+
+/// The vectors another session computed from the text of SPEC_V02_STEP2 alone, without this code, for the independent verifier
+/// `yuce-verify` (SBGK/VECTORS_INDEPENDENT_VERIFIER_20261110.json, V3): the kernel writes the same frame, byte for byte.
+#[cfg(test)]
+mod spec_text_vectors {
+    use super::*;
+
+    #[test]
+    fn a_genesis_frame_gives_the_vector_written_from_the_spec_text() {
+        let body = json!({"actor": "kernel", "note": "synthetic vector, not a real frame"});
+        assert_eq!(to_hex(&body_hash(&body)), "8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d");
+        let (bytes, hash) = frame_v3(0, &ZERO_HASH, &body, &super::super::trees::records_root(&[])).unwrap();
+        assert_eq!(to_hex(&hash), "09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc");
+        assert_eq!((bytes.len(), to_hex(&sha256(&bytes))), (453, "3e73136c14bb58c8091442795e0f3cfc2beb7224f907e7bd707afa20d9c8c53f".to_string()));
     }
 }

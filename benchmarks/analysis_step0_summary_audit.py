@@ -29,7 +29,8 @@ def load(run: pathlib.Path) -> tuple[dict, dict]:
     """Records (16-hex id -> kind, reports) and the final state of every link that reached a verdict."""
     records, locals_, links = {}, {}, {}
     for line in wal_of(run).open(encoding="utf-8"):
-        p = json.loads(line).get("payload") or {}
+        frame = json.loads(line)
+        p = frame.get("payload") or frame.get("body") or {}  # 0.1 frames: payload; 0.2: body
         cmd, res = p.get("command") or {}, (p.get("outcome") or {}).get("result") or {}
         actor = str(p.get("actor", ""))
         if cmd.get("kind") == "submit" and actor.startswith("w"):

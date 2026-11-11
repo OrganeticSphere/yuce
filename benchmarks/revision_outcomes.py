@@ -116,7 +116,7 @@ def quotes_stored(folder: pathlib.Path) -> dict[str, int] | None:
         return None
     stored: dict[str, int] = {}
     for frame in rows_of(journal):
-        entry = frame.get("payload") or {}
+        entry = (frame.get("payload") or frame.get("body") or {})
         command = entry.get("command") or {}
         if command.get("kind") == "submit":
             accepted = ((entry.get("outcome") or {}).get("result") or {}).get("accepted") or []
@@ -132,11 +132,11 @@ def stored_after_withdrawal(folder: pathlib.Path, step: dict, page: str | None) 
     if not journal.is_file():
         return None
     frames = rows_of(journal)
-    paths = {doc: identity.get("path") for doc, identity in (((frames[0].get("payload") or {}).get("source_documents") or {}).items())} if frames else {}
+    paths = {doc: identity.get("path") for doc, identity in ((((frames[0].get("payload") or frames[0].get("body") or {})).get("source_documents") or {}).items())} if frames else {}
     quotes: dict[str, tuple[str, str]] = {}
     after: int | None = None
     for frame in frames[1:]:
-        entry = frame.get("payload") or {}
+        entry = (frame.get("payload") or frame.get("body") or {})
         command = entry.get("command") or {}
         if command.get("kind") == "revoke" and after is None and command.get("record") in quotes and touched(quotes[command["record"]], step, page):
             after = 0

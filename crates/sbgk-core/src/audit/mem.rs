@@ -67,7 +67,9 @@ impl MemStore {
                 }
                 let text = &self.docs.iter().find(|x| x.0 == d).ok_or_else(|| err("unknown doc"))?.1;
                 let at = text.find(&q).ok_or_else(|| err("quote not found"))?;
-                let inside = scope.ranges.iter().filter(|r| r.0 == d).all(|r| at >= r.1 && at + q.len() <= r.2);
+                // inside one of the issued ranges of the document, as the store's rule says (a gap task issues several)
+                let mut own = scope.ranges.iter().filter(|r| r.0 == d).peekable();
+                let inside = own.peek().is_none() || own.any(|r| at >= r.1 && at + q.len() <= r.2);
                 if !inside {
                     return Err(err("quote outside the directive's section"));
                 }
@@ -310,6 +312,9 @@ impl AuditStore for MemStore {
     }
     fn checkpoint(&self, key: &str) -> Option<Value> {
         self.checkpoints.get(key).cloned()
+    }
+    fn checkpoint_keys(&self, prefix: &str) -> Vec<String> {
+        self.checkpoints.keys().filter(|k| k.starts_with(prefix)).cloned().collect()
     }
     fn receipt_outcome(&self, id: &str, actor: &str) -> Option<Value> {
         self.receipts.get(id).filter(|(req, _)| req[0] == actor).map(|(_, res)| res.clone())

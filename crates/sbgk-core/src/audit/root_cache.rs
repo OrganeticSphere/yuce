@@ -260,6 +260,14 @@ impl Core {
     }
 
     pub(super) fn root(&self) -> Hash {
+        // a `/3` journal: the tree of `r2r-state-root/2`, brought to the state first
+        if let Some(tree) = self.state_tree.lock().expect("state tree poisoned").as_mut() {
+            tree.sync(&self.data);
+            let root = tree.root();
+            #[cfg(any(test, feature = "audit-root-verify"))]
+            assert_eq!(root, super::state_root::StateTree::build(&self.data).root(), "state root /2 diverged from a full build");
+            return root;
+        }
         #[cfg(feature = "audit-root-profile")]
         let started = std::time::Instant::now();
         #[cfg(feature = "audit-root-profile")]

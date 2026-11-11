@@ -199,8 +199,27 @@ class Client:
         """One record with its basis and whether it is still grounded."""
         return self.call("audit_record", record=record)
 
+    def dependents(self, record: str | None = None, *, doc_id: str | None = None, start: int | None = None, end: int | None = None,
+                   limit: int | None = None) -> dict:
+        """Every record resting on a record, or on the quotes of a document (in a byte range of its current version), by depth."""
+        return self.call("audit_dependents", **_given(record=record, doc_id=doc_id, start=start, end=end, limit=limit))
+
+    def active_claims(self, doc_id: str | None = None, *, limit: int | None = None) -> dict:
+        """The claims that stand now; claims of equal text are one row, with the documents of the quotes under them."""
+        return self.call("audit_active_claims", **_given(doc_id=doc_id, limit=limit))
+
+    def diff(self, from_point: int, to_point: int | None = None, *, limit: int | None = None) -> dict:
+        """What changed between two points of the journal (a point = a number of frames): records added, fallen, risen; texts withdrawn."""
+        return self.call("audit_diff", **_given(**{"from": from_point, "to": to_point, "limit": limit}))
+
+    def fallen(self, since: int | None = None, *, limit: int | None = None) -> dict:
+        """What fell, and on what it stood: the gone quotes without their text, the quotes that stand, twins, what to reread.
+        `since` is the point a withdrawal answered: only what stood then."""
+        return self.call("audit_fallen", **_given(since=since, limit=limit))
+
     def revoke(self, record: str) -> dict:
-        """Withdraw an observation: its source no longer holds, and what rested on it loses that ground."""
+        """Withdraw an observation: its source no longer holds, and what rested on it loses that ground. The answer names the
+        point before it (`since`) and how many records fell: `fallen(since)` gives the report."""
         return self.call("audit_revoke", record=record)
 
     def withdraw_text(self, doc_id: str, exact_quote: str) -> dict:
@@ -227,6 +246,11 @@ class Client:
     def shutdown(self) -> None:
         """Stop the server."""
         self._rpc("shutdown", {}, self.timeout_s)
+
+
+def _given(**arguments: Any) -> dict:
+    """The arguments that were given: a tool reads a missing one as its default."""
+    return {k: v for k, v in arguments.items() if v is not None}
 
 
 def observe(local_id: str, doc_id: str, exact_quote: str, *, terms: Iterable[str] | None = None) -> dict:

@@ -41,7 +41,8 @@ def proposals(run: pathlib.Path) -> tuple[dict, dict]:
     of every record a submit stored. A swarm relation line's record id is not its link's id, hence the key by ends."""
     stored, texts, locals_ = {}, {}, {}
     for line in wal_of(run).open(encoding="utf-8"):
-        p = json.loads(line).get("payload") or {}
+        frame = json.loads(line)
+        p = frame.get("payload") or frame.get("body") or {}  # 0.1 frames: payload; 0.2: body
         cmd, res = p.get("command") or {}, (p.get("outcome") or {}).get("result") or {}
         actor = str(p.get("actor", ""))
         if cmd.get("kind") == "submit" and actor.startswith("w"):

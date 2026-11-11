@@ -204,8 +204,16 @@ class RealServer(unittest.TestCase):
         quote, claim = done["accepted_locals"][p + "o1"], done["accepted_locals"][p + "c1"]
         self.assertTrue(owner.record(claim)["grounded"])
 
-        self.assertEqual(owner.revoke(quote)["also_revoked"], 0)
+        revoked = owner.revoke(quote)
+        self.assertEqual((revoked["also_revoked"], revoked["fell"], revoked["quotes_gone"]), (0, 1, 1))
         self.assertFalse(owner.record(claim)["grounded"])
+        claim_id, quote_id = owner.record(claim)["id"], owner.record(quote)["id"]
+        report = owner.fallen(revoked["since"])
+        self.assertEqual([(r["id"], r["gone"][0]["id"]) for r in report["rows"]], [(claim_id, quote_id)])
+        self.assertNotIn(QUOTE, json.dumps(report))
+        self.assertEqual(owner.diff(revoked["since"])["fell"]["count"], 2)
+        self.assertEqual([d["id"] for d in owner.dependents(quote)["dependents"]], [claim_id])
+        self.assertEqual(owner.active_claims(doc)["claims"], 0)
         self.assertEqual(owner.call("audit_status")["records"], owner.status()["records"])
         again = owner.withdraw_text(doc, QUOTE)
         self.assertEqual((again["status"], again["error"]["code"]), ("error", "ALREADY_REVOKED"))
@@ -237,7 +245,8 @@ class RealServer(unittest.TestCase):
         self.assertEqual(named - served, set())
         self.assertEqual({t for t in served if t in {"audit_" + n for n in ("acquire", "submit", "renew", "release", "next_card", "submit_ops",
                                                                             "builder_failure", "status", "links", "link_status", "concept_status",
-                                                                            "record", "revoke", "withdraw_text", "terminal_receipt", "close")}} - named, set())
+                                                                            "record", "revoke", "withdraw_text", "terminal_receipt", "close",
+                                                                            "dependents", "active_claims", "diff", "fallen")}} - named, set())
 
 
 if __name__ == "__main__":

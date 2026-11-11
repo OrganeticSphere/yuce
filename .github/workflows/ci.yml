@@ -67,3 +67,9 @@ jobs:
           python examples/revoke-and-replay/demo.py --report report.json --html inspector_report.html
           python examples/revoke-and-replay/check_inspector.py report.json
           cargo run --release -p sbgk-core --example findings_gate
+
+      - name: Published journals (every recorded run of a release, against its receipts, by this tree's binary)
+        if: github.repository == 'OrganeticSphere/yuce' && runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/verify_published_runs.py target/release/sbgk --download published_runs

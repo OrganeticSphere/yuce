@@ -102,6 +102,10 @@ fn named(folder: &Path, list: &str, files: &mut Vec<(String, PathBuf)>) -> Resul
         let plain = line.replace('\\', "/");
         for part in Path::new(&plain).components() {
             match part {
+                // on Windows `a.txt:notes` is a hidden stream of a.txt, not a file a walk would ever give
+                Component::Normal(p) if cfg!(windows) && p.to_string_lossy().contains(':') => {
+                    return Err(format!("--select: {line} names a stream of a file, not a file"));
+                }
                 Component::Normal(p) => parts.push(p.to_str().ok_or_else(|| format!("--select: {line} is not UTF-8"))?),
                 Component::CurDir => {}
                 _ => return Err(format!("--select: {line} is not a path inside the folder")),
@@ -260,6 +264,15 @@ mod tests {
         assert!(collect(&f.0, Some("absent.txt\n"), &Own::default()).err().unwrap().contains("cannot read"));
         std::fs::create_dir_all(f.0.join("sub")).unwrap();
         assert!(collect(&f.0, Some("sub\n"), &Own::default()).err().unwrap().contains("not a file"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_stream_of_a_file_is_no_document() {
+        let f = Folder::new("stream", &[("a.txt", b"one\n")]);
+        std::fs::write(f.0.join("a.txt:notes"), b"hidden\n").unwrap();
+        assert!(collect(&f.0, Some("a.txt:notes\n"), &Own::default()).err().unwrap().contains("stream"));
+        assert_eq!(ids(&collect(&f.0, None, &Own::default()).unwrap()), ["a.txt"]);
     }
 
     /// On a folder that ignores case two spellings are one file, and a document has one name: the one the file has.

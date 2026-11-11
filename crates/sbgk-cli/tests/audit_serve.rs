@@ -79,10 +79,16 @@ struct Server {
 
 impl Server {
     fn start(args: &[String]) -> Server {
+        Self::start_with_stderr(args, Stdio::inherit())
+    }
+
+    /// A server whose stderr goes where the test says, to read what it told its operator.
+    fn start_with_stderr(args: &[String], stderr: Stdio) -> Server {
         let mut child = Command::new(BIN)
             .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"])
             .args(args)
             .stdout(Stdio::piped())
+            .stderr(stderr)
             .spawn()
             .expect("start audit-serve");
         let mut first = String::new();
@@ -217,7 +223,7 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 9);
+    assert_eq!(own.tools().len(), 13, "nine tools of 0.1 and the four reading tools of 0.2");
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims
@@ -301,7 +307,7 @@ fn a_run_completes_on_the_wire_and_resumes_from_the_journal_after_a_kill() {
 }
 
 #[test]
-fn a_closed_run_tells_every_agent_done_and_accepts_nothing_more_until_a_restart() {
+fn a_closed_run_tells_every_agent_done_accepts_nothing_more_and_stays_closed_after_a_restart() {
     // R27 package 2: COMPLETE is not the end, the owner may still withdraw a source and reopen work, so
     // the agents kept polling; DONE tells them the owner closed the run
     let fx = Fixture::new("close");
@@ -332,7 +338,9 @@ fn a_closed_run_tells_every_agent_done_and_accepts_nothing_more_until_a_restart(
     let observe = claim["based_on"][0].clone();
 
     let closed = own.call("audit_close", json!({}));
-    assert_eq!((closed["status"].as_str(), &closed["audit_root"]), (Some("CLOSED"), &receipt["audit_root"]), "{closed}");
+    // the close is a seal and a `close` entry: the roots move on from the terminal receipt's
+    assert_eq!(closed["status"].as_str(), Some("CLOSED"), "{closed}");
+    assert_ne!(closed["audit_root"], receipt["audit_root"], "{closed}");
     assert_eq!(w1.call("audit_acquire", json!({}))["status"], "DONE");
     let waited = Instant::now();
     assert_eq!(w2.call("audit_acquire", json!({"max_wait_ms": 5000}))["status"], "DONE");
@@ -343,18 +351,19 @@ fn a_closed_run_tells_every_agent_done_and_accepts_nothing_more_until_a_restart(
     assert_eq!(own.call("audit_revoke", json!({"record": observe}))["code"], "RUN_CLOSED", "a withdrawal would reopen work nobody takes");
     assert_eq!(own.call("audit_record", json!({"record": observe}))["grounded"], true, "reads stay open; nothing was withdrawn");
     let status = own.call("audit_status", json!({}));
-    assert_eq!((status["closed"].as_bool(), &status["audit_root"]), (Some(true), &receipt["audit_root"]), "{status}");
-    assert_eq!(own.call("audit_terminal_receipt", json!({}))["audit_root"], receipt["audit_root"]);
-    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED", "closing again changes nothing");
+    assert_eq!((status["closed"].as_bool(), &status["audit_root"]), (Some(true), &closed["audit_root"]), "{status}");
+    assert_eq!(own.call("audit_terminal_receipt", json!({}))["audit_root"], closed["audit_root"]);
+    let again = own.call("audit_close", json!({}));
+    assert_eq!((again["status"].as_str(), &again["audit_root"]), (Some("CLOSED"), &closed["audit_root"]), "closing again changes nothing");
 
-    // the close is not journaled: a restarted server is open again, with the same root
+    // the close is journaled: a restarted server finds the run closed, with the same root
     drop((w1, w2, gb, own));
     drop(server);
     let server = Server::start(&fx.args(false));
     let (mut w1, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
-    assert_eq!(w1.call("audit_acquire", json!({}))["status"], "COMPLETE");
+    assert_eq!(w1.call("audit_acquire", json!({}))["status"], "DONE");
     let status = own.call("audit_status", json!({}));
-    assert_eq!((status.get("closed"), &status["audit_root"]), (None, &receipt["audit_root"]), "{status}");
+    assert_eq!((status["closed"].as_bool(), &status["audit_root"]), (Some(true), &closed["audit_root"]), "{status}");
 }
 
 #[test]
@@ -963,6 +972,9 @@ fn a_mistyped_flag_leaves_a_torn_journal_as_it_was() {
         vec!["--ontology-catchall-reports", "abc"],
         vec!["--term-max-words", "0"],
         vec!["--candidate-match", "abc"],
+        vec!["--gap-pass", "abc"],
+        vec!["--gap-units", "9"],
+        vec!["--gap-profile", &missing],
     ];
     for flags in bad {
         let out = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(&flags).args(fx.args(false)).output().unwrap();
@@ -1143,4 +1155,451 @@ fn audit_verify_replays_a_recorded_journal_without_writing_it_and_finds_the_stat
     let (code, x) = verify(&["--wal", &edited.display().to_string()]);
     assert_eq!((code, x["status"].as_str()), (Some(1), Some("REFUSED")), "{x}");
     assert!(x["error"]["message"].as_str().unwrap().contains("hash mismatch"), "{x}");
+}
+
+/// The reading tools of 0.2 on the wire and over the journal (SPEC_V02_STEP3): a withdrawal names the point before it, the report
+/// from that point names the claim that fell without the withdrawn text, and `sbgk audit-read` over the stopped journal answers as
+/// the live server did.
+#[test]
+fn the_reading_tools_answer_alike_on_the_wire_and_over_the_journal() {
+    let fx = Fixture::new("read");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    let tools = own.tools();
+    for tool in ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen"] {
+        assert!(tools.iter().any(|t| t == tool), "{tool}: {tools:?}");
+    }
+    assert!(!w1.tools().iter().any(|t| t == "audit_fallen"), "the reading tools are the owner's");
+    let t = w1.call("audit_acquire", json!({}));
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let records: Vec<Value> = r["accepted_locals"].as_object().unwrap().values().map(|id| own.call("audit_record", json!({"record": id}))).collect();
+    let observe = records.iter().find(|x| x["kind"] == "observe").expect("an observe").clone();
+    let claim = records.iter().find(|x| x["kind"] == "claim").expect("a claim").clone();
+    assert_eq!((claim["projection"]["fallen_by"].clone(), claim["dependents_direct"].clone()), (json!([]), json!(0)), "{claim}");
+    let withdrawn = own.call("audit_revoke", json!({"record": observe["id"]}));
+    assert_eq!(
+        (withdrawn["status"].as_str(), withdrawn["fell"].as_u64(), withdrawn["quotes_gone"].as_u64()),
+        (Some("REVOKED"), Some(1), Some(1)),
+        "{withdrawn}"
+    );
+    let since = withdrawn["since"].as_u64().expect("the point before the withdrawal");
+    let status = own.call("audit_status", json!({}));
+    assert_eq!((status["projections"]["fallen"].clone(), status["projections"]["quotes_gone"].clone()), (json!(1), json!(1)), "{status}");
+    let report = own.call("audit_fallen", json!({"since": since}));
+    assert_eq!((report["rows"][0]["id"].clone(), report["rows"][0]["gone"][0]["id"].clone()), (claim["id"].clone(), observe["id"].clone()), "{report}");
+    assert!(!report.to_string().contains(observe["quote"].as_str().unwrap()), "the withdrawn text stays out of the report: {report}");
+    let diff = own.call("audit_diff", json!({"from": since}));
+    assert_eq!(diff["fell"]["count"], 2, "the quote and the claim on it: {diff}");
+    let dependents = own.call("audit_dependents", json!({"record": observe["id"]}));
+    assert_eq!(dependents["dependents"][0]["id"], claim["id"], "{dependents}");
+    let active = own.call("audit_active_claims", json!({}));
+    let record = own.call("audit_record", json!({"record": claim["id"]}));
+    assert_eq!(record["first_causes"][0]["cause"], "withdrawn", "{record}");
+    assert_eq!(own.call("audit_diff", json!({"from": 0}))["code"], "BAD_ARGUMENT");
+    assert_eq!(own.call("audit_fallen", json!({"since": 1_000_000}))["code"], "BAD_ARGUMENT");
+    drop(server);
+
+    let wal = fx.p("run.wal");
+    let read = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-read").args(args).args(["--wal", &wal]).output().unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| json!({"stderr": String::from_utf8_lossy(&out.stderr)}));
+        (out.status.code(), v)
+    };
+    let since = since.to_string();
+    let observe_id = observe["id"].as_str().unwrap().to_string();
+    let claim_id = claim["id"].as_str().unwrap().to_string();
+    assert_eq!(read(&["fallen", "--since", &since]), (Some(0), report));
+    assert_eq!(read(&["diff", "--from", &since]), (Some(0), diff));
+    assert_eq!(read(&["dependents", "--record", &observe_id]), (Some(0), dependents));
+    assert_eq!(read(&["active-claims"]), (Some(0), active));
+    assert_eq!(read(&["record", "--record", &claim_id]), (Some(0), record));
+    let (code, offline) = read(&["status"]);
+    assert_eq!((code, offline["projections"].clone()), (Some(0), status["projections"].clone()));
+    // a journal changed by one byte is not read; an unknown tool is a usage error
+    let edited = fx.0.join("edited.wal");
+    std::fs::write(&edited, std::fs::read_to_string(&wal).unwrap().replacen("wire-run", "wire-rux", 1)).unwrap();
+    let out = Command::new(BIN).args(["audit-read", "status", "--wal", &edited.display().to_string()]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(Command::new(BIN).args(["audit-read", "everything", "--wal", &wal]).output().unwrap().status.code(), Some(2));
+}
+
+/// Signed checkpoints on the wire (SPEC_V02_STEP4): a server with a signing key signs the seal it writes when the run is closed,
+/// and `audit-verify` takes the checkpoint with the journal: pinned under the trusted keys, not pinned under the key beside it,
+/// refused when the key is revoked or the checkpoint names other frames.
+#[test]
+fn a_server_with_a_signing_key_signs_its_seals_and_audit_verify_checks_them_with_the_journal() {
+    let fx = Fixture::new("sign");
+    let key = fx.p("operator.key");
+    let made = Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap();
+    let made: Value = serde_json::from_slice(&made.stdout).unwrap();
+    assert_eq!(made["status"], "KEY", "{made}");
+    let verifier = made["verifier_key"].as_str().unwrap().to_string();
+    assert!(!std::fs::read_to_string(&key).unwrap().contains(&verifier), "the key file holds the signing key, not only the verifier");
+    assert_eq!(
+        Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap().status.code(),
+        Some(2),
+        "a key file is never overwritten"
+    );
+    let mut args = fx.args(true);
+    args.extend(["--signing-key".to_string(), key.clone()]);
+    let server = Server::start(&args);
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let dir = fx.0.join("run.wal.checkpoints");
+    let mut seals: Vec<String> =
+        std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("seal-")).collect();
+    seals.sort_by_key(|n| n[5..n.len() - 4].parse::<usize>().unwrap());
+    let last = dir.join(seals.last().expect("a checkpoint for the seal of the close")).display().to_string();
+    assert_eq!(std::fs::read_to_string(dir.join("verifier.key")).unwrap().trim(), verifier);
+    let verify = |extra: &[&str]| {
+        let out = Command::new(BIN).args(["audit-verify", "--wal", &wal, "--checkpoint"]).args(extra).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (code, v) = verify(&[&last]);
+    assert_eq!((code, v["checkpoint"]["signature"].as_str()), (Some(0), Some("signature valid, key not pinned")), "{v}");
+    std::fs::write(fx.0.join("trusted.txt"), format!("{verifier} role=operator\n")).unwrap();
+    let trusted = fx.p("trusted.txt");
+    let (code, v) = verify(&[&last, "--trusted-keys", &trusted]);
+    assert_eq!((code, v["checkpoint"]["signature"].as_str()), (Some(0), Some("signature valid, key pinned")), "{v}");
+    std::fs::write(fx.0.join("revoked.txt"), format!("{verifier} role=operator revoked=2026-01-01\n")).unwrap();
+    let revoked = fx.p("revoked.txt");
+    assert_eq!(verify(&[&last, "--trusted-keys", &revoked]).0, Some(1), "a revoked key is refused");
+    assert_eq!(verify(&[&last, "--trusted-keys", &revoked, "--anchored-at", "2025-12-31"]).0, Some(0), "kept from before the revocation");
+    // the checkpoint of another prefix, signed by the same key, against this journal's first frames: refused
+    let first = dir.join(&seals[0]).display().to_string();
+    let text = std::fs::read_to_string(&first).unwrap();
+    let mut lines: Vec<&str> = text.lines().collect();
+    let other = (lines[1].parse::<usize>().unwrap() + 1).to_string();
+    lines[1] = &other;
+    std::fs::write(fx.0.join("other.txt"), lines.join("\n") + "\n").unwrap();
+    let (code, v) = verify(&[&fx.p("other.txt"), "--trusted-keys", &trusted]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("CHECKPOINT_REFUSED")), "{v}");
+
+    // a quittance of a standing claim under the checkpoint of the last seal, checked without the journal (SPEC_V02_STEP5)
+    let claims = Command::new(BIN).args(["audit-read", "active-claims", "--wal", &wal]).output().unwrap();
+    let claims: Value = serde_json::from_slice(&claims.stdout).unwrap();
+    let claim = claims["groups"][0]["ids"][0].as_str().expect("a standing claim").to_string();
+    let proof_file = fx.p("claim.proof.json");
+    let cut =
+        Command::new(BIN).args(["audit-proof", "--wal", &wal, "--record", &claim, "--self-contained", "--with-status", "--out", &proof_file]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&cut.stderr).to_string();
+    let cut: Value = serde_json::from_slice(&cut.stdout).unwrap_or(Value::Null);
+    assert_eq!(cut["status"], "PROOF", "{cut} {stderr}");
+    std::fs::rename(&wal, fx.p("away.wal")).unwrap();
+    let check = |extra: &[&str]| {
+        let out = Command::new(BIN).args(["audit-proof-verify", "--proof", &proof_file]).args(extra).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (code, v) = check(&["--trusted-keys", &trusted]);
+    assert_eq!((code, v["status"].as_str(), v["signature"].as_str()), (Some(0), Some("PROOF_VALID"), Some("signature valid, key pinned")), "{v}");
+    assert_eq!(v["standing"]["at_seal"][&claim], true, "{v}");
+    assert!(v["quotes_checked_against_documents"].as_u64().unwrap() >= 1, "{v}");
+    let seal_hash = v["seal"]["seal_hash"].as_str().unwrap().to_string();
+    assert_eq!(check(&["--expect-seal", &seal_hash]).1["anchor"], "the seal is the anchored one");
+    assert_eq!(check(&["--expect-seal", &"0".repeat(64)]).0, Some(1), "another anchored seal");
+    assert_eq!(check(&["--trusted-keys", &revoked]).0, Some(1), "a revoked key");
+    let mut bytes = std::fs::read(&proof_file).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] = if bytes[at] == b'0' { b'1' } else { b'0' };
+    std::fs::write(&proof_file, bytes).unwrap();
+    let (code, v) = check(&[]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("PROOF_REFUSED")), "a byte changed: {v}");
+}
+
+/// A settings file in place of the flags (SPEC_V02_STEP6_7 section 7.4): it gives the run the settings hash the same flags give, its
+/// relative paths are taken from its folder, the same file resumes the run, and a key it may not hold is refused.
+#[test]
+fn a_settings_file_stands_for_the_flags_of_the_server() {
+    let fx = Fixture::new("settings");
+    let settings = json!({"format": "yuce-settings/1", "wal": "run.wal", "subjects": "subjects.json", "questions": "questions.json",
+                          "manifest": "manifest.json", "repo": "repo", "select": "select.txt", "run-id": "wire-run", "section-bytes": 4096});
+    std::fs::write(fx.0.join("settings.json"), settings.to_string()).unwrap();
+    let file = fx.p("settings.json");
+    drop(Server::start(&["--settings".to_string(), file.clone()]));
+    let genesis = |wal: &str| -> Value {
+        let text = std::fs::read_to_string(wal).unwrap();
+        serde_json::from_str::<Value>(text.lines().next().unwrap()).unwrap()["body"].clone()
+    };
+    let by_file = genesis(&fx.p("run.wal"));
+    let fx2 = Fixture::new("settings_flags");
+    let mut args = fx2.args(true);
+    args.extend(["--section-bytes".to_string(), "4096".to_string()]);
+    drop(Server::start(&args));
+    let by_flags = genesis(&fx2.p("run.wal"));
+    assert!(by_file["settings_hash"].is_string());
+    assert_eq!(by_file["settings_hash"], by_flags["settings_hash"], "the file and the same flags give one settings hash");
+    // the same file resumes the run: the flags that started it are the journal's now
+    drop(Server::start(&["--settings".to_string(), file.clone()]));
+    let refused = |bad: Value, extra: &[&str]| {
+        std::fs::write(fx.0.join("bad.json"), bad.to_string()).unwrap();
+        let out = Command::new(BIN)
+            .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0", "--settings", &fx.p("bad.json")])
+            .args(extra)
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stderr).to_string())
+    };
+    for (bad, extra, why) in [
+        (json!({"format": "yuce-settings/1", "nope": 1}), vec![], "no flag --nope"),
+        (json!({"format": "yuce-settings/1", "circles": "yes"}), vec![], "is true"),
+        (json!({"format": "yuce-settings/1", "wal": "x.wal"}), vec!["--wal", "y.wal"], "give it once"),
+        (json!({"format": "yuce-settings/2", "wal": "x.wal"}), vec![], "yuce-settings/1"),
+        (json!({"format": "yuce-settings/1", "section-bytes": 0.5}), vec![], "whole number"),
+    ] {
+        let (code, stderr) = refused(bad.clone(), &extra);
+        assert_eq!(code, Some(2), "{bad}: {stderr}");
+        assert!(stderr.contains(why), "{bad}: {stderr}");
+    }
+}
+
+/// One agent on its own folder in one command (the architect, 11.11.2026): `--profile solo` without `--subjects` makes the subjects
+/// itself, one reading agent and the owner, in a file beside the journal whose tokens are never printed; a question whose `about`
+/// no document holds is said at the start and in the status, not lost in silence.
+#[test]
+fn one_agent_starts_on_its_own_folder_without_a_subjects_file() {
+    let fx = Fixture::new("solo");
+    let questions = json!([{"id": "RQ1", "text": "What do the reports establish about the topic?", "about": ["topic"]},
+                           {"id": "RQ2", "text": "What do they say of zebras?", "about": ["zebra"]}]);
+    std::fs::write(fx.0.join("solo_questions.json"), questions.to_string()).unwrap();
+    let args: Vec<String> =
+        ["--profile", "solo", "--docs", &fx.p("repo/reports"), "--questions", &fx.p("solo_questions.json"), "--wal", &fx.p("solo.wal"), "--run-id", "solo-run"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    let log = fx.0.join("solo.stderr");
+    let server = Server::start_with_stderr(&args, Stdio::from(std::fs::File::create(&log).unwrap()));
+    let made: Value = serde_json::from_str(&std::fs::read_to_string(fx.p("solo.wal.subjects.json")).unwrap()).unwrap();
+    let subjects = made["subjects"].as_array().unwrap();
+    assert_eq!(subjects.iter().map(|s| (s["role"].as_str().unwrap(), s["id"].as_str().unwrap())).collect::<Vec<_>>(), [("swarm", "agent"), ("owner", "owner")]);
+    let token = |i: usize| subjects[i]["token"].as_str().unwrap().to_string();
+    assert!(token(0).len() >= 32 && token(0) != token(1));
+    let mut agent = Client::connect(server.port, &token(0));
+    let task = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+    assert!(task["status"].is_string() && task["status"] != "error", "{task}");
+    let mut owner = Client::connect(server.port, &token(1));
+    let status = owner.call("audit_status", json!({}));
+    let unmatched: Vec<&str> = status["about_unmatched"]["questions"].as_array().unwrap().iter().map(|q| q["question"].as_str().unwrap()).collect();
+    assert_eq!(unmatched, ["RQ2"], "{status}");
+    drop(server);
+    let stderr = std::fs::read_to_string(&log).unwrap();
+    assert!(stderr.contains("\"status\":\"subjects\"") && stderr.contains("no document of the run holds"), "{stderr}");
+    assert!(!stderr.contains(&token(0)) && !stderr.contains(&token(1)), "the tokens are never printed");
+    // resumed: the same subjects file, the same tokens
+    let resume: Vec<String> = ["--profile", "solo", "--wal", &fx.p("solo.wal")].iter().map(|s| s.to_string()).collect();
+    let server = Server::start(&resume);
+    let mut agent = Client::connect(server.port, &token(0));
+    let again = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+    assert!(again["status"].is_string() && again["status"] != "error", "the same token after the resume: {again}");
+}
+
+/// The index beside a journal (SPEC_V02_STEP6_7 section 6.5): built on a prefix and brought up to the whole journal it equals one
+/// built at once; a row changed in the database is named by the check; what stands answers as the reading tool does; a journal
+/// cut below the index is refused.
+#[test]
+fn the_index_beside_a_journal_is_rebuilt_from_it_and_checked_against_it() {
+    let fx = Fixture::new("index");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let index = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-index").args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    // built at once
+    let at_once = fx.p("at_once.sqlite");
+    let (code, built) = index(&["--wal", &wal, "--db", &at_once]);
+    assert_eq!((code, built["status"].as_str(), built["mode"].as_str()), (Some(0), Some("INDEXED"), Some("built")), "{built}");
+    // built on the first half of the frames, then brought up to the whole journal
+    let whole = std::fs::read_to_string(&wal).unwrap();
+    let lines: Vec<&str> = whole.lines().collect();
+    let half = fx.p("half.wal");
+    std::fs::write(&half, lines[..lines.len() / 2].iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    let step = fx.p("step.sqlite");
+    assert_eq!(index(&["--wal", &half, "--db", &step]).1["status"], "INDEXED");
+    std::fs::write(&half, &whole).unwrap();
+    let (code, updated) = index(&["--wal", &half, "--db", &step]);
+    assert_eq!((code, updated["mode"].as_str()), (Some(0), Some("updated")), "{updated}");
+    assert_eq!(updated["frames_added"], lines.len() - lines.len() / 2);
+    assert_eq!(updated["index_hash"], built["index_hash"], "an index brought up to date is the index built at once");
+    let (code, checked) = index(&["--wal", &wal, "--db", &step, "--check"]);
+    assert_eq!((code, checked["status"].as_str()), (Some(0), Some("INDEX_MATCHES")), "{checked}");
+    // what stands, from the database, is what the reading tool says
+    let conn = rusqlite::Connection::open(&at_once).unwrap();
+    let mut standing: Vec<String> = conn
+        .prepare("SELECT r.id FROM records r JOIN status s ON s.id = r.id WHERE r.kind = 'claim' AND s.grounded = 1")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    standing.sort();
+    let claims = Command::new(BIN).args(["audit-read", "active-claims", "--wal", &wal, "--limit", "100000"]).output().unwrap();
+    let claims: Value = serde_json::from_slice(&claims.stdout).unwrap();
+    let mut read: Vec<String> =
+        claims["groups"].as_array().unwrap().iter().flat_map(|g| g["ids"].as_array().unwrap().iter().map(|i| i.as_str().unwrap().to_string())).collect();
+    read.sort();
+    assert!(!standing.is_empty());
+    assert_eq!(standing, read, "the claims that stand");
+    // a row changed in the database: the check names its table and key
+    conn.execute("UPDATE records SET text = 'changed' WHERE kind = 'claim' AND rowid = (SELECT MIN(rowid) FROM records WHERE kind = 'claim')", []).unwrap();
+    drop(conn);
+    let (code, differs) = index(&["--wal", &wal, "--db", &at_once, "--check"]);
+    assert_eq!((code, differs["status"].as_str(), differs["differences"].as_u64()), (Some(1), Some("INDEX_DIFFERS"), Some(1)), "{differs}");
+    assert_eq!(differs["first_differences"][0]["table"], "records");
+    // a journal cut below what the index names is refused, and --rebuild builds it again
+    std::fs::write(&half, lines[..lines.len() / 2].iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    assert_eq!(index(&["--wal", &half, "--db", &step]).0, Some(1));
+    assert_eq!(index(&["--wal", &half, "--db", &step, "--rebuild"]).1["mode"], "built");
+
+    // Codex review of 11abf6ed. S6-03: an index of the first half, correct for its prefix, is behind the whole journal, not different
+    let (code, behind) = index(&["--wal", &wal, "--db", &step, "--check"]);
+    assert_eq!((code, behind["status"].as_str(), behind["differences"].as_u64()), (Some(0), Some("INDEX_BEHIND"), Some(0)), "{behind}");
+    assert_eq!(behind["index_hash"], behind["journal_index_hash"], "the index is the prefix's");
+    let conn = rusqlite::Connection::open(&step).unwrap();
+    conn.execute("UPDATE status SET grounded = 1 - grounded WHERE rowid = (SELECT MIN(rowid) FROM status)", []).unwrap();
+    drop(conn);
+    assert_eq!(index(&["--wal", &wal, "--db", &step, "--check"]).1["status"], "INDEX_DIFFERS", "a changed status of the prefix");
+    // S6-02: a record id of the same bytes stored as a BLOB is not the journal's text
+    let fresh = fx.p("blob.sqlite");
+    assert_eq!(index(&["--wal", &wal, "--db", &fresh]).0, Some(0));
+    let conn = rusqlite::Connection::open(&fresh).unwrap();
+    let id: String = conn.query_row("SELECT id FROM records LIMIT 1", [], |r| r.get(0)).unwrap();
+    let bytes: Vec<u8> = (0..id.len() / 2).map(|i| u8::from_str_radix(&id[2 * i..2 * i + 2], 16).unwrap()).collect();
+    conn.execute("UPDATE records SET id = ?1 WHERE id = ?2", rusqlite::params![bytes, id]).unwrap();
+    drop(conn);
+    let (code, blob) = index(&["--wal", &wal, "--db", &fresh, "--check"]);
+    assert_eq!((code, blob["status"].as_str()), (Some(1), Some("INDEX_DIFFERS")), "{blob}");
+    // S6-01: the index is never written over its journal, by --db or by its working file, nor over a file that is no index
+    let digest = |p: &str| sbgk_core::hash::to_hex(&sbgk_core::hash::sha256(&std::fs::read(p).unwrap()));
+    let before = digest(&wal);
+    assert_eq!(index(&["--wal", &wal, "--db", &wal, "--rebuild"]).0, Some(1));
+    assert_eq!(index(&["--wal", &wal, "--db", &wal]).0, Some(1));
+    let named = fx.p("idx.tmp");
+    std::fs::copy(&wal, &named).unwrap();
+    let target = fx.p("idx");
+    assert_eq!(index(&["--wal", &named, "--db", &target]).0, Some(0));
+    assert_eq!(index(&["--wal", &named, "--db", &target, "--rebuild"]).0, Some(0));
+    assert_eq!(digest(&named), before, "a journal named as the old working file stays");
+    let other = fx.p("questions.json");
+    let kept = digest(&other);
+    assert_eq!(index(&["--wal", &wal, "--db", &other, "--rebuild"]).0, Some(1));
+    assert_eq!(index(&["--wal", &wal, "--db", &other]).0, Some(1));
+    assert_eq!(digest(&other), kept, "a file that is no index is not replaced");
+    assert_eq!(digest(&wal), before, "the journal is untouched");
+    // S6-04: a journal that ends in a torn frame is refused, as audit-verify refuses it
+    let torn = fx.p("torn.wal");
+    std::fs::write(&torn, format!("{whole}{{\"body\":")).unwrap();
+    let (code, refused) = index(&["--wal", &torn, "--db", &fx.p("torn.sqlite")]);
+    assert_eq!((code, refused["status"].as_str()), (Some(1), Some("REFUSED")), "{refused}");
+    assert!(refused["error"]["message"].as_str().unwrap().contains("torn tail"), "{refused}");
+    assert_eq!(index(&["--wal", &torn, "--db", &at_once, "--check"]).0, Some(1));
+}
+
+/// Codex review of 904f1cdb, S4-05: a seal whose signed checkpoint cannot be written stands in the journal, and the server says so to
+/// its operator: in `audit_status`, in the reply of `audit_close` and on stderr, with the seal and what writes it again.
+#[test]
+fn a_server_tells_its_operator_of_a_seal_it_could_not_sign() {
+    let fx = Fixture::new("signfail");
+    let key = fx.p("operator.key");
+    assert!(Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap().status.success());
+    // the folder of the checkpoints is taken by a plain file
+    std::fs::write(fx.0.join("run.wal.checkpoints"), b"not a folder").unwrap();
+    let mut args = fx.args(true);
+    args.extend(["--signing-key".to_string(), key.clone()]);
+    let log = fx.0.join("server.stderr");
+    let server = Server::start_with_stderr(&args, Stdio::from(std::fs::File::create(&log).unwrap()));
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    let closed = own.call("audit_close", json!({}));
+    assert_eq!(closed["status"], "CLOSED", "{closed}");
+    let failed = closed["signing"]["seals_not_signed"].as_array().unwrap_or_else(|| panic!("the close names the seal it could not sign: {closed}")).clone();
+    assert!(failed.iter().all(|f| f["seal"].is_u64() && f["error"].is_string()), "{closed}");
+    assert!(closed["signing"]["note"].as_str().unwrap().contains("sbgk audit-sign"));
+    let status = own.call("audit_status", json!({}));
+    assert_eq!(status["signing"], closed["signing"], "{status}");
+    drop(server);
+    let stderr = std::fs::read_to_string(&log).unwrap();
+    assert!(stderr.contains("signed checkpoint was not written"), "stderr: {stderr}");
+    // the seals are in the journal: audit-sign writes their checkpoints once the folder is free
+    std::fs::remove_file(fx.0.join("run.wal.checkpoints")).unwrap();
+    let signed = Command::new(BIN).args(["audit-sign", "--wal", &fx.p("run.wal"), "--signing-key", &key]).output().unwrap();
+    let signed: Value = serde_json::from_slice(&signed.stdout).unwrap();
+    assert_eq!(signed["status"], "SIGNED", "{signed}");
+    let last_failed = failed.last().unwrap()["seal"].as_u64().unwrap();
+    assert!(signed["checkpoints"].as_array().unwrap().iter().any(|c| c["seal"] == last_failed), "{signed}");
+}
+
+/// The gap pass is a setting of the run (SPEC_V02_GAP_PASS section 10): the coverage and the genesis pin it, and the run is not
+/// resumed with another one.
+#[test]
+fn the_gap_pass_is_pinned_with_the_run() {
+    let fx = Fixture::new("gappinned");
+    let with_gap = |fresh: bool, limit: &str| [fx.args(fresh), vec!["--gap-pass".to_string(), limit.to_string()]].concat();
+    drop(Server::start(&with_gap(true, "2")));
+    let wal = std::fs::read_to_string(fx.p("run.wal")).unwrap();
+    let genesis: Value = serde_json::from_str(wal.lines().next().unwrap()).unwrap();
+    assert!(genesis["body"]["settings_hash"].is_string(), "{genesis}");
+    assert!(wal.contains("\"gap_pass\":{\"limit\":2"), "the coverage names the gap pass");
+    let other = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(with_gap(false, "3")).output().unwrap();
+    assert_eq!(other.status.code(), Some(2), "a run is not resumed with another gap pass: {}", String::from_utf8_lossy(&other.stderr));
+    drop(Server::start(&with_gap(false, "2")));
+}
+
+/// A second reader is never the first: a run of one reading agent with second-reader tiers is refused before it starts (Codex review
+/// of 6d2c270, GAP-03).
+#[test]
+fn a_second_reader_needs_a_second_agent() {
+    let fx = Fixture::new("gaponeagent");
+    let one = fx.p("one-subject.json");
+    std::fs::write(&one, json!({"subjects": [{"token": "synthetic-solo-token-0123456789abcdef", "id": "w1", "role": "swarm"}]}).to_string()).unwrap();
+    let profile = fx.p("gap-profile.json");
+    std::fs::write(&profile, json!({"gap_pass": {"limit": 2, "second_reader_tiers": [0]}}).to_string()).unwrap();
+    let mut args = fx.args(true);
+    let at = args.iter().position(|a| a == "--subjects").unwrap();
+    args[at + 1] = one.clone();
+    let out =
+        Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0", "--gap-profile", &profile]).args(&args).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("at least two swarm agents"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!Path::new(&fx.p("run.wal")).exists(), "refused before the journal");
 }

@@ -13,6 +13,9 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod requests;
+// the gap pass (SPEC_V02_GAP_PASS)
+pub(crate) mod gaps;
+pub use gaps::{GapProfile, GapTier};
 pub use requests::REQUEST_TYPES;
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +95,8 @@ pub struct DispatchConfig {
     pub relate_hints: bool,
     /// Explicit map candidates in the reading queue; links belong only to authenticated CHANGE leases.
     pub versions: bool,
+    /// The gap pass after the first readings (SPEC_V02_GAP_PASS); off while its `limit` is 0.
+    pub gap: GapProfile,
 }
 
 impl Default for DispatchConfig {
@@ -121,6 +126,7 @@ impl Default for DispatchConfig {
             relation_lines: true,
             relate_hints: false,
             versions: false,
+            gap: GapProfile::default(),
         }
     }
 }
@@ -318,12 +324,14 @@ fn claim_stated(text: &str, claim: &Value) -> (String, Vec<String>) {
 }
 
 /// Whether references name exactly these grounds, ids in hex. A reference reads as in the store: `@` and at least 16 digits of an id, in
-/// either case. Whatever else a line names is no ground of a kept row, and the store's own check answers for it.
-fn names_grounds(references: &[Value], grounds: &BTreeSet<String>) -> bool {
+/// either case, or the same digits without the `@` when no line of the answer has that name, as the dispatcher adds the `@` before the
+/// store reads it. Whatever else a line names is no ground of a kept row, and the store's own check answers for it.
+fn names_grounds(references: &[Value], grounds: &BTreeSet<String>, names: &BTreeSet<&str>) -> bool {
     let named: Option<BTreeSet<&String>> = references
         .iter()
         .map(|r| {
-            let digits = r.as_str()?.strip_prefix('@').filter(|d| d.len() >= 16)?.to_ascii_lowercase();
+            let r = r.as_str()?;
+            let digits = r.strip_prefix('@').or_else(|| (!names.contains(r)).then_some(r)).filter(|d| d.len() >= 16)?.to_ascii_lowercase();
             grounds.iter().find(|g| g.starts_with(&digits))
         })
         .collect();
@@ -340,9 +348,10 @@ fn copies_of_kept<S: AuditStore>(s: &S, kept: &[RecordId], lines: &[Value]) -> B
         .filter_map(|id| s.record(id))
         .filter_map(|r| r.text.as_deref().map(|t| (claim_stated(t, &r.body), r.based_on.iter().map(|g| to_hex(&g.0)).collect::<BTreeSet<_>>())))
         .collect();
+    let names: BTreeSet<&str> = lines.iter().filter_map(|v| v["local_id"].as_str()).collect();
     let repeats = |v: &Value, text: &str| {
         let (stated, references) = (claim_stated(text, v), v["based_on"].as_array().map_or(&[][..], Vec::as_slice));
-        rows.iter().any(|(row, grounds)| *row == stated && names_grounds(references, grounds))
+        rows.iter().any(|(row, grounds)| *row == stated && names_grounds(references, grounds, &names))
     };
     let used: BTreeSet<String> = lines.iter().filter(|v| v["kind"] != "done").flat_map(references).collect();
     lines
@@ -594,6 +603,8 @@ pub struct Dispatcher {
     key_stored: BTreeMap<String, usize>,
     key_offered: BTreeMap<String, usize>,
     seq: u64,
+    /// Gap packs completed so far: the order the tier rule reads back (SPEC_V02_GAP_PASS section 4).
+    gap_order: u64,
     pub stats: DispatchStats,
 }
 
@@ -620,18 +631,22 @@ fn plain_break(piece: &str) -> Option<usize> {
     blank.or_else(|| piece.rfind('\n').map(|p| p + 1))
 }
 
+/// The rule `sections` cuts by, pinned with a server's run: 1, a `#` line at a line's start opens a section; 2, not inside a fenced
+/// code block (Codex review of 320a04e, HDR-01). A task key names a section by its number, so a run cut by one rule cannot be taken
+/// up again by another: its numbers would name other bytes (Codex recheck of baa75e5, HDR-R01).
+pub const SECTION_RULE: u64 = 2;
+
 /// Byte ranges of a document cut at headings where it has them, then packed (or split at blank lines / char boundaries) to at most
 /// `max`. Task keys hold these section numbers, so every reader of a document's sections comes here, with its name.
 pub(crate) fn sections(doc: &str, text: &str, max: usize) -> Vec<(usize, usize)> {
     let max = max.max(64);
     let headings = has_headings(doc);
     let mut starts = vec![0usize];
-    let mut at = 0;
-    for line in text.split_inclusive('\n') {
-        if headings && at > 0 && line.starts_with('#') {
+    // a `#` line inside a fenced block is code, not a heading (Codex review of 320a04e, HDR-01)
+    for (at, line, code) in gaps::code_lines(text) {
+        if headings && at > 0 && !code && line.starts_with('#') {
             starts.push(at);
         }
-        at += line.len();
     }
     starts.push(text.len());
     let mut raw: Vec<(usize, usize)> = Vec::new();
@@ -1237,6 +1252,7 @@ impl Dispatcher {
             key_stored: BTreeMap::new(),
             key_offered: BTreeMap::new(),
             seq: 0,
+            gap_order: 0,
             stats: DispatchStats::default(),
         }
     }
@@ -1353,7 +1369,7 @@ impl Dispatcher {
         self.members = circles::members::Membership::default();
         self.answered.clear();
         self.retained.clear();
-        self.epoch = crate::hash::to_hex(&s.root());
+        self.epoch = crate::hash::to_hex(&s.epoch());
         // the accepted requests first: their keys are work keys too
         self.load_requests(s);
         // every key a task may have completed: the open work, the research questions and every link (a checked link is no
@@ -1366,6 +1382,10 @@ impl Dispatcher {
                 keys.insert(format!("reread:{doc}#{k}"));
             }
         }
+        // and every gap pack that completed, with the order of the last one
+        keys.extend(s.checkpoint_keys("task:gap").into_iter().map(|k| k["task:".len()..].to_string()));
+        self.gap_order =
+            s.checkpoint_keys("task:gap").iter().filter_map(|k| s.checkpoint(k).and_then(|c| c["context"]["gap"]["order"].as_u64())).max().map_or(0, |n| n + 1);
         keys.extend(self.questions.iter().map(|q| format!("rq:{}", q.id)));
         keys.extend(s.links().iter().flat_map(|l| [format!("verify:{}", l.id.short()), format!("conflict:{}", l.id.short())]));
         let revision = self.question_set_revision();
@@ -1476,6 +1496,7 @@ impl Dispatcher {
             );
         }
         out.extend(self.auto_reread_work(s));
+        out.extend(self.gap_work(s));
         // the questions alone (01.11.2026 scaling stand: a copy of every record to find them was 5.9 ms of each of the four
         // computations of the work per task acquire at 4 600 records)
         for r in s.records_of_kind(RecordKind::Question).into_iter().filter(|r| !self.is_followup(&r.directive)) {
@@ -1763,12 +1784,20 @@ impl Dispatcher {
         // why the first task in line for this agent was not its own
         let mut blocked = None;
         for (kind, key, link, question, section) in &work {
+            // a second reader no reader may ever be is given up, the need of an independent reader on the record (GAP-03)
+            if *kind == TaskKind::Request && !self.taken(key) && self.gap_without_reader(s, key) {
+                self.unresolved.insert(key.clone());
+                self.pending_unresolved.push((key.clone(), format!("noreader-{key}"), 0));
+                continue;
+            }
             let skip = if self.taken(key) {
                 Some("taken")
             } else if !allowed(*kind) {
                 Some("kind_not_its_own")
             } else if !self.circle_allows(*kind, key, agent) {
                 Some(if *kind == TaskKind::Build { "ring_card_of_another" } else { "circle_phase" })
+            } else if !self.gap_allows(s, key, agent) {
+                Some("gap_second_reader_of_another")
             } else if *kind == TaskKind::Investigate && !key.starts_with("stale:") && (reading || !builder_caught_up) {
                 Some("investigation_waits_for_builder")
             } else if *kind == TaskKind::Extend && held {
@@ -1836,7 +1865,7 @@ impl Dispatcher {
         self.stats.end_wait(agent, now);
         self.seq += 1;
         if self.epoch.is_empty() {
-            self.epoch = crate::hash::to_hex(&s.root());
+            self.epoch = crate::hash::to_hex(&s.epoch());
         }
         let h = crate::hash::sha256(crate::jcs::to_jcs(&json!(["r2r-task/1", self.nonce, self.epoch, self.seq])).as_bytes());
         // an INVESTIGATE task id says so (`TQ<n>-`): the questions it raises are follow-ups by their own directive, also after a
@@ -1850,6 +1879,7 @@ impl Dispatcher {
             TaskKind::Build => "TB",
             TaskKind::Change => "TD",
             TaskKind::Request if key.starts_with("control:") => "TC",
+            TaskKind::Request if key.starts_with("gap") => "TG",
             TaskKind::Request => "TR",
             _ => "T",
         };
@@ -1871,6 +1901,7 @@ impl Dispatcher {
             TaskKind::Investigate => self.investigate_prompt(s, &f, question.expect("an INVESTIGATE task has a question")),
             TaskKind::VerifyLink | TaskKind::ResolveConflict => self.link_prompt(s, &f, kind, link.expect("a link task has a link")),
             TaskKind::Request if key.starts_with("reread:") => self.auto_reread_prompt(s, &f, &key),
+            TaskKind::Request if key.starts_with("gap") => self.gap_prompt(s, &key),
             TaskKind::Request => self.request_prompt(s, &f, &key),
             TaskKind::Summarize => self.summarize_prompt(s, &f, &key[3..], &task_id),
         };
@@ -2049,9 +2080,20 @@ impl Dispatcher {
         let terms: Vec<String> = self.questions.iter().flat_map(|q| q.about.clone()).collect();
         let known_recs = self.known(s, f, &terms, Some(doc));
         let issued: Vec<RecordId> = known_recs.iter().map(|r| r.id).collect();
+        // a section cut from the middle of a document: its heading and the header of the table it begins inside, shown to read it
+        // by and never quoted (the scope stays the section)
+        let context = gaps::reading_context(doc, &text, *a);
+        let context = if context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "CONTEXT above this section (to understand it; never quote it):\n{}\n",
+                context.iter().map(|c| format!("  {c}")).collect::<Vec<_>>().join("\n")
+            )
+        };
         let prompt = format!(
             "TASK EXTEND: read this section of report {doc} and record what it establishes, qualifies, revokes or leaves open that \
-             matters for the research questions. Quote only from the section.\nRESEARCH QUESTIONS:\n{}\n{}\nSECTION doc_id=\"{doc}\" \
+             matters for the research questions. Quote only from the section.\nRESEARCH QUESTIONS:\n{}\n{}\n{context}SECTION doc_id=\"{doc}\" \
              (bytes {a}..{b}):\n<<<\n{}\n>>>",
             self.questions_text(),
             known_block(&known_recs, "ALREADY RECORDED (do not repeat; relate to these @ids instead)"),
@@ -3284,6 +3326,10 @@ impl Dispatcher {
             answer = Some(Answer { done, outcome, ids, fallen: Vec::new() });
         }
         context = self.circle_tag(context);
+        if lease.key.starts_with("gap") {
+            // the order of completion and what the pack recorded: the tier rule reads them back (SPEC_V02_GAP_PASS section 4)
+            context["gap"] = json!({"order": self.gap_order, "recorded": own.len()});
+        }
         if lease.relate {
             // the reading's checkpoint stays what it was (its loss, its origin) and the turn only adds its mark: a recovery sees the
             // reading as the live dispatcher does (claude-reviewer's RV-01 of 8509eb18: the close wrote over it)
@@ -3347,6 +3393,9 @@ impl Dispatcher {
                 self.stats.relate_turns += 1;
                 return json!({"status": "RELATE", "task_id": task_id, "accepted": acked, "accepted_locals": accepted_locals, "prompt": prompt});
             }
+        }
+        if lease.key.starts_with("gap") {
+            self.gap_order += 1;
         }
         self.handled.insert(lease.key.clone());
         self.leases.remove(task_id);
@@ -3442,8 +3491,11 @@ impl Dispatcher {
 
     /// The initial reading and its bounded automatic repair wave have finished. Requests and pair verification may follow.
     pub fn reading_done<S: AuditStore>(&self, s: &S) -> bool {
-        !self.open_work(s, &Flags::of(s)).iter().any(|w| matches!(w.0, TaskKind::Extend | TaskKind::Change) || w.1.starts_with("reread:"))
-            && !self.leases.values().any(|l| matches!(l.kind, TaskKind::Extend | TaskKind::Change) || l.key.starts_with("reread:"))
+        !self
+            .open_work(s, &Flags::of(s))
+            .iter()
+            .any(|w| matches!(w.0, TaskKind::Extend | TaskKind::Change) || w.1.starts_with("reread:") || w.1.starts_with("gap"))
+            && !self.leases.values().any(|l| matches!(l.kind, TaskKind::Extend | TaskKind::Change) || l.key.starts_with("reread:") || l.key.starts_with("gap"))
     }
 
     pub fn attestation_coverage<S: AuditStore>(&self, s: &S, builder_caught_up: bool) -> Option<Value> {
@@ -3476,9 +3528,12 @@ impl Dispatcher {
         if unread > 0 {
             return None;
         }
-        Some(
-            json!({"reading_done":true,"waves_closed":true,"builder_caught_up":true,"unread_units":0,"read_units":keys.len(),"reports":s.docs().len(),"read_bytes":s.docs().iter().filter_map(|d|s.doc_text(d)).map(|s|s.len()).sum::<usize>(),"meaning":"all initial read units committed; not a guarantee of semantic extraction completeness"}),
-        )
+        let mut out = json!({"reading_done":true,"waves_closed":true,"builder_caught_up":true,"unread_units":0,"read_units":keys.len(),"reports":s.docs().len(),"read_bytes":s.docs().iter().filter_map(|d|s.doc_text(d)).map(|s|s.len()).sum::<usize>(),"meaning":"all initial read units committed; not a guarantee of semantic extraction completeness"});
+        // the gap pass, when the run has one: what each read unit came to (SPEC_V02_GAP_PASS section 9)
+        if self.cfg.gap.limit > 0 {
+            out["gap_pass"] = self.gap_report(s);
+        }
+        Some(out)
     }
 
     /// Read-only offline diagnostics for the consilium gates. Uses the exact production queue and summary window, without
@@ -3644,6 +3699,9 @@ impl Dispatcher {
         if self.no_source.contains(key) {
             context["reason"] = json!(NO_SECTION_MATCHED);
         }
+        if task_id.starts_with("noreader-") {
+            context["reason"] = json!("NO_INDEPENDENT_READER");
+        }
         if let Some(q) = key.strip_prefix("rq:") {
             context["rq_id"] = json!(q);
             context["question_set_revision"] = json!(self.question_set_revision());
@@ -3756,8 +3814,7 @@ impl Dispatcher {
         Some(json!({"run_id": run_id, "question_set_revision": self.question_set_revision(), "audit_ontology_revision": rev,
                     "audit_ontology_hash": crate::hash::to_hex(&hash), "ingest_watermark": s.head(), "builder_cursor": builder_cursor,
                     "audit_root": crate::hash::to_hex(&s.root()), "answered": self.answered.keys().collect::<Vec<_>>(),
-                    "outcomes": outcomes, "unknown_outcomes": unknown, "not_answered": failed, "unresolved": self.reported_unresolved(s),
-                    "tasks_committed": self.stats.committed}))
+                    "outcomes": outcomes, "unknown_outcomes": unknown, "not_answered": failed, "unresolved": self.reported_unresolved(s)}))
     }
 
     /// The research questions answered so far whose answers still hold, for a run that stops before it is terminal (Codex's analysis

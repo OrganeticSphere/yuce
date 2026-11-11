@@ -11,3 +11,5 @@ path = "src/main.rs"
 [dependencies]
 sbgk-core = { path = "../sbgk-core" }
 serde_json = "1"
+# the index beside a journal (SPEC_V02_STEP6_7, step 6), with the SQLite source built in
+rusqlite = { version = "0.32", features = ["bundled"] }

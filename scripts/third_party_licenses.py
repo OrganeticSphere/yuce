@@ -45,6 +45,16 @@ def main() -> int:
     text += ("\n## Crates the generated list leaves out\n\nBuild-time crates (procedural macros, not linked into the binaries) and "
              "serde, added from each crate's own manifest. Their Apache-2.0 and MIT texts are above; other license files they ship "
              "follow.\n\n" + "\n".join(rows) + "\n\n" + "\n".join(extra))
+    # C code the binaries build in: the SQLite amalgamation libsqlite3-sys bundles (rusqlite, feature `bundled`)
+    sqlite = next((p for p in lock["package"] if p["name"] == "libsqlite3-sys"), None)
+    if sqlite is not None:
+        src = next((r / f"libsqlite3-sys-{sqlite['version']}" for r in registry if (r / f"libsqlite3-sys-{sqlite['version']}").is_dir()), None)
+        if src is None:
+            raise SystemExit(f"libsqlite3-sys {sqlite['version']} is not in the cargo registry cache: run cargo fetch --locked first")
+        header = (src / "sqlite3" / "sqlite3.h").read_text(encoding="utf-8", errors="replace")
+        version = re.search(r'#define SQLITE_VERSION\s+"([^"]+)"', header).group(1)
+        text += (f"\n## C code built into the binaries\n\nSQLite {version}, built in by libsqlite3-sys {sqlite['version']} for the index "
+                 "beside a journal (`sbgk audit-index`). SQLite is in the public domain: https://sqlite.org/copyright.html\n")
     pkgs = json.loads(subprocess.run([pip_licenses, "--python", baselines_python, "--format=json", "--with-urls"], check=True,
                                      capture_output=True, text=True).stdout)
     lines = [f"| {p['Name']} | {p['Version']} | {p['License']} | {p['URL']} |" for p in sorted(pkgs, key=lambda p: p["Name"].lower())]
@@ -52,6 +62,8 @@ def main() -> int:
              "and Temporal baselines; not shipped in this repository or its release archives. Listed by pip-licenses 5.5.5 from the "
              "environment the runs used. MPL-2.0 applies to certifi and to orjson's own files.\n\n| Package | Version | License | Home page |\n"
              "|---|---|---|---|\n" + "\n".join(lines) + "\n")
+    # the license texts some crates ship end lines in spaces: `git diff --check` refuses them, and they mean nothing
+    text = re.sub(r"[ \t]+\n", "\n", text)
     OUT.write_text(re.sub(r"\n{3,}", "\n\n", text), encoding="utf-8", newline="\n")
     print(f"{OUT.name}: {len(missing)} crates added, {len(pkgs)} Python packages")
     return 0
