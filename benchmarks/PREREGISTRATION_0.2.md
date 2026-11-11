@@ -80,3 +80,13 @@ outcomes 2 to 4. A `partly` whose cause is not in the kernel does not hold the t
 These are two runs with two withdrawals each and one grader: anecdotes. They can show that 0.2 keeps the outcomes of 0.1.7 on this team
 and corpus, that its new checks work on real runs and what the gap pass adds on one, not how often. No gain in answer quality from it,
 and no comparison of K with T and L beyond what section 1 of BENCHMARKS.md already allows.
+
+## Amendment of 11 November 2026, before any grading
+
+Made after run 1 and while run 2 ran, before any answer of either run was graded. By the owner's decision the grader is Claude
+Fable 5.2 at high effort, not Claude Opus 5.5. The rest of the grading row stands: blind, one grader, the rules of `grade_common.py`
+unchanged, answers shuffled and stripped of what names their side. So that the comparison of run 2 with the K run of 0.1.7 has one
+grader, the answers of that K run go into the same grading; its published grading by Opus 5.5 stays as it was. The grading goes in
+packets of one stage each, as for 0.1.7: every packet holds the answers of every side at that stage. The commit of this amendment,
+after the commit that brought this file, shows the order; `provenance.json` of each run holds the SHA-256 of the file as it was
+when the run started.
