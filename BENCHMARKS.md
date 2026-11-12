@@ -196,11 +196,13 @@ pass the answers of both runs, of the K run of 0.1.7 and of T and L of run 2; ea
   for the first question and 54 for the second, run 2 has 40, 42 and 44, and 47. One row added at 2B in run 2 says in other words
   what a row added at 2A says, on the same four quotes.
 * **A defect of the kernel, found by this outcome after the grading.** The record of run 1's second answer names 11 of its 54 records
-  twice (65 ids). A repair after a reader failed, in stage 1, took several attempts; claims the model sent again were equal to kept
-  rows and took their ids, and the kernel added the kept rows by their short ids as well. The first run 1 had the same, 82 ids for 42
-  records. It changes no text and no number above: an answer as read and graded shows each record once, and the quittances were cut
-  per record. We judged that it does not hold the tag, which stays on the tree of the runs, and say so here; 0.2.1 lists each record
-  of an answer once (LIMITATIONS.md).
+  twice (65 ids). A repair after a reader failed, in stage 1, took several attempts: the done line of the last one named records
+  that the same task had stored in its earlier attempts, by their local names, and the kernel added the same records again, by their
+  short ids, as rows the answer keeps. The first run 1 had the same, 82 ids for 42 records. It changes no text and no number above:
+  an answer as read and graded shows each record once, and the quittances were cut per record. The done record keeps the repeated
+  list as well, so a count over its grounds, such as the grounds still standing in the report of what fell, can come out too high.
+  We judged that it does not hold the tag, which stays on the tree of the runs, and say so here; 0.2.1 is to list each record of an
+  answer once (LIMITATIONS.md).
 * **What 0.2 adds, on both journals, no model.** All of it passed. `audit-verify` verifies each journal and every seal in it (1,099
   entries and 2,990 records; 672 and 2,126). Its 46 and 34 seals, signed after the run with a key made for it, check with
   `audit-verify --checkpoint` under a trusted keys file, and a checkpoint of another prefix is refused. After each withdrawal
