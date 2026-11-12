@@ -159,6 +159,75 @@ same four readers, corpus and withdrawals as run 2. T and L are the answers of r
 * **Cost.** 282 calls, none failed, 38.9 minutes, $0.45 for the seats with a price. The run comes from the public branch of its
   candidate, with the binary its release workflow built: its `provenance.json` names public commits.
 
+### The control runs of 0.2, grader Fable 5.2
+
+Side K alone, twice, from the candidate tree of 0.2 before its tag, as `benchmarks/PREREGISTRATION_0.2.md` fixed it: run 1 with three
+readers on `deepseek-flash` and the gap pass (at most 12 packs of 8 units), run 2 with the four readers of four makers of 0.1.7 and
+the gap pass off, so that against 0.1.7 one thing changed, the kernel. The corpus and the withdrawals are those of the runs above. The
+two runs differ in the team and the gap pass, and what differs between them is not said to come from either one alone. The blind
+grading of the first two runs found a defect of the repair, fixed in this tree (the amendment of 12 November in the pre-registration);
+both runs were made again, and the grading below is of the second ones. One grader, Claude Fable 5.2 at high effort, graded in one
+pass the answers of both runs, of the K run of 0.1.7 and of T and L of run 2; each share is the mean of two label orders.
+
+| Stage | Run 2: four makers | Run 1: DeepSeek, gap pass | K of 0.1.7 | T | L |
+|---|---|---|---|---|---|
+| 1 | 98.9% | 91.5% | 86.5% | 66.7% | 89.6% |
+| 2A | 98.9% | 90.4% | 86.5% | 89.6% | 83.8% |
+| 2B | 98.9% | 91.4% | 88.8% | 85.9% | 92.5% |
+
+* **The graph.** After each withdrawal no claim the kernel reports as grounded rests on a quote overlapping the withdrawn text: 0 of
+  940 and 0 of 936 in run 1, 0 of 815 and 0 of 816 in run 2. The withdrawals touched 2 and then 4 stored quotes in run 1, with 4 and
+  12 records resting on them, and 3 and 4 in run 2, with 8 and 13; no quote touching the text was stored afterwards. From the
+  journal, no model.
+* **Withdrawal kept.** Run 2 `ok` at 2A and 2B in both orders, as K of 0.1.7. Run 1 `ok` at 2A and `partly` at 2B in both orders, for
+  the repair below. T and L `ok` at 2A and `partly` at 2B.
+* **Earlier states.** No statement of either run of 0.2 is marked stale, at any stage, in either order. K of 0.1.7 has 11 and 10 at
+  stage 1, 10 and 12 at 2A, 8 and 10 at 2B, the same old state as current among them each time; T 15 and 13 at stage 1, L one at 2A.
+* **The repair.** In run 2 each withdrawal touched one row of the first answer, and each repair took one call: three claims and the
+  done line, all accepted, no copy left out, nothing refused. That answer went from 40 rows to 42 and then to 44; the other stayed at
+  47. In run 1 the first withdrawal touched no answer and took no call. The second took two rows of the first answer, both saying
+  that 2026-07-28 removed protocol-level sessions. Its task showed 8 claims of live support and allowed at most 6 claim lines of up
+  to 240 characters. The model took 5 calls: in the first, both of its claims named claims in `based_on`, where only quotes go, and
+  one ran to 252 characters; it then sent that one 4 more times without shortening it. The one claim accepted says that "the
+  2026-07-28 stateless revision removing the initialize handshake was withdrawn": the model read the withdrawal of one changelog line
+  as the withdrawal of the whole revision, and the kernel checks form, not meaning. The answer closed as partial at 39 rows, without
+  the sessions conclusion that a standing page still supports. Run 2 kept it, on a quote of `streamable-http.mdx`.
+* **Repeats.** No answer of either run holds the same text twice, case and spacing aside, at any stage: run 1 has 40, 40 and 39 rows
+  for the first question and 54 for the second, run 2 has 40, 42 and 44, and 47. One row added at 2B in run 2 says in other words
+  what a row added at 2A says, on the same four quotes.
+* **A defect of the kernel, found by this outcome after the grading.** The record of run 1's second answer names 11 of its 54 records
+  twice (65 ids). A repair after a reader failed, in stage 1, took several attempts; claims the model sent again were equal to kept
+  rows and took their ids, and the kernel added the kept rows by their short ids as well. The first run 1 had the same, 82 ids for 42
+  records. It changes no text and no number above: an answer as read and graded shows each record once, and the quittances were cut
+  per record. We judged that it does not hold the tag, which stays on the tree of the runs, and say so here; 0.2.1 lists each record
+  of an answer once (LIMITATIONS.md).
+* **What 0.2 adds, on both journals, no model.** All of it passed. `audit-verify` verifies each journal and every seal in it (1,099
+  entries and 2,990 records; 672 and 2,126). Its 46 and 34 seals, signed after the run with a key made for it, check with
+  `audit-verify --checkpoint` under a trusted keys file, and a checkpoint of another prefix is refused. After each withdrawal
+  `audit-read fallen` names exactly the claims whose grounded flag it turned off, and none of the withdrawn text. Each of the 93 and
+  91 rows of the last answers gets a quittance that checks without the journal, 7.2 to 24.2 KB (median 11.0 and 10.4); none of the
+  6 fallen claims tried in each run gets one. The index (8.1 and 5.6 MB) is equal to its journal, and the independent verifier
+  `yuce-verify` (levels J0 and J1), written in a clean room from the specification of the format and not published yet, passes both
+  journals.
+* **The gap pass (run 1).** It used all 12 of its packs: 94 units in 15 calls, 111 records added (61 quotes, 38 claims, 12
+  questions), and 33 units with no quote. The packs went to the documents in order, so all 12 went to the first two, the
+  authorization and lifecycle pages of 2025-03-26; the other 20 got none. At this budget the run shows the pass at work, not what it
+  adds to the coverage of a corpus.
+* **The grader's control.** Two lines per stage restating the withdrawn content were planted in a copy of T's answer: it found all
+  four, and its verdict on T's withdrawal went from `ok` to `partly` at 2A and from `partly` to `failed` at 2B.
+* **Two gradings of the same answers.** The packets with the planted lines are copies of the first label order with T's answer
+  changed. On the other four sides the same text in the same order was graded up to 2.6 points apart, and L's withdrawal at 2B was
+  `partly` in one and `ok` in the other. The two label orders differ by up to 5.6 points (T, stage 1).
+* **By model (lines sent, refused).** Run 2: `deepseek-flash` 1,253 and 127, Haiku 795 and 86, Luna 402 and 60, Gemini 322 and 17.
+  Run 1: the three DeepSeek readers 1,779 and 190, 1,519 and 164, 1,380 and 188.
+* **Cost.** Run 1: 467 calls, none failed, 18 minutes, $0.79 of DeepSeek balance. Run 2: 263 calls, one failed, 33 minutes, $0.13 of
+  DeepSeek balance; Haiku through Claude Code, Luna through Codex and Gemini through the Antigravity CLI ran on subscriptions (81
+  calls with no price). Journals of 4.3 and 2.9 MB. Both runs come from the public branch of the candidate, with the binary its
+  release workflow built: their `provenance.json` names public commits.
+* **Checking a journal of 0.2.** After its last stage the server seals and closes the run, so the journal goes on past the last
+  receipt by a seal and the close: check it against `arm_c.phase3.receipt` without `--at-end`, or against the signed checkpoints in
+  the archive's `signed/` folder with the verifier key in `signed/trusted.txt`.
+
 ### How far these numbers go
 
 The tables are what was measured. What they do not show:
@@ -284,8 +353,9 @@ was. Recommended for 0.1: runs of **a few thousand records** and up to **8 agent
 
 ## The recorded runs
 
-The runs of section 1 are release assets of v0.1.0, and the two runs on four makers of v0.1.6: one archive per run and per grading,
-each with a manifest of its files (sizes and SHA-256), and `SHA256SUMS` over all of them (`SHA256SUMS-runs.txt` in v0.1.6).
+The runs of section 1 are release assets of v0.1.0, the two runs on four makers of v0.1.6, the control run of 0.1.7 of v0.1.7 and
+the runs of 0.2 of v0.2.0: one archive per run and per grading, each with a manifest of its files (sizes and SHA-256), and
+`SHA256SUMS` over all of them (`SHA256SUMS-runs.txt` from v0.1.6 on).
 
 | Archive | What it holds |
 |---|---|
@@ -295,6 +365,9 @@ each with a manifest of its files (sizes and SHA-256), and `SHA256SUMS` over all
 | `deepseek2-K`, `-T`, `-L`, `deepseek2-grading-opus` | DeepSeek, series 2, and its grading |
 | `makers1-K`, `-T`, `-L`, `makers1-grading-opus` | four makers, run 1 (v0.1.5), and its grading |
 | `makers2-K`, `-T`, `-L`, `makers2-grading-opus` | four makers, run 2 (v0.1.6), its grading and the grader's control |
+| `control017-K`, `control017-grading-opus` | the control run of 0.1.7 and its grading (v0.1.7) |
+| `control02-run1-K`, `control02-run2-K`, `control02-grading-fable` | the control runs of 0.2 and their grading (v0.2.0) |
+| `first02-run1-K`, `first02-run2-K` | the first runs of 0.2, made again after the fix; their four graded packets are in `control02-grading-fable` |
 
 A run folder holds the journal (`arm_c/run.wal`), the calls and replies, the answers, the inputs (corpus copy, checklist,
 withdrawal plan) and the summary. Left out: the agents' tokens (`arm_c/subjects.json`; replaying the journal needs none)

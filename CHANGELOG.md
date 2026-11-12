@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.2.0 (not released yet)
+## 0.2.0 (2026-11-12)
+
+A journal of sealed frames, signed checkpoints, quittances for one record, a report of what fell after a withdrawal, an index beside
+the journal and a gap pass. Both control runs of this tree were graded blind before the tag (`BENCHMARKS.md`).
 
 A new run writes the 0.2 journal; `audit-verify` checks journals of both formats, and the published journals of 0.1 verify as before.
 The server no longer resumes a 0.1 journal: finish it with a 0.1 release.

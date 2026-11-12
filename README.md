@@ -1,20 +1,35 @@
 # YuCe
 
-**A deterministic evidence control kernel for AI agent teams.**
+**A source your AI agents quoted was withdrawn. Which of their conclusions need re-checking?**
 
 [简体中文](README.zh-CN.md)
 
-YuCe is the environment a team of AI agents works in. It hands each agent one bounded task at a time, accepts a quote only
-when its bytes occur in the source, records which conclusions rest on which quotes, and keeps everything it accepts in a
-hash-chained journal. When a source is revoked, the kernel itself finds the conclusions registered on it and leaves the
-others standing: no model is asked what the revocation touches. A stopped run replays its journal to the same roots, and
-anyone can check a published journal against its receipt without a model.
+YuCe answers that from the record, not by asking a model. Your agents work through it over MCP: it hands each agent one bounded
+task at a time, accepts a quote only when its bytes occur in the source, records which conclusions rest on which quotes, and keeps
+the accepted records and their grounds in a sealed, hash-chained journal. When a source is withdrawn, the kernel itself lists the
+conclusions that stood on it, and the others stay standing. A stopped run replays its journal to the same roots, and anyone can
+check a published journal without a model.
 
-**An agent sends the text of a quote, not offsets: the kernel itself finds its bytes in the section the agent was leased.**
+**A deterministic evidence control kernel for AI agent teams:** Rust, Apache-2.0, calls no model. Agents of any model are its
+clients. Deterministic here means that the kernel's answers follow from its inputs and a journal replays to the same roots; two
+runs of a team differ, in their timestamps and in what their models write. An agent sends the text of a quote, not offsets: the
+kernel itself finds its bytes in the section the agent was leased.
 
-The kernel is written in Rust and calls no model. Agents of any model are its clients, over MCP. Deterministic here means that
-the kernel's answers follow from its inputs and a journal replays to the same roots; two runs of a team differ, in their
-timestamps and in what their models write.
+## What 0.2 adds
+
+* **What fell, and why.** `sbgk audit-read fallen --wal run.wal` names each record that lost a ground, the quotes that went (by their
+  bytes, not their text) and why, the quotes under it that still stand, claims on other sources that say much the same, and what
+  to reread.
+* **A quittance for one conclusion.** `sbgk audit-proof` cuts one file with a record and everything it rests on, down to its quotes,
+  under the signed checkpoint of a seal: 7 to 24 KB in the control runs. `sbgk audit-proof-verify` checks it alone, with no journal
+  and no model.
+* **A journal anyone can check.** The server seals the journal as it goes, and the seals are signed as C2SP checkpoints (Ed25519).
+  `sbgk audit-verify` checks a journal against a receipt or a checkpoint kept elsewhere. Checking is always free.
+* **Nothing skipped in silence.** The gap pass (`--gap-pass`, off by default) hands the parts of read sections that no quote
+  covers back to the agents as narrow tasks: record what a part states, or answer empty.
+* **An index beside the journal.** `sbgk audit-index` builds a SQLite file any tool reads, rebuilt from the journal at any time.
+
+The full list is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Source revoked: one minute, no model, no API key
 
@@ -53,13 +68,18 @@ correct statements, graded blind; after reading (stage 1) and after each of two 
 | Four makers, run 1, before the fix of 0.1.6 (Opus 5.5) | 87.8 / 86.6 / 84.0 | 83.6 / 93.7 / 67.1 | 87.0 / 92.5 / 82.3 |
 | Four makers, run 2 (Opus 5.5) | 88.2 / 50.0 / 81.8 | 85.9 / 80.5 / 77.5 | 82.2 / 70.4 / 76.9 |
 | Four makers, control run of 0.1.7: K new, T and L of run 2 graded again (Opus 5.5) | 82.0 / 56.9 / 86.4 | 87.1 / 87.7 / 77.5 | 82.6 / 78.2 / 83.8 |
+| Four makers, control run of 0.2: K new, T and L of run 2 graded again (Fable 5.2) | 98.9 / 66.7 / 89.6 | 98.9 / 89.6 / 83.8 | 98.9 / 85.9 / 92.5 |
+| The same grading, K of the control run of 0.1.7 (Fable 5.2) | 86.5 / 66.7 / 89.6 | 86.5 / 89.6 / 83.8 | 88.8 / 85.9 / 92.5 |
+| Three DeepSeek Flash readers with the gap pass, 0.2, no side without the kernel (Fable 5.2) | 91.5 / – / – | 90.4 / – / – | 91.4 / – / – |
 
 **We claim no gain in answer quality.** The samples are small: one corpus, one or two runs per side, 45 to 158 graded statements
 each. The 95% interval of a difference is about 10 to 12 points either way; on the single-model runs one difference of the 18
 clears it (DeepSeek series 1, 2A, against T: +17.2), none after correcting for 18 comparisons, and they are not independent: the
 kernel's answers of stage 1 and 2A are the same text. The advantage of DeepSeek series 1 did not repeat in series 2. Agents of four
 makers show how far two runs can fall apart: the kernel's side was 10.1 points below T in 2A of run 1, and T fell by 36.6 points in
-stage 1 of run 2 with nothing changed on its side.
+stage 1 of run 2 with nothing changed on its side. In the grading of 0.2 the same four readers scored 98.9 at every stage on 0.2
+and 86.5 to 88.8 on 0.1.7, a gap wider than the grader's own spread (up to 2.6 points on the same text, 5.6 between its two label
+orders), but each side is one run.
 
 **What the kernel adds is the record, not the score.** Every accepted quote is byte-exact and every claim names what it rests on,
 so what a withdrawal touches is read from those links rather than asked of a model, and a journal can be checked against its
@@ -70,12 +90,16 @@ withdrawal closes the bytes, and in the second run no grounded record rests on t
 partly kept after the second withdrawal, for dropping a conclusion another page supports. T kept all 8 gradings there, L 6. In
 0.1.7 the kernel names what fell: in its control run the repair took one new claim per answer and the conclusion stood. The grader
 marked the second withdrawal kept in one order and partly in the other, for an earlier state written as current, which the answer
-held before the withdrawals.
+held before the withdrawals. In 0.2 a repair also shows the live support of what fell. In both control runs no grounded record
+rests on the withdrawn text after either withdrawal, and the grader found no earlier state written as current in the kernel's
+answers, against 8 to 12 for 0.1.7. With four makers both withdrawals were kept in both orders. With three DeepSeek readers the
+second was kept partly: the model read the withdrawal of one changelog line as the withdrawal of the whole revision, and its
+repaired answer lost the sessions conclusion that a standing page supports.
 
 **The price.** 2.3 to 2.5 times the wall time and 1.4 times the cost on Haiku; 1.2 to 1.3 and 1.5 to 1.6 on DeepSeek. Its side also
 makes 1.8 to 2.6 times the model calls in stage 1, and no side with an equal budget of calls was run, so what the kernel adds to
 the answers cannot be told from the extra reading. On DeepSeek it named fewer version transitions than T (9 and 7 to 8 of 13,
-against 13 and 12). It checks bytes and registered dependencies, not meaning: on correct quotes its side once gave a current rule
+against 13 and 12), and on 0.2 with four makers 9 or 10 of 13, against 12 for 0.1.7 and 13 for L. It checks bytes and registered dependencies, not meaning: on correct quotes its side once gave a current rule
 as replaced (Haiku) and once an outdated one as current (DeepSeek, series 2). See [BENCHMARKS.md](BENCHMARKS.md) and
 [LIMITATIONS.md](LIMITATIONS.md).
 
@@ -139,7 +163,7 @@ see [LIMITATIONS.md](LIMITATIONS.md).
   configuration. Give each agent a restricted profile: `--allow-tools`, `--agent-id` and its own token. The servers have
   no TLS; a non-loopback `--listen` address needs `--allow-remote` (and, for `mcp-serve`, `--token`).
 * **Verification costs model calls.** Link checks and re-reads after a withdrawal are extra work for the agents.
-* **Size.** Up to 8 agents at once are recommended for 0.1, and runs of a few thousand records: the cost of a commit and of
+* **Size.** Up to 8 agents at once are recommended, as measured on 0.1, and runs of a few thousand records: the cost of a commit and of
   reopening the journal grows with it. A real run's journal of about 3,000 records reopens in about 2 s, as does a journal of
   10,000 records of quotes and claims alone.
 
@@ -156,7 +180,7 @@ All of them, with what was measured: [LIMITATIONS.md](LIMITATIONS.md). Reporting
 * **Next to the tools you use.** An MCP client such as Claude Code joins as one agent through `sbgk mcp-bridge` (below).
   An orchestrator calls the same MCP tools from its own steps: the runner's native Temporal and LangGraph sides show the
   same team on those frameworks (`benchmarks/sbgk_bench/arm_a_temporal.py`, `arm_a_langgraph.py`; their packages:
-  `benchmarks/requirements-baselines.txt`). There is no dedicated adapter in 0.1.
+  `benchmarks/requirements-baselines.txt`). There is no dedicated adapter yet.
 
 ## Quick start
 
