@@ -73,6 +73,10 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   `dependents` and the report of what fell cannot show it. From the journal the report proves what stands, what fell and which
   quote went. Its twins are found by comparing words, a heuristic that misses a claim worded otherwise and can name one that only
   sounds alike; what it says to reread is advice.
+* **The live support of a repair is found by words too.** It can miss a claim worded otherwise and bring one that only sounds
+  alike; the repair is told so and answers from the quotes. It holds at most 12 claims, 4 per fallen row: when many rows fall,
+  the later rows in id order may get none, and a claim too large for what the kept rows leave of the window is left out. A
+  question whose every answer row fell is not repaired but answered anew, from a window chosen by the question alone.
 * **What a signed checkpoint proves.** Only that the holder of the key claimed that the journal of that many frames has that
   root. A key file next to the journal, or a checkpoint kept in the operator's own repository, does not protect against the
   operator: an anchor out of the writer's reach does, and a third-party witness is not in this version. Without a trusted keys file

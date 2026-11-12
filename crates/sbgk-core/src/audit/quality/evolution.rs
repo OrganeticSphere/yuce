@@ -140,6 +140,40 @@ pub fn related<S: AuditStore>(s: &S, of: &[RecordId], k: usize) -> Vec<(RecordId
         })
         .collect()
 }
+/// What a record that fell lost, in words: its text and the quotes under it that no longer stand. The quotes of it that stand are
+/// left out: the repair is shown them with the row, and they would steer the retrieval to the claims on those same quotes.
+fn lost_text<S: AuditStore>(s: &S, r: &RecordView) -> String {
+    let quotes =
+        cone(s, &[r.id]).into_iter().filter(|x| x.kind == RecordKind::Observe && !s.is_grounded(&x.id)).filter_map(|x| x.quote).collect::<Vec<_>>().join(" ");
+    format!("{} {quotes}", r.text.as_deref().unwrap_or(""))
+}
+/// For each of `of` (a record that fell, an answer row too), every standing claim of a reader that shares the words of what it
+/// lost (`lost_text`), best first: the retrieval of `related` (TF-IDF cosine over a claim's text and the quotes it rests on, above
+/// MIN_SIMILARITY), over every such claim of whatever report or date. A claim stands here when it is answer support, so no quote
+/// under it is withdrawn or overlaps withdrawn text. A claim that rests on the quotes of `shown` alone is left out: those quotes
+/// are before the reader already (the standing quotes a repair names under its fallen rows), and with two or three readers per
+/// section such claims took every place a fallen row has. Ties keep reading order. A retrieval, never a relation verdict.
+pub fn nearest<S: AuditStore>(s: &S, of: &[RecordId], shown: &BTreeSet<RecordId>) -> Vec<Vec<RecordId>> {
+    let pool = s.records_since(0).into_iter().filter(|r| pairable(s, r) && !r.based_on.iter().all(|b| shown.contains(b))).collect::<Vec<_>>();
+    let mut texts = pool.iter().map(|r| claim_text(s, r)).collect::<Vec<_>>();
+    texts.extend(of.iter().map(|id| s.record(id).map(|r| lost_text(s, &r)).unwrap_or_default()));
+    let vecs = tfidf(&texts);
+    of.iter()
+        .enumerate()
+        .map(|(q, id)| {
+            let v = &vecs[pool.len() + q];
+            let mut best = pool
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.id != *id)
+                .map(|(j, r)| (cosine(v, &vecs[j]), r.seq, r.id))
+                .filter(|x| x.0 > MIN_SIMILARITY)
+                .collect::<Vec<_>>();
+            best.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+            best.into_iter().map(|x| x.2).collect()
+        })
+        .collect()
+}
 /// Pairs by the words of the claims themselves, not by a shared concept (step 3a of 31.10: concept-shared pairs joined the two
 /// sides of 2 to 4 of the 13 stale facts of the MCP oracle; this pairing joined 7 to 11 offline). Per new claim, its best earlier
 /// claim of the same page in another version and its best earlier claim anywhere else, by TF-IDF cosine over its text and quotes.
