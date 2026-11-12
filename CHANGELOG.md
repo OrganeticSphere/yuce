@@ -5,6 +5,12 @@
 * **`scripts/verify_published_runs.py` checks the runs of 0.2 too.** A journal of 0.2 goes on past its last receipt, as the
   server seals and closes the run after the last stage: it is checked against each receipt as a prefix, and then whole. The
   four kernel runs of release v0.2.0 are in its list.
+* **An answer lists each of its records once.** After a repair in several attempts, the done line of the last attempt could name
+  records that the same task had stored in its earlier attempts, by their local names, while the kernel added the same records
+  again by their short ids as rows the answer keeps: the answer, the done record and its grounds listed them twice (control
+  run 1 of 0.2: 11 of 54 records), and the report of what fell counted the standing grounds of such an answer too high. The
+  kernel now keeps each record once, in the order first named, in the done record it stores, in the answer, in a summary's
+  coverage prefix and in the lists it writes after recovering an answer. Journals already written replay as they are.
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.

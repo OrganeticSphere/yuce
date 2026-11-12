@@ -135,6 +135,26 @@ fn a_copy_of_a_kept_row_is_left_out_and_counted() {
     assert_eq!(context["composition"]["fallen_answer_ids"], json!([a.fallen]), "{context}");
 }
 
+/// Control run K02_1_r2 of 0.2: a repair listed 11 of 54 records twice, a kept row added by the kernel and the same record named by
+/// the model. An answer holds each record once, in the order first named, whatever the done line repeats.
+#[test]
+fn an_answer_lists_each_record_once() {
+    let mut a = withdrawn_under(&[0, 1], false);
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    let task = t["task_id"].as_str().unwrap().to_string();
+    let b = a.quotes[1].short();
+    let kept = a.kept.clone();
+    let lines = [claim("new", &[&b], "Topic B holds on its own."), done(&t, &["new", &kept, "new", &kept])];
+    let r = a.d.submit(&mut a.s, &task, "repair", &lines, 101);
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let new = r["accepted_locals"]["new"].as_str().unwrap().to_string();
+    let view = a.d.accepted_outcomes(&a.s);
+    let ids: Vec<&str> = view["RQ1"]["answer_ids"].as_array().unwrap().iter().filter_map(|x| x.as_str()).collect();
+    assert_eq!(ids, vec![new.as_str(), kept.as_str()], "{view}");
+    let context = a.s.checkpoint("task:rq:RQ1").expect("the answer's checkpoint")["context"].clone();
+    assert_eq!(context["answer_ids"].as_array().map(Vec::len), Some(2), "{context}");
+}
+
 /// R017-02: the same sentence on another quote or with another date is another claim, and the repair keeps it.
 #[test]
 fn the_words_of_a_kept_row_on_other_grounds_or_another_date_are_no_copy() {
