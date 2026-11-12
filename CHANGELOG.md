@@ -21,6 +21,15 @@ The server no longer resumes a 0.1 journal: finish it with a 0.1 release.
   it, after a restart too.
 * **The status projection names the direct grounds that fell:** a done that rests on a claim on a withdrawn quote names the claim;
   the first cause is found by following the chain down to the withdrawn quote.
+* **A repair after a withdrawal shows the live support of what fell first.** The window of an `INCREMENTAL REPAIR` was chosen by the
+  question alone, and the standing quotes of another page that still carried a fallen conclusion could all be left out of it: in a
+  control run of this candidate the repair then dropped a conclusion that still stood. Now the standing claims most like what the
+  fallen answer rows lost, by words (a row's text and the quotes of it that are gone; the retrieval of `LATER ON THE SAME WORDS`),
+  take up to 12 places of that window, at most 4 per fallen row, each with all it rests on and none on withdrawn text. A claim on
+  nothing but the quotes still standing under a fallen row takes no place: the task names those quotes with the row. The rest of
+  the window is chosen by the question as before, in the same budget. The task names these claims (`LIVE SUPPORT`) and may rest
+  what fell on their quotes, a row with no quote left included. Repair tasks change; the window an answer was given stays in its
+  frame (`allowed_records`), so recorded journals replay as before.
 * **The gap pass (`--gap-pass <packs>`, `--gap-units 4..8`, `--gap-profile <file>`), off by default.** After the first readings, the
   units of the read sections (a list item, a paragraph, a table row) that no standing quote covers go out in packs as narrow tasks
   (`TG`): record what a unit states with an exact quote, or answer empty. The section heading and a nested item's parent are shown

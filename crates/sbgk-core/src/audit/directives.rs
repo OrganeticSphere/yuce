@@ -280,7 +280,8 @@ fn repair_claims(fallen: &[Fallen]) -> usize {
 /// The head of a repair. A fallen row is named by id with the quotes that stand: its text may state what was withdrawn (run K016:
 /// the row said what the withdrawn sentence said, and the header it named stood in no other quote), so the kernel does not hand it
 /// back. Without this the repair could not tell what fell: it wrote the answer again, 34 lines, 23 of them copies, and not the row.
-fn fallen_repair(fallen: &[Fallen], kept: &[RecordId]) -> String {
+/// With a live support shown (`live`), the repair may also rest what fell on its quotes.
+fn fallen_repair(fallen: &[Fallen], kept: &[RecordId], live: &[RecordId]) -> String {
     let named = named_rows(fallen);
     let mut out = format!(
         "INCREMENTAL REPAIR: {} of the answer records of this question no longer stand: evidence under them was withdrawn or changed. The kernel \
@@ -289,6 +290,16 @@ fn fallen_repair(fallen: &[Fallen], kept: &[RecordId]) -> String {
         kept.len(),
         short_list(kept).join(", ")
     );
+    if named.is_empty() && !live.is_empty() {
+        out.push_str(&format!(
+            "No quote of theirs stands, and their text is left out, as it may state what was withdrawn. The claims of LIVE SUPPORT below stand on \
+             quotes that were not withdrawn and are the records most like them by words: where their quotes state on their own a point of this \
+             question, write it as a claim based_on those quotes, saying nothing they do not say. Write a claim only there or where the records \
+             below show that a point of this question now stands differently, at most {} claim lines; otherwise only the done line.\n",
+            repair_claims(fallen)
+        ));
+        return out;
+    }
     if named.is_empty() {
         out.push_str(&format!(
             "No quote of theirs stands, and their text is left out, as it may state what was withdrawn. Write a claim only where the records below \
@@ -303,12 +314,23 @@ fn fallen_repair(fallen: &[Fallen], kept: &[RecordId]) -> String {
         let gone = if r.gone > 0 { format!(" ({} of its quotes gone)", r.gone) } else { String::new() };
         out.push_str(&format!("  {}{gone}: {}\n", r.id.short(), quotes.join(", ")));
     }
-    if fallen.len() > named.len() {
-        out.push_str(&format!("{} more fell: write nothing for them.\n", fallen.len() - named.len()));
+    // the rows not named have no quote to answer from, or are past FALLEN_NAMED: without a live support nothing is written for
+    // them; with one, what they stated may stand on its quotes (two rows fell, one of them with a quote left: the other was
+    // written off while its live support was in the window)
+    let more = fallen.len() - named.len();
+    if more > 0 && live.is_empty() {
+        out.push_str(&format!("{more} more fell: write nothing for them.\n"));
+    } else if more > 0 {
+        out.push_str(&format!(
+            "{more} more fell, not named above: write a claim for them only where the quotes of the claims of LIVE SUPPORT below state on their \
+             own a point of this question, based_on those quotes and saying nothing they do not say.\n"
+        ));
     }
+    let with_live = if live.is_empty() { "" } else { ", with the quotes of the claims of LIVE SUPPORT below," };
+    let no_other = if more > 0 && !live.is_empty() { "Write no claim beyond these" } else { "Write no other claim" };
     out.push_str(&format!(
-        "Write at most {} claim lines: for each fallen record above, what its standing quotes state on their own, based_on those quotes only and \
-         saying nothing they do not say, or no claim where they state too little. Write no other claim: the answer needs no other change.\n",
+        "Write at most {} claim lines: for each fallen record above, what its standing quotes{with_live} state on their own, based_on those quotes only and \
+         saying nothing they do not say, or no claim where they state too little. {no_other}: the answer needs no other change.\n",
         repair_claims(fallen)
     ));
     out
@@ -772,14 +794,17 @@ fn short_list(ids: &[RecordId]) -> Vec<String> {
 /// budget, then ordinary units. With it, the retained rows' whole units (cones and time components) come first and may take the
 /// configured budget up to the store's hard bound: a retained old state was shown while its later state did not fit, and a
 /// retained row cannot be dropped, since the next done keeps it (Codex 28.10, D07). A retained row whose unit is beyond even that
-/// bound is returned as partial, for the task to mark. Returns the shown records, the ordinary units placed and the partial rows.
+/// bound is returned as partial, for the task to mark. The units of a repair's live support (`live_support`) come next, each where
+/// it fits the same budget, then the ordinary units. Returns the shown records, the ordinary units placed, the partial rows and the
+/// indices of the live support placed.
 fn place(
     retained: &[(RecordId, BTreeSet<RecordId>)],
+    live: &[BTreeSet<RecordId>],
     support: &[BTreeSet<RecordId>],
     soft: usize,
     hard: usize,
     temporal: bool,
-) -> (BTreeSet<RecordId>, usize, Vec<RecordId>) {
+) -> (BTreeSet<RecordId>, usize, Vec<RecordId>, Vec<usize>) {
     let mut shown: BTreeSet<RecordId> = retained.iter().map(|(c, _)| *c).collect();
     let mut budget = soft.max(shown.len());
     if temporal {
@@ -793,6 +818,13 @@ fn place(
             shown.extend(whole.iter().copied());
         }
     }
+    let mut placed = Vec::new();
+    for (i, whole) in live.iter().enumerate() {
+        if shown.len() + whole.difference(&shown).count() <= budget {
+            shown.extend(whole.iter().copied());
+            placed.push(i);
+        }
+    }
     let mut fit = 0usize;
     for whole in support {
         if shown.len() + whole.difference(&shown).count() <= budget {
@@ -801,7 +833,46 @@ fn place(
         }
     }
     let partial = if temporal { retained.iter().filter(|(_, u)| !u.is_subset(&shown)).map(|(c, _)| *c).collect() } else { vec![] };
-    (shown, fit, partial)
+    (shown, fit, partial, placed)
+}
+
+/// The claims of a repair's live support (`live_support`): at most this many in its window, within the same budget...
+const LIVE_SUPPORT: usize = 12;
+/// ...and at most this many for one fallen row.
+const LIVE_SUPPORT_PER_ROW: usize = 4;
+
+/// The live support of a repair after a withdrawal (the owner's decision of 11.11.2026 on run K02_1_r1: the window chosen by the
+/// question alone left out all 12 standing quotes of another page that still carried a fallen conclusion, and the repair dropped
+/// it): for each fallen row, the standing claims of the readers most like what it lost by words (`quality::evolution::nearest`,
+/// the retrieval of LATER ON THE SAME WORDS, by the row's text and the quotes of it that are gone), taken in turns over the rows,
+/// best first, each row at most LIVE_SUPPORT_PER_ROW and all of them at most LIVE_SUPPORT, none twice. A claim on nothing but
+/// the standing quotes the repair names under the rows (`named`) takes no place: those quotes are shown anyway. The rows run in
+/// id order and each row's claims in its retrieval order, so one state gives one list. Not the near twins of
+/// `audit-read fallen`: on K02_1_r1 they pointed to the next passage of the same changelog.
+fn live_support<S: AuditStore>(s: &S, fallen: &[Fallen], named: &BTreeSet<RecordId>) -> Vec<RecordId> {
+    let rows: Vec<RecordId> = fallen.iter().map(|r| r.id).collect();
+    take_in_turns(&super::quality::evolution::nearest(s, &rows, named), LIVE_SUPPORT_PER_ROW, LIVE_SUPPORT)
+}
+
+/// From ranked lists, the best of each list in turns: list order within a turn, at most `per` of each list, at most `all`, none twice.
+fn take_in_turns(ranked: &[Vec<RecordId>], per: usize, all: usize) -> Vec<RecordId> {
+    let mut next = vec![0usize; ranked.len()];
+    let mut out: Vec<RecordId> = Vec::new();
+    for _ in 0..per {
+        for (i, list) in ranked.iter().enumerate() {
+            if out.len() == all {
+                return out;
+            }
+            while let Some(c) = list.get(next[i]) {
+                next[i] += 1;
+                if !out.contains(c) {
+                    out.push(*c);
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Words by which a claim says that something ended or was replaced (wider than `pairs::change_marker`: the MCP changelogs say
@@ -2366,11 +2437,20 @@ impl Dispatcher {
         let fallen = if retained.is_empty() { Vec::new() } else { self.fallen_rows(s, f, rq) };
         let named: BTreeSet<RecordId> = named_rows(&fallen).iter().flat_map(|r| r.standing.iter().map(|o| o.id)).collect();
         let hard = crate::session::MAX_REFS.saturating_sub(named.len());
-        let (mut shown, mut fit, partial) = place(&retained_units, &support_units, budget.min(hard), hard, temporal);
+        // and the claims still standing that are most like what fell by words, before the claims chosen by the question, in the
+        // same budget: the live support of a fallen conclusion need not be near the question (run K02_1_r1)
+        let live = if fallen.is_empty() { Vec::new() } else { live_support(s, &fallen, &named) };
+        let live_units: Vec<BTreeSet<RecordId>> = live.iter().map(unit).collect();
+        let (mut shown, mut fit, partial, placed) = place(&retained_units, &live_units, &support_units, budget.min(hard), hard, temporal);
+        let live: Vec<RecordId> = placed.iter().map(|i| live[*i]).collect();
         shown.extend(named.iter().copied());
         if temporal {
             // a component brings in relevant claims of its own: count the relevant claims shown, not the units placed (D05)
             fit = chosen.iter().filter(|c| shown.contains(c)).count();
+        } else {
+            // a claim of the live support that is relevant to the question and past the cap of claims is shown too: the units
+            // placed do not count it, and WINDOW would name it among the claims not shown
+            fit += live.iter().filter(|c| chosen.contains(*c) && !support.contains(*c)).count();
         }
         // the date of a record's report: its own document, or the one document its quotes come from; empty when undated
         let dated = |id: &RecordId| -> String {
@@ -2460,18 +2540,27 @@ impl Dispatcher {
         }
         let quoted: BTreeSet<String> = recs.iter().filter_map(|r| r.doc_id.clone()).collect();
         let unquoted: Vec<String> = s.docs().into_iter().filter(|d| !quoted.contains(d)).collect();
-        let window = format!(
+        let mut window = format!(
             "WINDOW: {fit} of {eligible} relevant claims shown, each with all it rests on{}; {} not shown{}. Documents with no quote shown: {}.",
             if partial.is_empty() { String::new() } else { format!(" except the retained {}", short_list(&partial).join(", ")) },
             eligible - fit,
             if (eligible > fit || !partial.is_empty()) && fallen.is_empty() { " (say that the answer may be incomplete)" } else { "" },
             if unquoted.is_empty() { "none".to_string() } else { unquoted.join(", ") }
         );
+        if !live.is_empty() {
+            window.push_str(&format!(
+                "\nLIVE SUPPORT (kernel, a retrieval by the words of the records that fell, not a verdict): {} standing claim{} shown whatever \
+                 their place by the question, each with all it rests on, none on withdrawn text: {}.",
+                live.len(),
+                if live.len() == 1 { "" } else { "s" },
+                short_list(&live).join(", ")
+            ));
+        }
         let open = self.open_questions(s, f, &q.about);
         let repair = if retained.is_empty() {
             String::new()
         } else if !fallen.is_empty() {
-            fallen_repair(&fallen, &retained)
+            fallen_repair(&fallen, &retained, &live)
         } else {
             format!(
                 "INCREMENTAL REPAIR: retain these independent answer records unchanged: {}. Write only replacement/additional \
@@ -3873,14 +3962,51 @@ mod tests {
         let retained = vec![(id(1), unit.clone())];
         let other = vec![[id(7), id(8)].into_iter().collect::<BTreeSet<_>>()];
         // the time option: the retained row's whole unit goes in before the configured window; nothing is marked
-        let (shown, fit, partial) = place(&retained, &other, 4, 256, true);
+        let (shown, fit, partial, _) = place(&retained, &[], &other, 4, 256, true);
         assert!(unit.is_subset(&shown) && partial.is_empty() && fit == 0, "{shown:?}");
         // beyond the store's hard bound the retained row stays (the next done keeps it) and is returned as partial
-        let (shown, _, partial) = place(&retained, &other, 4, 5, true);
+        let (shown, _, partial, _) = place(&retained, &[], &other, 4, 5, true);
         assert!(shown.contains(&id(1)) && !shown.contains(&id(6)) && partial == vec![id(1)], "{shown:?}");
         // without the option the window is as it always was: the retained id, its unit only where it fits, no marks
-        let (shown, fit, partial) = place(&retained, &other, 4, 256, false);
+        let (shown, fit, partial, _) = place(&retained, &[], &other, 4, 256, false);
         assert_eq!((shown.len(), fit, partial.len()), (3, 1, 0), "{shown:?}");
+    }
+
+    #[test]
+    fn a_live_support_goes_in_after_the_retained_rows_and_before_the_claims_by_the_question_in_the_same_budget() {
+        let id = |n: u8| RecordId(crate::hash::sha256(&[n]));
+        let set = |ns: &[u8]| ns.iter().map(|n| id(*n)).collect::<BTreeSet<_>>();
+        let retained = vec![(id(1), set(&[1, 2]))];
+        let live = vec![set(&[3, 4]), set(&[5, 6, 7]), set(&[8, 9])];
+        let other = vec![set(&[10, 11]), set(&[3, 4])];
+        // a budget of 6: the retained unit (2), the first live unit (2), the third (2); the second (3) does not fit, nor any other
+        // unit but the one already shown, which the window counts as a claim by the question
+        let (shown, fit, partial, placed) = place(&retained, &live, &other, 6, 256, false);
+        assert_eq!(placed, vec![0, 2], "{shown:?}");
+        assert_eq!(shown, set(&[1, 2, 3, 4, 8, 9]));
+        assert_eq!((fit, partial.len()), (1, 0));
+        // the budget does not grow: with no live support the same budget takes the claims by the question
+        let (shown, fit, _, placed) = place(&retained, &[], &other, 6, 256, false);
+        assert!(placed.is_empty() && fit == 2 && shown == set(&[1, 2, 3, 4, 10, 11]), "{shown:?}");
+    }
+
+    #[test]
+    fn the_live_support_takes_the_best_of_each_fallen_row_in_turns_with_caps_and_no_copies() {
+        let id = |n: u8| RecordId(crate::hash::sha256(&[n]));
+        let ids = |ns: std::ops::Range<u8>| ns.map(id).collect::<Vec<_>>();
+        // one row: its best four
+        assert_eq!(take_in_turns(&[ids(1..9)], LIVE_SUPPORT_PER_ROW, LIVE_SUPPORT), ids(1..5));
+        // two rows sharing their best claim: in turns, the shared one once, and the second row takes its next
+        let ranked = vec![vec![id(1), id(2), id(3)], vec![id(1), id(9), id(8)]];
+        assert_eq!(take_in_turns(&ranked, LIVE_SUPPORT_PER_ROW, LIVE_SUPPORT), vec![id(1), id(9), id(2), id(8), id(3)]);
+        // five rows of five claims each: four turns would give twenty, the cap keeps twelve, the first turns first
+        let ranked: Vec<Vec<RecordId>> = (0..5u8).map(|r| ids(10 * r + 10..10 * r + 15)).collect();
+        let out = take_in_turns(&ranked, LIVE_SUPPORT_PER_ROW, LIVE_SUPPORT);
+        assert_eq!(out.len(), LIVE_SUPPORT);
+        assert_eq!(out[..5].to_vec(), vec![id(10), id(20), id(30), id(40), id(50)]);
+        assert_eq!(out[10..].to_vec(), vec![id(12), id(22)]);
+        // the same lists give the same support
+        assert_eq!(take_in_turns(&ranked, LIVE_SUPPORT_PER_ROW, LIVE_SUPPORT), out);
     }
 
     const R1: &str = "# Classifier MVP\nDiffering validator versions -> warning only.\nSame canonical/hash remains a candidate only.\n\n# Limits\nVersion negotiation is future work.\n";

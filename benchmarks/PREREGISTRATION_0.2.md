@@ -90,3 +90,13 @@ grader, the answers of that K run go into the same grading; its published gradin
 packets of one stage each, as for 0.1.7: every packet holds the answers of every side at that stage. The commit of this amendment,
 after the commit that brought this file, shows the order; `provenance.json` of each run holds the SHA-256 of the file as it was
 when the run started.
+
+## Amendment of 12 November 2026: the runs are made again
+
+The blind grading of the first two runs (`K02_1_r1` and `K02_2_r1`; four of the eight packets graded, the stages 2A and 2B) found a
+defect of the kernel in the repair of an answer after a withdrawal. The window of the repair task was chosen by its question alone,
+so a standing quote that still supported a fallen conclusion could fall outside it, and the answer then dropped a conclusion that
+still stood (run 1, withdrawal 2B). It is fixed in commit `90559cd2`: a repair shows the live support of what fell first. Codex
+reviewed the fix. As this file says, the runs are made again from the new tree: `K02_1_r2` and `K02_2_r2`, with the same teams,
+settings and caps as above, and graded as the amendment of 11 November says. The first runs, their checks and the four packets
+graded on them are published with the new ones.
