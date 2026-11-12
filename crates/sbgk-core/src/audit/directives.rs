@@ -364,6 +364,14 @@ fn names_grounds(references: &[Value], grounds: &BTreeSet<String>, names: &BTree
 /// same sentence with another date or on another quote is another claim. A copy would be a new record beside the kept row (a record's
 /// id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them distinct. A line another line rests on
 /// stays. Done here and not in the store: a journal holding such copies must replay.
+/// The records of an answer, each once, in the order first named. The kernel adds a kept row by its short id, and the model may name
+/// the same record again in another spelling: its own local id, or the id of a claim equal to a kept row, which the store gives the
+/// kept row's id (control run K02_1_r2 of 0.2: a repair in several attempts listed 11 of 54 records twice).
+fn distinct_ids(ids: Vec<RecordId>) -> Vec<RecordId> {
+    let mut seen = BTreeSet::new();
+    ids.into_iter().filter(|id| seen.insert(*id)).collect()
+}
+
 fn copies_of_kept<S: AuditStore>(s: &S, kept: &[RecordId], lines: &[Value]) -> BTreeSet<String> {
     let rows: Vec<_> = kept
         .iter()
@@ -3162,7 +3170,8 @@ impl Dispatcher {
                                 .copied()
                                 .or_else(|| lease.own.iter().chain(&lease.issued).chain(&lease.own_run).find(|id| id.short() == name).copied())
                         })
-                        .collect()
+                        .collect::<Option<Vec<_>>>()
+                        .map(distinct_ids)
                 });
                 // An explicit unknown with no assertions is still an honest terminal outcome of the existing contract.
                 // Coverage guards delivered assertions; it must not force the agent to invent them to fill its window.
@@ -3401,7 +3410,7 @@ impl Dispatcher {
                 return ack(self.repair(task_id, dones[0], e));
             };
             let ids = match resolve_all(done_line, "answer_ids") {
-                Ok(ids) => ids,
+                Ok(ids) => distinct_ids(ids),
                 Err(bad_ref) => {
                     let e = KernelError::new(Code::UnknownLocalId, format!("{bad_ref} in answer_ids is not a record of this answer")).field("answer_ids");
                     return ack(self.repair(task_id, lines.len(), e));
