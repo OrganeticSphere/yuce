@@ -70,9 +70,11 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   stand is closed with them. The text an agent writes is another matter: a later answer can repeat withdrawn content in other
   words, and how often it does is measured, not prevented. A note that a claim lost its later quote speaks for that claim: another record may
   still show the later state.
-* **An answer's list of records can name a record twice (0.2.0).** After a repair in several attempts, the list of records an
-  answer keeps in the journal (`answer_ids`) can name a kept row twice: once as the kernel added it and once as the model named the
-  same record again. The answer is the same set of records, and its text shows each once; count distinct ids. Fixed in 0.2.1.
+* **An answer's list of records can name a record twice (0.2.0).** After a repair in several attempts, the done record of an
+  answer and the list the kernel keeps for it (`answer_ids`) can name a record twice: once as the model named a record of an earlier
+  attempt of the same task and once as the kernel added it as a row the answer keeps. The answer is the same set of records, and its
+  text shows each once; count distinct ids. A count over such an answer's grounds, as `grounds_standing` in the report of what fell,
+  can come out too high. To be fixed in 0.2.1.
 * **What the reading tools can prove.** The projections are complete as to the kernel's rule: every `based_on` and relation end
   the records declare. They are not complete as to the world: a dependency an agent did not declare is in no projection, so
   `dependents` and the report of what fell cannot show it. From the journal the report proves what stands, what fell and which
