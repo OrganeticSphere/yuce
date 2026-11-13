@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+* **Signatures are checked strictly, and a weak verifier key is refused.** A checkpoint's signature is now checked with Ed25519's
+  strict check, and a verifier key of small order is refused when it is read (`audit-verify --checkpoint`, `--trusted-keys`,
+  quittances). Under the check used before, a "signature" made for such a key verified any text, so whoever named the key could
+  deny every signature it held. Keys made by `sbgk keygen` are never weak; no signature written so far changes.
+* **Signed checkpoints hold to the reference implementation of their format.** `scripts/signed_note_vectors` writes vectors with
+  the code of the authors of C2SP signed-note (golang.org/x/mod/sumdb/note) and its RFC 6962 tree (golang.org/x/mod/sumdb/tlog):
+  keys, signed notes, notes opened with known keys and tree roots, 100 cases and more; the kernel's tests hold to them, and Go is
+  needed only to write the file again. Where the kernel was more lenient it now reads a note as the reference does: a malformed
+  signature line, or more than 100, refuses the note; the first signature line of a known key decides; a known key whose signature
+  does not verify refuses the whole note; a key id may be written in upper case; a key text may end with its line end and nothing
+  else. The kernel stays stricter on purpose in three places, each named in the test: a weak key, a control character in a key
+  name, and base64 that sets the unused bits of its padding.
 * **`audit_seal`: the owner seals the journal when he asks,** for example before a withdrawal, between the seals the server writes by
   itself, so that a quittance can show what stood at that point after it fell. A server with a signing key signs it; a seal right
   after another is not written again (`ALREADY_SEALED`). It is the seal the kernel already writes, a frame replay accepts at any point:
