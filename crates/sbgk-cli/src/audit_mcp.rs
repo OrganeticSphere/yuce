@@ -1892,6 +1892,22 @@ pub fn cmd_audit_proof(a: &Args) {
         None => *proof::seals_of(Path::new(&wal)).unwrap_or_else(|e| refused(e)).last().unwrap_or_else(|| fail(&format!("{wal} has no seal"))),
     };
     let checkpoint = PathBuf::from(a.get("checkpoint").map_or(format!("{wal}.checkpoints/seal-{seal}.txt"), str::to_string));
+    // a quittance is never written over what it is cut from: the journal, the checkpoint of its seal or the verifier key beside it
+    // (the review of the 0.2.0 release: `--out` naming the journal wrote the quittance over the run)
+    if let Some(out) = a.get("out") {
+        let inputs = [
+            (PathBuf::from(&wal), "its journal"),
+            (checkpoint.clone(), "the checkpoint of its seal"),
+            (checkpoint.with_file_name("verifier.key"), "the verifier key of that checkpoint"),
+        ];
+        if let Some((_, what)) = inputs.iter().find(|(input, _)| super::audit_index::same_file(Path::new(out), input)) {
+            println!(
+                "{}",
+                json!({"status": "REFUSED", "wal": wal, "out": out, "error": format!("the quittance would be written over {what}: give --out another path")})
+            );
+            std::process::exit(1)
+        }
+    }
     let text = std::fs::read_to_string(&checkpoint)
         .unwrap_or_else(|e| fail(&format!("cannot read the checkpoint {}: {e}; sbgk audit-sign writes the checkpoints of a journal", checkpoint.display())));
     let key = std::fs::read_to_string(checkpoint.with_file_name("verifier.key")).ok();
