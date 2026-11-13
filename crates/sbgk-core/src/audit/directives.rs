@@ -282,6 +282,16 @@ fn repair_claims(fallen: &[Fallen]) -> usize {
     (2 * named_rows(fallen).len() + 2).min(SUMMARY_CLAIMS)
 }
 
+/// What a withdrawal takes, said to every repair after one (0.2.1, step A9). In the control run 1 of 0.2 the repair after the second
+/// withdrawal, of one changelog line, wrote that "the 2026-07-28 stateless revision removing the initialize handshake was withdrawn"
+/// and that the state after 2026-07-28 was not confirmed: the model read the withdrawal of one line as the withdrawal, and the
+/// refutation, of the whole revision, and the answer lost a conclusion a standing page still supported. The kernel checks form, not
+/// meaning, so the task says it outright. Task text only: not in the journal, no rule changes.
+const WITHDRAWAL_SCOPE: &str = "A withdrawal takes away only the quoted bytes it names, not the document they come from, its revision, or what other \
+                                quotes say: every quote shown in this task stands. It says nothing about whether what those bytes stated is \
+                                true: do not write that a document, a revision or a change was withdrawn, reverted or is no longer confirmed \
+                                unless a quote shown here says so.";
+
 /// The head of a repair. A fallen row is named by id with the quotes that stand: its text may state what was withdrawn (run K016:
 /// the row said what the withdrawn sentence said, and the header it named stood in no other quote), so the kernel does not hand it
 /// back. Without this the repair could not tell what fell: it wrote the answer again, 34 lines, 23 of them copies, and not the row.
@@ -289,8 +299,8 @@ fn repair_claims(fallen: &[Fallen]) -> usize {
 fn fallen_repair(fallen: &[Fallen], kept: &[RecordId], live: &[RecordId]) -> String {
     let named = named_rows(fallen);
     let mut out = format!(
-        "INCREMENTAL REPAIR: {} of the answer records of this question no longer stand: evidence under them was withdrawn or changed. The kernel \
-         keeps the other {} and adds them to your done line itself: {}. Do not write them again: a line repeating one of them is dropped.\n",
+        "INCREMENTAL REPAIR: {} of the answer records of this question no longer stand: evidence under them was withdrawn or changed. {WITHDRAWAL_SCOPE} \
+         The kernel keeps the other {} and adds them to your done line itself: {}. Do not write them again: a line repeating one of them is dropped.\n",
         fallen.len(),
         kept.len(),
         short_list(kept).join(", ")
