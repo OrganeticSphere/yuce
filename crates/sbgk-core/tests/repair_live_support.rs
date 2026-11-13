@@ -22,6 +22,12 @@ const TWIN_TEXT: &str = "The streamable transport removed protocol-level session
 const FILLERS: usize = 110;
 /// The window's budget of records in these tests: the claims by the question do not all fit.
 const RECORDS: usize = 150;
+/// What every repair after a withdrawal is told the withdrawal took (0.2.1, step A9: the control run 1 of 0.2 read the withdrawal of
+/// one changelog line as the withdrawal, and the refutation, of the whole revision).
+const SCOPE: &str = "A withdrawal takes away only the quoted bytes it names, not the document they come from, its revision, or what other \
+                     quotes say: every quote shown in this task stands. It says nothing about whether what those bytes stated is \
+                     true: do not write that a document, a revision or a change was withdrawn, reverted or is no longer confirmed \
+                     unless a quote shown here says so.";
 
 struct Wal(PathBuf);
 impl Drop for Wal {
@@ -234,6 +240,8 @@ fn what_was_withdrawn_and_what_rests_on_it_stay_out_of_the_live_support() {
     }
     assert!(!p.contains(WITHDRAWN) && !p.contains(FALLEN_TEXT) && !p.contains(&a.fallen), "{p}");
     assert!(p.contains("\nINCREMENTAL REPAIR: 1 of the answer records of this question no longer stand"), "{p}");
+    // a row with no quote standing, a live support shown: the task says what the withdrawal took
+    assert!(p.contains(SCOPE), "{p}");
 }
 
 #[test]
@@ -329,6 +337,8 @@ fn a_row_that_fell_with_quotes_still_standing_gets_the_support_of_what_it_lost_n
         }
     }
     assert!(p.contains("with the quotes of the claims of LIVE SUPPORT below"), "{p}");
+    // a row named with its standing quotes: the task says what the withdrawal took, once
+    assert_eq!(p.matches(SCOPE).count(), 1, "{p}");
 }
 
 #[test]
@@ -339,6 +349,7 @@ fn a_row_that_fell_with_no_quote_standing_beside_a_named_one_may_still_rest_on_t
     let t = a.d.acquire(&a.s, "repair", true, 100);
     let p = t["prompt"].as_str().unwrap();
     assert!(p.contains("INCREMENTAL REPAIR: 2 of the answer records of this question no longer stand"), "{p}");
+    assert!(p.contains(SCOPE), "{p}");
     assert!(p.contains("STILL STANDING UNDER THE FALLEN RECORDS") && line(p, "LIVE SUPPORT").contains(&a.id("twin").short()), "{p}");
     // the row without a quote is not written off: the task lets it rest on the live support
     assert!(!p.contains("write nothing for them"), "{p}");

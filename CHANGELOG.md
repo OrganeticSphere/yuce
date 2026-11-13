@@ -43,6 +43,14 @@
   it, a local name of the task first, and refuses a name the answer may not cite before the done record is stored. A row the
   kernel keeps goes into the answer under a prefix of its id that no local name takes, and a done line that would leave such a
   row out is refused before it is stored. Journals already written replay as they are.
+* **A repair after a withdrawal is told what the withdrawal took.** In control run 1 of 0.2 the repair after the second withdrawal,
+  of one changelog line, wrote that the whole revision it belonged to was withdrawn and its state no longer confirmed, and the answer
+  lost a conclusion a standing page still supported (BENCHMARKS.md). Every repair after a withdrawal now says that a withdrawal takes
+  away only the quoted bytes it names, not their document, its revision or what other quotes say; that every quote shown stands; that
+  it says nothing about whether those bytes stated the truth; and that a document, a revision or a change is not to be called
+  withdrawn, reverted or no longer confirmed unless a quote shown says so. The kernel still checks form, not meaning: the
+  task says it, and no run with a model has measured it. The text of a task is not in the journal: no rule changes, and journals
+  replay as before.
 * **A question about what changed takes the claims that say something was removed or renamed.** For such a question the kernel
   took a claim of stance `reported` only by words such as "replaced", "superseded" or "no longer". On the A2A corpus the readers of
   the changelog wrote "was removed" and "was renamed" under that stance, and in two of four runs one claim on the changelog
