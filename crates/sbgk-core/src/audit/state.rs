@@ -994,6 +994,11 @@ pub struct VerifiedJournal {
     pub wal_head: Hash,
     /// Entries that put a document after the start: only a journal of supplied documents can hold one.
     pub document_puts: usize,
+    /// A writer held the journal while it was read: the read stopped at the last frame complete at that moment, and the journal
+    /// may have grown since. `bytes` and `sha256` are those of the complete frames then.
+    pub live: bool,
+    /// The bytes of a frame the writer had not finished at that moment: not a torn tail, and not among `bytes`.
+    pub in_flight_bytes: u64,
 }
 
 /// The documents a committed command put: a batch stops at a failed operation, and what follows it was not applied.
@@ -1298,6 +1303,8 @@ impl AuditState {
             bytes: 0,
             complete_bytes: 0,
             sha256: ZERO_HASH,
+            live: false,
+            in_flight: 0,
         };
         let mut copy = Self::replay(&first, &mut |_, _, _| Ok(()))?;
         if v3 {
@@ -1568,16 +1575,28 @@ impl AuditState {
     /// `verify` that hands `visit` the state of the first `n` entries itself, read only, with the chain head after them: the
     /// reading tools take a point of the journal from it (`sbgk audit-read`, SPEC_V02_STEP3).
     pub fn verify_states(path: &Path, visit: &mut dyn FnMut(usize, &AuditState, Hash)) -> KResult<(Self, VerifiedJournal)> {
-        let scan = AuditJournal::read(path)?;
+        Self::verify_scan(&AuditJournal::read(path)?, visit)
+    }
+
+    /// `verify_states` over one read of the journal already made: a tool that takes more than one thing from a journal takes them
+    /// all from the same read, so a journal that grows under it (a live server's) cannot give it two ends.
+    pub(crate) fn verify_scan(scan: &super::persistence::JournalScan, visit: &mut dyn FnMut(usize, &AuditState, Hash)) -> KResult<(Self, VerifiedJournal)> {
         let heads = &scan.heads;
-        let state = Self::replay(&scan, &mut |n, state, _| {
+        let state = Self::replay(scan, &mut |n, state, _| {
             visit(n, state, heads[n - 1]);
             Ok(())
         })?;
         let document_puts =
             scan.payloads.iter().skip(1).filter(|p| p["outcome"]["kind"] != "error").map(|p| document_puts(&p["command"], &p["outcome"]["result"])).sum();
-        let read =
-            VerifiedJournal { bytes: scan.bytes, complete_bytes: scan.complete_bytes, sha256: scan.sha256, wal_head: heads[heads.len() - 1], document_puts };
+        let read = VerifiedJournal {
+            bytes: scan.bytes,
+            complete_bytes: scan.complete_bytes,
+            sha256: scan.sha256,
+            wal_head: heads[heads.len() - 1],
+            document_puts,
+            live: scan.live,
+            in_flight_bytes: scan.in_flight,
+        };
         Ok((state, read))
     }
 

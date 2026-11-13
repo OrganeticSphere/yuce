@@ -251,7 +251,11 @@ pub fn parse_checkpoint(body: &str) -> KResult<(String, usize, Hash)> {
 /// Whether a checkpoint names a prefix of the `/3` journal at `path` that ends with a seal of the kernel: its size is a number of
 /// frames of the journal, its root the log root over them, its last frame a seal frame and its origin the journal's run.
 pub fn check_against_journal(path: &Path, origin_line: &str, size: usize, root: &Hash) -> KResult<()> {
-    let scan = AuditJournal::read(path)?;
+    check_against_scan(&AuditJournal::read(path)?, origin_line, size, root)
+}
+
+/// `check_against_journal` over one read of the journal already made.
+pub(crate) fn check_against_scan(scan: &super::persistence::JournalScan, origin_line: &str, size: usize, root: &Hash) -> KResult<()> {
     let refuse = |m: &str| Err(KernelError::new(Code::BadField, m.to_string()).field("checkpoint"));
     if scan.payloads.len() < size {
         return refuse("the checkpoint names more frames than the journal holds");

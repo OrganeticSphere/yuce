@@ -31,8 +31,12 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   at once on stderr and in its first line, and keeps the bytes beside the journal (`<wal>.torn-*`, which `audit-verify` then
   lists). More than one entry can be lost this way. A receipt older than the lost entries still matches: only the latest one
   shows that nothing is missing.
-* Check a stopped journal: a live server's lock blocks reading on Windows (exit 2), and elsewhere a read in the middle of a write
-  can report a torn tail that is not there.
+* A journal is read while its server runs, and what is read is that moment's. The server is the journal's one writer on every
+  system; `audit-verify`, `audit-read`, `audit-index` and `audit-proof` read up to the last complete entry of that moment and say
+  so (`live`), and an entry the server has not finished is no torn tail then. The journal may have grown since: only a stopped
+  journal has an end to check, and `--at-end` on a live one holds for that moment alone. On Windows any program that holds the
+  journal open for writing counts as its writer: no server starts on it, and a torn tail is taken for an entry in flight. Beside
+  a server of 0.2.0 or earlier, which locks the whole file, a reading command on Windows stops with exit 2 and says so.
 * `--expect` finds the receipt's state anywhere in the journal, so a journal that went on after a terminal receipt passes too:
   `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
 * **A journal holds the full text of its sources.** Whoever checks a journal gets them: to publish a journal is to publish its

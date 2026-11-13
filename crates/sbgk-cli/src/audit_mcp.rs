@@ -1702,6 +1702,31 @@ fn with_profile(a: &Args) -> Args {
     a
 }
 
+/// Exit 2, in words, when the journal at `wal` cannot be read because a running server locks the whole file, as a server of 0.2.0
+/// or earlier does on Windows: the system's own message (os error 33) names neither the server nor what to do. Any other trouble
+/// is the command's to report.
+pub(crate) fn refuse_locked_whole(wal: &str) {
+    #[cfg(windows)]
+    if let Err(e) = std::fs::File::open(wal).and_then(|mut f| std::io::Read::read(&mut f, &mut [0u8; 1])) {
+        if e.raw_os_error() == Some(33) {
+            fail(&format!("cannot read {wal}: {}", sbgk_core::audit::LOCKED_WHOLE));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = wal;
+}
+
+/// What a reading command says of a journal a server was writing while it read: how far it read, and that the journal may have
+/// grown since. `in_flight` counts the bytes of an entry the server had not finished at that moment, when the command knows them.
+pub(crate) fn live_read(frames: usize, in_flight: Option<u64>) -> Value {
+    let mut live = json!({"frames_read": frames,
+        "note": "a server was writing this journal: it was read up to its last complete frame at that moment and may have grown since"});
+    if let Some(bytes) = in_flight {
+        live["in_flight_bytes"] = json!(bytes);
+    }
+    live
+}
+
 /// `sbgk audit-verify --wal <run.wal> [--expect <receipt.json> [--at-end]]`: replays a recorded audit journal without a model, as a resumed
 /// server would (frame hashes, source identities, every entry to its committed outcome and roots), and prints the roots and the
 /// chain head it reaches. The kernel reads the file once, bounded and read-only: it is never locked, copied or written. With
@@ -1710,9 +1735,11 @@ fn with_profile(a: &Args) -> Args {
 /// binds the chain up to that state, not only the state; `--at-end` also asks that nothing follows it. Exit 0 when verified, 1 when the journal is refused, the receipt names
 /// no state of it, or (without a receipt) bytes after the last complete entry were left unverified: status TORN_TAIL, usually a
 /// crash. Exit 2 when the file cannot be read: that says nothing about the journal. A journal cut back to a complete entry is a
-/// shorter sound journal: only a receipt shows that anything is missing.
+/// shorter sound journal: only a receipt shows that anything is missing. A journal a server is writing is checked up to its last
+/// complete entry at that moment and the report says so (`live`): an entry the server has not finished is no torn tail.
 pub fn cmd_audit_verify(a: &Args) {
     let wal = a.req("wal");
+    refuse_locked_whole(&wal);
     if let Err(e) = std::fs::File::open(&wal).and_then(|mut f| std::io::Read::read(&mut f, &mut [0u8; 1])) {
         fail(&format!("cannot read {wal}: {e}"));
     }
@@ -1756,6 +1783,9 @@ pub fn cmd_audit_verify(a: &Args) {
         out["sources"] = json!({"mode": "opaque", "documents": state.source_document_count(), "set_matches_manifest_hash": state.docs_set_matches(),
                                 "put_document_entries": read.document_puts});
     }
+    if read.live {
+        out["live"] = live_read(entries, Some(read.in_flight_bytes));
+    }
     if let Some((verdict, refused)) = checkpoint {
         out["checkpoint"] = verdict;
         if refused {
@@ -1774,7 +1804,8 @@ pub fn cmd_audit_verify(a: &Args) {
         let found = states.iter().find(|s| s.1 == audit && engine.is_none_or(|e| s.2 == e) && head.is_none_or(|h| s.3 == h));
         let at = found.map(|s| s.0);
         // bytes after the last complete entry may be the entry that followed the receipt: the state is the end only with none
-        let at_end = at == Some(entries) && read.bytes == read.complete_bytes;
+        // so may an entry a live server has not finished
+        let at_end = at == Some(entries) && read.bytes == read.complete_bytes && read.in_flight_bytes == 0;
         let session_ok = found.is_some_and(|s| session.is_none_or(|x| x == state.session_root_for(&s.2, &audit)));
         let corpus_ok = corpus.is_none_or(|c| c == state.manifest_hash());
         let run_ok = run_id.as_deref().is_none_or(|r| r == state.run_id());
@@ -1902,6 +1933,7 @@ pub fn cmd_audit_sign(a: &Args) {
     let key = a.req("signing-key");
     let signer = NoteSigner::parse(&std::fs::read_to_string(&key).unwrap_or_else(|e| fail(&format!("cannot read {key}: {e}"))))
         .unwrap_or_else(|e| fail(&format!("--signing-key {key}: {}", e.to_json())));
+    refuse_locked_whole(&wal);
     let mut heads = Vec::new();
     let (state, _) = match AuditState::verify_states(Path::new(&wal), &mut |_, _, head| heads.push(head)) {
         Ok(v) => v,
@@ -1945,9 +1977,11 @@ pub fn cmd_audit_proof(a: &Args) {
         println!("{}", json!({"status": "REFUSED", "wal": wal, "error": e.to_json()}));
         std::process::exit(1)
     };
+    refuse_locked_whole(&wal);
+    let journal = proof::seals_read(Path::new(&wal)).unwrap_or_else(|e| refused(e));
     let seal = match a.get("seal") {
         Some(v) => v.parse::<usize>().unwrap_or_else(|_| fail(&format!("--seal: a frame number, not '{v}'"))),
-        None => *proof::seals_of(Path::new(&wal)).unwrap_or_else(|e| refused(e)).last().unwrap_or_else(|| fail(&format!("{wal} has no seal"))),
+        None => *journal.seals.last().unwrap_or_else(|| fail(&format!("{wal} has no seal"))),
     };
     let checkpoint = PathBuf::from(a.get("checkpoint").map_or(format!("{wal}.checkpoints/seal-{seal}.txt"), str::to_string));
     // a quittance is never written over what it is cut from: the journal, the checkpoint of its seal or the verifier key beside it
@@ -1974,11 +2008,13 @@ pub fn cmd_audit_proof(a: &Args) {
     not_over_inputs(&wal, &out, &inputs, "the quittance");
     let bytes = proof::to_file(&made);
     write_aside(&out, &bytes).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", out.display())));
-    println!(
-        "{}",
-        json!({"status": "PROOF", "file": out.display().to_string(), "target": target, "seal": seal, "mode": made["mode"],
-               "records": made["records"].as_array().map_or(0, Vec::len), "bytes": bytes.len()})
-    );
+    let mut report = json!({"status": "PROOF", "file": out.display().to_string(), "target": target, "seal": seal, "mode": made["mode"],
+                            "records": made["records"].as_array().map_or(0, Vec::len), "bytes": bytes.len()});
+    if journal.live {
+        // a quittance is cut at a seal, which later frames do not change: the note says only that the journal went on
+        report["live"] = live_read(journal.frames, None);
+    }
+    println!("{report}");
 }
 
 /// `sbgk audit-proof-verify --proof <file> [--trusted-keys <file>] [--key <verifier>] [--expect-seal <hex>] [--anchored-at YYYY-MM-DD]`:
@@ -2018,7 +2054,8 @@ pub fn cmd_audit_read(a: &Args) {
     let number = |k: &str| a.get(k).map(|v| v.parse::<usize>().unwrap_or_else(|_| fail(&format!("--{k}: an integer, not '{v}'"))));
     let (from, to, since, limit) = (number("from"), number("to"), number("since"), number("limit"));
     let points: Vec<usize> = [from, to, since].into_iter().flatten().collect();
-    let (state, _, entries, at) = match read::journal_points(Path::new(&wal), &points) {
+    refuse_locked_whole(&wal);
+    let (state, journal, entries, at) = match read::journal_points(Path::new(&wal), &points) {
         Ok(read) => read,
         Err(e) => {
             println!("{}", json!({"status": "REFUSED", "wal": wal, "error": e.to_json()}));
@@ -2026,7 +2063,7 @@ pub fn cmd_audit_read(a: &Args) {
         }
     };
     let snapshot = |n: usize| at.get(&n).unwrap_or_else(|| fail(&format!("the journal has {entries} frames: a point is from 1 to {entries}, not {n}")));
-    let out = match tool.as_str() {
+    let mut out = match tool.as_str() {
         "status" => read::status(&state, entries),
         "dependents" => {
             let mut args = json!({});
@@ -2068,6 +2105,9 @@ pub fn cmd_audit_read(a: &Args) {
         },
         _ => read::fallen(&state, entries, since.map(snapshot), limit),
     };
+    if journal.live {
+        out["live"] = live_read(entries, Some(journal.in_flight_bytes));
+    }
     if a.sw("pretty") {
         println!("{}", serde_json::to_string_pretty(&out).expect("JSON"));
     } else {

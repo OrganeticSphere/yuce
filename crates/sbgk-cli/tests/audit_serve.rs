@@ -661,11 +661,14 @@ fn committed_circle_telemetry_is_owner_only_read_only_and_restored() {
     assert_eq!(a["audit_root"], b["audit_root"]);
     assert_eq!(a["circle_telemetry"], b["circle_telemetry"]);
     assert_eq!(a["circle_telemetry"]["complete"], true);
+    // the server is the journal's one writer: another process reads the file (0.2.1; its lock stopped that with os error 33) and,
+    // on Windows, cannot open it to write
+    assert!(!std::fs::read(fx.p("run.wal")).unwrap().is_empty());
     #[cfg(windows)]
     {
-        let err = std::fs::read(fx.p("run.wal")).unwrap_err();
-        assert_eq!(err.raw_os_error(), Some(33));
-        eprintln!("exclusive WAL owner server pid={}", server.child.id());
+        let err = std::fs::OpenOptions::new().append(true).open(fx.p("run.wal")).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(32));
+        eprintln!("exclusive WAL writer server pid={}", server.child.id());
     }
     drop(worker);
     drop(own);
@@ -1720,4 +1723,175 @@ fn an_owner_seal_before_a_withdrawal_lets_a_quittance_show_what_stood_then() {
     assert_eq!(check["status"], "PROOF_VALID", "{check}");
     let (code, v) = cut(later);
     assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "the claim fell before the later seal: {v}");
+}
+
+/// A reading command over the journal of `fx`: its exit code, what it printed and what it said on stderr.
+fn reading(fx: &Fixture, args: &[&str]) -> (Option<i32>, Value, String) {
+    let out = Command::new(BIN).args(args).args(["--wal", &fx.p("run.wal")]).output().unwrap();
+    (out.status.code(), serde_json::from_slice(&out.stdout).unwrap_or(Value::Null), String::from_utf8_lossy(&out.stderr).to_string())
+}
+
+/// A server on the journal of `fx` that must not start: its exit code and what it told its operator. One that started and serves
+/// is stopped after a while and has no exit code.
+fn refused_server(fx: &Fixture) -> (Option<i32>, String) {
+    let mut child = Command::new(BIN)
+        .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"])
+        .args(fx.args(false))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(20);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > until {
+            let _ = child.kill();
+            let _ = child.wait();
+            return (None, "a second server started on the journal and served".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let out = child.wait_with_output().unwrap();
+    (out.status.code(), String::from_utf8_lossy(&out.stderr).to_string())
+}
+
+/// The journal of a running server is read by another process (0.2.1): `audit-verify` and `audit-read` while the server writes,
+/// then `audit-index` and `audit-proof` too while it still holds the journal. Each reads to the last complete frame of that moment
+/// and says that the journal was live; an entry in flight is no torn tail. On Windows the server's lock over the whole file
+/// stopped every one of them before (os error 33). A second server on the journal is still refused.
+#[test]
+fn every_reading_command_reads_the_journal_of_a_running_server_and_a_second_server_is_refused() {
+    let fx = Fixture::new("live");
+    let key = fx.p("operator.key");
+    assert_eq!(Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap().status.code(), Some(0));
+    let mut args = fx.args(true);
+    args.extend(["--signing-key".to_string(), key]);
+    let server = Server::start(&args);
+    // before any agent wrote: the frames of the start, read live
+    let (code, first, stderr) = reading(&fx, &["audit-verify"]);
+    assert_eq!((code, first["status"].as_str(), first["torn_tail_bytes"].as_u64()), (Some(0), Some("VERIFIED"), Some(0)), "{first} {stderr}");
+    let start = first["live"]["frames_read"].as_u64().expect("the report says the journal was live");
+    assert_eq!(first["entries"].as_u64(), Some(start), "{first}");
+    // while the agents write, another process keeps checking and reading the journal
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let seen: Vec<(Option<i32>, Value, String)> = std::thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            let mut seen = Vec::new();
+            while !done.load(std::sync::atomic::Ordering::Relaxed) || seen.len() < 6 {
+                seen.push(reading(&fx, &["audit-verify"]));
+                seen.push(reading(&fx, &["audit-read", "status"]));
+            }
+            seen
+        });
+        let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+        let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+        for round in 0..40 {
+            catch_up(&mut gb);
+            let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+            let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+            match t["status"].as_str().unwrap() {
+                "COMPLETE" => break,
+                "WAIT" => continue,
+                _ => {}
+            }
+            assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        reader.join().unwrap()
+    });
+    let mut frames = start;
+    for (code, v, stderr) in &seen {
+        assert_eq!(*code, Some(0), "{v} {stderr}");
+        let read = v["live"]["frames_read"].as_u64().unwrap_or_else(|| panic!("a read of a live journal says so: {v}"));
+        if v["status"] == "VERIFIED" {
+            // a frame in flight is not a torn tail, and a later check never reads fewer frames
+            assert_eq!((v["torn_tail_bytes"].as_u64(), v["entries"].as_u64()), (Some(0), Some(read)), "{v}");
+            assert!(read >= frames, "{read} frames after {frames}: {v}");
+            frames = read;
+        }
+    }
+    // the run is closed and its seal signed; the server still runs and holds the journal
+    let (code, last, stderr) = reading(&fx, &["audit-verify"]);
+    assert_eq!((code, last["status"].as_str()), (Some(0), Some("VERIFIED")), "{last} {stderr}");
+    let end = last["live"]["frames_read"].as_u64().unwrap();
+    assert!(end > start && end >= frames, "the journal grew from {start} to {end} frames");
+    assert_eq!(last["live"]["in_flight_bytes"], 0, "{last}");
+    let (code, status, stderr) = reading(&fx, &["audit-read", "status"]);
+    assert_eq!((code, status["live"]["frames_read"].as_u64()), (Some(0), Some(end)), "{status} {stderr}");
+    let (code, claims, stderr) = reading(&fx, &["audit-read", "active-claims"]);
+    assert_eq!(code, Some(0), "{claims} {stderr}");
+    let claim = claims["groups"][0]["ids"][0].as_str().expect("a standing claim").to_string();
+    let db = fx.p("live.index.sqlite");
+    let (code, indexed, stderr) = reading(&fx, &["audit-index", "--db", &db]);
+    assert_eq!((code, indexed["status"].as_str(), indexed["frames"].as_u64()), (Some(0), Some("INDEXED"), Some(end)), "{indexed} {stderr}");
+    assert_eq!(indexed["live"]["frames_read"].as_u64(), Some(end), "{indexed}");
+    let (code, checked, stderr) = reading(&fx, &["audit-index", "--db", &db, "--check"]);
+    assert_eq!((code, checked["status"].as_str()), (Some(0), Some("INDEX_MATCHES")), "{checked} {stderr}");
+    let proof = fx.p("live.proof.json");
+    let (code, cut, stderr) = reading(&fx, &["audit-proof", "--record", &claim, "--out", &proof]);
+    assert_eq!((code, cut["status"].as_str(), cut["live"]["frames_read"].as_u64()), (Some(0), Some("PROOF"), Some(end)), "{cut} {stderr}");
+    let check = Command::new(BIN).args(["audit-proof-verify", "--proof", &proof]).output().unwrap();
+    assert_eq!(check.status.code(), Some(0), "{}", String::from_utf8_lossy(&check.stdout));
+    // one writer still: a second server on the same journal does not start, and the journal is as it was
+    let before = std::fs::read(fx.p("run.wal")).unwrap();
+    let (code, stderr) = refused_server(&fx);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("in use"), "{stderr}");
+    assert_eq!(std::fs::read(fx.p("run.wal")).unwrap(), before);
+    drop(server);
+    // stopped, the same journal reads the same, and nothing says live
+    let (code, stopped, stderr) = reading(&fx, &["audit-verify"]);
+    assert_eq!((code, stopped["status"].as_str(), stopped["entries"].as_u64()), (Some(0), Some("VERIFIED"), Some(end)), "{stopped} {stderr}");
+    assert!(stopped.get("live").is_none(), "{stopped}");
+    assert_eq!((&stopped["wal_sha256"], &stopped["audit_root"]), (&last["wal_sha256"], &last["audit_root"]));
+}
+
+/// Beside a server of 0.2.0 or earlier, which opens the journal to read and write and locks the whole file (the handle this test
+/// holds): a server of this version does not start, and a reading command is told in words why it cannot read where that lock
+/// stops reading (Windows; it said `os error 33`), and reads the journal as live elsewhere.
+#[test]
+fn a_journal_locked_whole_refuses_a_second_server_and_tells_a_reader_why() {
+    let fx = Fixture::new("lockedwhole");
+    drop(Server::start(&fx.args(true)));
+    let old = std::fs::OpenOptions::new().read(true).write(true).open(fx.p("run.wal")).unwrap();
+    old.try_lock().unwrap();
+    let (code, stderr) = refused_server(&fx);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("in use"), "{stderr}");
+    for command in [&["audit-verify"][..], &["audit-read", "status"], &["audit-index", "--db", &fx.p("locked.index.sqlite")], &["audit-proof", "--record", "0"]]
+    {
+        let (code, v, stderr) = reading(&fx, command);
+        if cfg!(windows) {
+            assert_eq!(code, Some(2), "{command:?}: {v} {stderr}");
+            assert!(stderr.contains("locked whole by a running server") && !stderr.contains("os error"), "{command:?}: {stderr}");
+        } else if command[0] != "audit-proof" {
+            assert_eq!(code, Some(0), "{command:?}: {v} {stderr}");
+            assert!(v["live"]["frames_read"].as_u64().is_some(), "{command:?}: {v}");
+        }
+    }
+    // unlocked, the journal is served and read again
+    drop(old);
+    let server = Server::start(&fx.args(false));
+    assert_eq!(server.hello["audit"]["resumed"], true, "{}", server.hello);
+    assert_eq!(reading(&fx, &["audit-verify"]).0, Some(0));
+}
+
+/// The end of a stopped journal that is no complete entry is a torn tail as before, whoever asks and however often: only a
+/// writer that holds the journal makes such bytes an entry in flight.
+#[test]
+fn a_torn_tail_of_a_stopped_journal_is_still_a_torn_tail() {
+    let fx = Fixture::new("tornstopped");
+    drop(Server::start(&fx.args(true)));
+    let mut bytes = std::fs::read(fx.p("run.wal")).unwrap();
+    bytes.extend_from_slice(b"{\"body\":{\"actor\":\"w1\"");
+    std::fs::write(fx.p("run.wal"), &bytes).unwrap();
+    for _ in 0..3 {
+        let (code, v, stderr) = reading(&fx, &["audit-verify"]);
+        assert_eq!((code, v["status"].as_str(), v["torn_tail_bytes"].as_u64()), (Some(1), Some("TORN_TAIL"), Some(21)), "{v} {stderr}");
+        assert!(v.get("live").is_none(), "{v}");
+    }
+    let (code, v, _) = reading(&fx, &["audit-index", "--db", &fx.p("torn.index.sqlite")]);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "{v}");
+    assert_eq!(std::fs::read(fx.p("run.wal")).unwrap(), bytes);
 }
