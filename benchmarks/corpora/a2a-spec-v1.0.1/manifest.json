@@ -1,0 +1,124 @@
+{
+ "schema": "r2r.tobi_corpus_metadata_manifest.v1",
+ "source": {
+  "origin_recorded": "https://github.com/a2aproject/A2A.git",
+  "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+  "repository": "a2aproject/A2A",
+  "tag": "v1.0.1",
+  "license_files": {
+   "LICENSE": "v1.0.1 (3303592588e388e62e0f69f701af531d2f4e3991)"
+  },
+  "releases": {
+   "v0.2.5": {
+    "commit": "22b52705a169123aa06cdf28261e12150ee5777f",
+    "date": "2025-06-30"
+   },
+   "v0.3.0": {
+    "commit": "8d57eba286de756176892518a8fc39b0ac2ccefb",
+    "date": "2025-07-31"
+   },
+   "v1.0.1": {
+    "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+    "date": "2026-05-28"
+   }
+  },
+  "note": "the files of v0.2.5 and v0.3.0 come from their own tags; every entry names its tag, commit and upstream path"
+ },
+ "entries": [
+  {
+   "path": "v0.2.5/docs/specification.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 91975,
+   "raw_sha256": "e7a6d6c9cc2557de71bc23d5b76ccb9ac4e01ea84bcabba84f5265917d550495",
+   "upstream_git_blob": "ea88e9c09a31665e0b409e96cdd08912b1709d11",
+   "version": "v0.2.5",
+   "date": "2025-06-30",
+   "upstream": {
+    "tag": "v0.2.5",
+    "commit": "22b52705a169123aa06cdf28261e12150ee5777f",
+    "path": "docs/specification.md"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "v0.3.0/docs/specification.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 85298,
+   "raw_sha256": "ce35a9f331ef3e679bc7834c98149d42129ab0b87d552bcb7446faa941d81329",
+   "upstream_git_blob": "cd4f45a6f6c8e840ad4b02a2a4e3f689e2c78233",
+   "version": "v0.3.0",
+   "date": "2025-07-31",
+   "upstream": {
+    "tag": "v0.3.0",
+    "commit": "8d57eba286de756176892518a8fc39b0ac2ccefb",
+    "path": "docs/specification.md"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "v1.0.1/CHANGELOG.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 19268,
+   "raw_sha256": "ea8802a1631acf9a6e33b489a9b4973df39927a27dd4a2ae8283dc2583f59942",
+   "upstream_git_blob": "bfc2c8667818cb5ef43470c1384829020cee619b",
+   "version": "v1.0.1",
+   "date": "2026-05-28",
+   "upstream": {
+    "tag": "v1.0.1",
+    "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+    "path": "CHANGELOG.md"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "v1.0.1/docs/whats-new-v1.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 28692,
+   "raw_sha256": "dfc00a9e5947cc44aa53c4906e48c40462cea03879843ffa40f3ceb778b48081",
+   "upstream_git_blob": "c46276de1fbc8c6dcf84987617234da52179cbbf",
+   "version": "v1.0.1",
+   "date": "2026-05-28",
+   "upstream": {
+    "tag": "v1.0.1",
+    "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+    "path": "docs/whats-new-v1.md"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "v1.0.1/docs/specification.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 155498,
+   "raw_sha256": "627ccfe6ffb1be2c56811c3dcc18780deb419f41cdc98248095c939b2d9dc9cb",
+   "upstream_git_blob": "382185a53b312cd6a60f5ac536ec5a356437ce77",
+   "version": "v1.0.1",
+   "date": "2026-05-28",
+   "upstream": {
+    "tag": "v1.0.1",
+    "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+    "path": "docs/specification.md"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  }
+ ]
+}

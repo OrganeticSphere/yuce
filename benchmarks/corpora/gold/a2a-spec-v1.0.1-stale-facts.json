@@ -1,0 +1,151 @@
+{
+ "corpus": "a2a-spec-v1.0.1",
+ "as_of": "v1.0.1",
+ "use": "the oracle of the stale-current measure, judged against the target version v1.0.1. One fact is one unit of counting. A removed, replaced or changed fact stated as current for v1.0.1 is an error. A control fact stays true: marking it superseded is an error. A statement explicitly scoped to an older version (for example 'in v0.3.0 ...') or to older clients is not an error. Each fact quotes where it held and where it ended; since is the release that ended it (v1.0.0 is not in the corpus: its changes are read in the v1.0.1 changelog, in the summary of v1 and in the v1.0.1 specification)",
+ "selection": "facts with a quote in the specification of v0.2.5 or v0.3.0 and a quote that ends them in a later file of the corpus; additions of v1.0 (ListTasks, multi-tenancy, timestamps) are not facts that ended and are left out",
+ "author": "claude-opus-5-5, 2026-11-13, before any run on the corpus; to be reviewed by Codex; every quote is checked verbatim by benchmarks/test_a2a_corpus.py",
+ "facts": [
+  {
+   "id": "message-send",
+   "fact": "the JSON-RPC operation that sends a message is named message/send",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "| `message/send` | `SendMessage` | `POST /v1/message:send` | Send message to agent |"},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ RENAMED:** Operation now **`SendMessage`**"}
+  },
+  {
+   "id": "tasks-resubscribe",
+   "fact": "an interrupted task stream is resumed with tasks/resubscribe",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "| `tasks/resubscribe` | `TaskSubscription` | `POST /v1/tasks/{id}:subscribe` | Resume task streaming |"},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ RENAMED:** Operation now **SubscribeToTask**"}
+  },
+  {
+   "id": "extended-card-method",
+   "fact": "the authenticated extended Agent Card is fetched with agent/getAuthenticatedExtendedCard",
+   "held_in": ["v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "| `agent/getAuthenticatedExtendedCard` | `GetAgentCard` | `GET /v1/card` | Get authenticated agent card |"},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ RENAMED:** `agent/getAuthenticatedExtendedCard` → **GetExtendedAgentCard**"}
+  },
+  {
+   "id": "extended-card-flag",
+   "fact": "an Agent Card states support for the extended card with the top-level field supportsAuthenticatedExtendedCard",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "This endpoint is available only if `AgentCard.supportsAuthenticatedExtendedCard` is `true`."},
+   "status": "changed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ BREAKING:** `supportsAuthenticatedExtendedCard` moved to `capabilities.extendedAgentCard`"}
+  },
+  {
+   "id": "transport-fields",
+   "fact": "an Agent Card declares its transports with preferredTransport and additionalInterfaces",
+   "held_in": ["v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "Agents **MUST** declare all supported transports in their `AgentCard` using the `preferredTransport` and `additionalInterfaces` fields."},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ BREAKING:** `preferredTransport` and `additionalInterfaces` consolidated into `supportedInterfaces[]`"}
+  },
+  {
+   "id": "card-protocol-version",
+   "fact": "the Agent Card names the protocol version it supports in a top-level protocolVersion",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.2.5/docs/specification.md", "quote": "The version of the A2A protocol this agent supports."},
+   "status": "changed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ BREAKING:** `protocolVersion` moved from AgentCard to individual AgentInterface objects"}
+  },
+  {
+   "id": "http-v1-prefix",
+   "fact": "the URL paths of the HTTP+JSON binding begin with /v1/",
+   "held_in": ["v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "**MUST** follow the URL patterns documented in each method section (e.g., `/v1/message:send`, `/v1/tasks/{id}`)."},
+   "status": "changed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ BREAKING:** Removed `/v1` prefix from HTTP+JSON URL paths"}
+  },
+  {
+   "id": "final-flag",
+   "fact": "a TaskStatusUpdateEvent carries a final flag that marks the last update of a stream",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.2.5/docs/specification.md", "quote": "If `true`, indicates this is the terminal status update for the current stream cycle."},
+   "status": "removed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/CHANGELOG.md", "quote": "Remove redundant `final` field from `TaskStatusUpdateEvent`"}
+  },
+  {
+   "id": "event-kind",
+   "fact": "stream events carry a kind discriminator such as status-update",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "\"kind\":\"status-update\""},
+   "status": "removed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ BREAKING:** Stream events no longer have `kind` field"}
+  },
+  {
+   "id": "part-types",
+   "fact": "message content is a union of TextPart, FilePart and DataPart",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "(e.g., `TextPart`, `FilePart`, `DataPart`)"},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "TextPart, FilePart, and DataPart types have been removed and replaced with a single unified Part structure."}
+  },
+  {
+   "id": "task-state-values",
+   "fact": "task states are lowercase values such as completed and input-required",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "\"state\": \"completed\""},
+   "status": "changed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "Enum values changed from lowercase to `SCREAMING_SNAKE_CASE` with `TASK_STATE_` prefix"}
+  },
+  {
+   "id": "push-config-set",
+   "fact": "a push notification config is set with tasks/pushNotificationConfig/set",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "| `tasks/pushNotificationConfig/set` | `CreateTaskPushNotification` | `POST /v1/tasks/{id}/pushNotificationConfigs` | Set push notification config |"},
+   "status": "replaced",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/docs/whats-new-v1.md", "quote": "**✅ RENAMED:** Operations now **CreateTaskPushNotificationConfig**"}
+  },
+  {
+   "id": "well-known-agent-json",
+   "fact": "the Agent Card is served at /.well-known/agent.json",
+   "held_in": ["v0.2.5"],
+   "old": {"file": "v0.2.5/docs/specification.md", "quote": "`https://{server_domain}/.well-known/agent.json`"},
+   "status": "changed",
+   "since": "v0.3.0",
+   "new": {"file": "v0.3.0/docs/specification.md", "quote": "`https://{server_domain}/.well-known/agent-card.json`"}
+  },
+  {
+   "id": "state-transition-history",
+   "fact": "AgentCapabilities has a stateTransitionHistory flag",
+   "held_in": ["v0.2.5", "v0.3.0"],
+   "old": {"file": "v0.2.5/docs/specification.md", "quote": "Placeholder for future feature: exposing detailed task status change history."},
+   "status": "removed",
+   "since": "v1.0.0",
+   "new": {"file": "v1.0.1/CHANGELOG.md", "quote": "Remove unimplemented state_transition_history capability field"}
+  }
+ ],
+ "controls": [
+  {
+   "id": "task-not-found-code",
+   "fact": "TaskNotFoundError has the JSON-RPC error code -32001",
+   "since": "v0.2.5",
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "| `-32001` | `TaskNotFoundError`"},
+   "still": {"file": "v1.0.1/docs/specification.md", "quote": "| `TaskNotFoundError`                   | `-32001`"}
+  },
+  {
+   "id": "well-known-agent-card",
+   "fact": "the Agent Card is served at /.well-known/agent-card.json",
+   "since": "v0.3.0",
+   "old": {"file": "v0.3.0/docs/specification.md", "quote": "`https://{server_domain}/.well-known/agent-card.json`"},
+   "still": {"file": "v1.0.1/docs/specification.md", "quote": "Accessing `https://{server_domain}/.well-known/agent-card.json`"}
+  }
+ ]
+}
