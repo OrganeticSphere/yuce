@@ -1,0 +1,5 @@
+v0.2.5/docs/specification.md
+v0.3.0/docs/specification.md
+v1.0.1/CHANGELOG.md
+v1.0.1/docs/whats-new-v1.md
+v1.0.1/docs/specification.md
