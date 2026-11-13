@@ -173,3 +173,43 @@ fn a_journal_that_pins_no_sections_or_another_rule_of_them_gives_no_table_and_sa
     let (_path, s) = journal("rule1", Some(json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": 6000})));
     assert!(coverage(&s).unavailable.as_deref().is_some_and(|r| r.contains("earlier rule")));
 }
+
+/// An owed second reading is no complete coverage (Codex's COV-01 of fe0ac7af, its scenario): the table and the report of the pass
+/// say so before the second answer and after a restart, with the number owed, and say complete once the second reader answers
+/// empty. A second reading that runs out of attempts stays `second_reading_failed` (the unit tests of the pass).
+#[test]
+fn an_owed_second_reading_is_no_complete_coverage_until_it_is_answered() {
+    let profile = || GapProfile { limit: 1, units_per_task: 8, second_reader_tiers: vec![0], ..Default::default() };
+    let pinned = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": 6000, "section_rule": 2, "gap_pass": profile().settings()});
+    let (path, mut s) = journal("owed", Some(pinned));
+    let question = || ResearchQuestion { id: "RQ1".into(), text: "What changed?".into(), about: vec!["change".into()], ..Default::default() };
+    let mut d = Dispatcher::new(DispatchConfig { gap: profile(), ..Default::default() }, vec![question()]);
+    let mut t = d.acquire(&s, "w1", true, 0);
+    while t["kind"] == "EXTEND" {
+        answer(&mut d, &mut s, &t, "w1", &[]);
+        t = d.acquire(&s, "w1", true, 0);
+    }
+    assert_eq!(t["kind"], "REQUEST", "{t}");
+    answer(&mut d, &mut s, &t, "w1", &[]);
+    let owed = coverage(&s);
+    let pending = owed.units.iter().filter(|r| r[5] == "second_reading_pending").count();
+    assert_eq!(pending, 7, "{:?}", owed.units);
+    assert_eq!((&owed.summary["complete"], &owed.summary["gap_units_second_reading_pending"]), (&json!(false), &json!(7)), "{}", owed.summary);
+    assert!(owed.summary["meaning"].as_str().unwrap().contains("7 whose second reading is still owed"), "{}", owed.summary);
+    assert_eq!(d.gap_pass_report(&s), owed.summary, "the report of the pass says the same");
+    // after a restart: the journal gives the same table, a recovered dispatcher the same report and the reading still owed
+    drop(s);
+    let mut s = AuditState::open(&path.0).unwrap();
+    assert_eq!(coverage(&s).summary, owed.summary);
+    let mut recovered = Dispatcher::new(DispatchConfig { gap: profile(), ..Default::default() }, vec![question()]);
+    recovered.recover(&s);
+    assert_eq!(recovered.gap_pass_report(&s), owed.summary);
+    let second = recovered.acquire(&s, "w2", true, 0);
+    assert!(second["key"].as_str().is_some_and(|k| k.starts_with("gap2:")), "{second}");
+    // the second reader answers empty: the units are answered empty, and the coverage is complete
+    answer(&mut recovered, &mut s, &second, "w2", &[]);
+    let done = coverage(&s);
+    assert_eq!(done.units.iter().filter(|r| r[5] == "empty").count(), 7, "{:?}", done.units);
+    assert_eq!((&done.summary["complete"], &done.summary["gap_units_second_reading_pending"]), (&json!(true), &json!(0)), "{}", done.summary);
+    assert_eq!(recovered.gap_pass_report(&s), done.summary);
+}
