@@ -56,6 +56,13 @@ jobs:
       - name: Python client
         run: python -m unittest discover -s clients/python/tests
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Independent verifier (yuce-verify, levels J0 and J1; Node.js, no install)
+        run: node --test "verifier/yuce-verify/test/*.test.mjs"
+
       - name: EXP-10 self-test (MCP server, leases, guard; no model calls)
         run: python benchmarks/run_exp10_mcp_swarm.py --selftest --skip-build
 
