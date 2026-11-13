@@ -921,19 +921,38 @@ fn take_in_turns(ranked: &[Vec<RecordId>], per: usize, all: usize) -> Vec<Record
 /// claims: `pairs::change_marker`, and the words a changelog states a change with. 0.2.1, step A8 (the A2A corpus): the readers of
 /// its changelog wrote "was removed" and "was renamed" under the stance `reported`, and in both runs with the gap pass 1 claim on
 /// the changelog reached the window of that question, against 14 and 8 in the runs without it, whose readers had chosen the stance
-/// `superseded`; replayed without a model, run 5's window takes 11 instead of 1. A word counts only where its own sentence does not
-/// negate it, in each part of the claim apart ("no features have been removed" states no change). Not "deprecated": replayed on the
-/// first control run of 0.2 it made about 50 more claims eligible, most of them the same two deprecations, and changed 18 claims of
-/// the window, where these two words change 3 (and 1 in the second run). The window keeps its size, so a claim it takes can put out
-/// one at its edge. Kept apart from `pairs::change_marker`, which also chooses the rows a pair is looked for in and the words a pair
-/// may not share.
-fn says_a_change(parts: &[String]) -> bool {
+/// `superseded`; replayed without a model, run 5's window takes 11 instead of 1. Such a word counts as a word of its own, not inside
+/// an identifier (`RenamedOptions`), where the claim states it without a negation before it in the same sentence: in its text, or,
+/// when the text does not use the word, in its subject, predicate and object read as one sentence. Terms do not count for these
+/// words: a claim's object is among its terms, and "is not" / "removed" read apart would turn a negated removal into one (Codex's
+/// review of e25b4efd, WIN-01 and WIN-02). Not "deprecated": replayed on the first control run of 0.2 it made about 50 more claims
+/// eligible, most of them the same two deprecations. The window keeps its size, so a claim it takes can put out one at its edge: on
+/// the first control run of 0.2, 2 claims of the real window go out and 3 come in; the second's does not change. Kept apart from `pairs::change_marker`, which also chooses the rows a pair is looked for in
+/// and the words a pair may not share.
+fn says_a_change(r: &RecordView) -> bool {
     const CHANGELOG: &[&str] = &["removed", "renamed"];
-    super::pairs::change_marker(&parts.join(" "))
-        || parts.iter().any(|part| {
-            let part = part.to_ascii_lowercase();
-            CHANGELOG.iter().any(|m| part.match_indices(m).any(|(at, _)| super::s0::negation_before(&part, at, m).is_none()))
-        })
+    let field = |k: &str| r.body[k].as_str().unwrap_or("").to_string();
+    let text = r.text.clone().unwrap_or_default();
+    let all = r.terms.iter().cloned().chain([text.clone(), field("predicate"), field("object")]).collect::<Vec<_>>().join(" ");
+    if super::pairs::change_marker(&all) {
+        return true;
+    }
+    // where a word stands as a word of its own: no letter, digit or underscore on either side
+    let at = |s: &str, w: &str| -> Vec<usize> {
+        let ident = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        s.match_indices(w).map(|(i, _)| i).filter(|&i| !ident(s[..i].chars().next_back()) && !ident(s[i + w.len()..].chars().next())).collect()
+    };
+    let affirmed = |s: &str, w: &str, places: &[usize]| places.iter().any(|&i| super::s0::negation_before(s, i, w).is_none());
+    let text = text.to_ascii_lowercase();
+    let triple = [field("subject"), field("predicate"), field("object")].join(" ").to_ascii_lowercase();
+    CHANGELOG.iter().any(|w| {
+        let in_text = at(&text, w);
+        if in_text.is_empty() {
+            affirmed(&triple, w, &at(&triple, w))
+        } else {
+            affirmed(&text, w, &in_text)
+        }
+    })
 }
 
 /// Words by which a claim says that something ended or was replaced (wider than `pairs::change_marker`: the MCP changelogs say
@@ -2694,19 +2713,7 @@ impl Dispatcher {
             // P2 applies to an evolution question (selected by supersedes/contradicts or lifecycle stances), not every RQ.
             let evolution = q.relations.iter().any(|r| matches!(r.as_str(), "supersedes" | "contradicts"))
                 || q.stances.iter().any(|r| matches!(r.as_str(), "superseded" | "refuted"));
-            (evolution
-                && matches!(r.status.as_deref(), Some("reported" | "confirmed"))
-                && says_a_change(
-                    &r.terms
-                        .iter()
-                        .cloned()
-                        .chain([
-                            r.text.clone().unwrap_or_default(),
-                            r.body["predicate"].as_str().unwrap_or("").to_string(),
-                            r.body["object"].as_str().unwrap_or("").to_string(),
-                        ])
-                        .collect::<Vec<_>>(),
-                ))
+            (evolution && matches!(r.status.as_deref(), Some("reported" | "confirmed")) && says_a_change(r))
                 || mapped.contains(&r.id)
                 || linked_by.contains(&r.id)
                 || r.status.as_deref().is_some_and(|x| q.stances.iter().any(|w| w == x))

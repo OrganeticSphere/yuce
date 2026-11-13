@@ -47,12 +47,14 @@
   took a claim of stance `reported` only by words such as "replaced", "superseded" or "no longer". On the A2A corpus the readers of
   the changelog wrote "was removed" and "was renamed" under that stance, and in two of four runs one claim on the changelog
   reached the window of that question, against 14 and 8 in the other two (BENCHMARKS.md, the gap pass on a second corpus).
-  "removed" and "renamed" now count too, where their own sentence does not negate them: replayed from the journals without a
-  model, the window of the run with 1 takes 11, and that of the run with 8 takes 11. "deprecated" does not count: on the first
-  control run of 0.2 it made about 50 more claims eligible, most of them restating two deprecations. The window keeps its size, so
-  what it takes can put other claims out at its edge: on the two control runs of 0.2, 3 claims and 1 claim of it change, and in
-  the first the one claim that `ping` was removed is put out. The change was measured by replay only, not by a run with a model.
-  No rule of the journal changes, and journals replay as before.
+  "removed" and "renamed" now count too, as words of their own (not inside an identifier such as `RenamedOptions`) and where
+  their sentence does not negate them: in the claim's text, or, when the text does not use the word, in its subject, predicate and
+  object read as one sentence; a claim's terms do not count for them. Replayed from the journals without a model, through the
+  kernel's own prompt, the window of the run with 1 takes 11, and that of the run with 8 takes 11. "deprecated" does not count:
+  on the first control run of 0.2 it made about 50 more claims eligible, most of them restating two deprecations. The window keeps
+  its size, so what it takes can put other claims out at its edge: on the first control run of 0.2, 2 of its claims go out and 3
+  come in, and the second's does not change. The change was measured by replay only, not by a run with a model. No rule of the
+  journal changes, and journals replay as before.
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.

@@ -92,8 +92,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   the later rows in id order may get none, and a claim too large for what the kept rows leave of the window is left out. A
   question whose every answer row fell is not repaired but answered anew, from a window chosen by the question alone.
 * **The window of an answer is chosen by words and kept to its size.** For a question about what changed, a claim of stance
-  `reported` is taken by its words ("replaced", "superseded", "no longer", "removed", "renamed" and a few more, where its sentence
-  does not negate them); a change worded otherwise is taken only under a stance the question names or through a link. The window
+  `reported` is taken by its words ("replaced", "superseded", "no longer" and a few more; "removed" and "renamed" as words of their
+  own that the sentence does not negate); a change worded otherwise is taken only under a stance the question names or through a
+  link. The window
   holds at most 100 claims and 256 records, taken in turns by document, so a claim it takes can put another out at its edge; the
   summary is told how many did not fit. On the A2A corpus the stance the readers chose for one changelog decided whether its
   claims reached the window (BENCHMARKS.md).
