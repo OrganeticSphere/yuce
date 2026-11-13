@@ -41,7 +41,7 @@ fn from_sql(v: Sql) -> Value {
 
 /// Whether two paths name one file: by the file's absolute path where it exists, else by its folder's and its name (Codex review of
 /// 11abf6ed, S6-01: an index written over its own journal destroyed it).
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     let absolute = |p: &Path| -> Option<PathBuf> {
         std::fs::canonicalize(p).ok().or_else(|| {
             let folder = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));

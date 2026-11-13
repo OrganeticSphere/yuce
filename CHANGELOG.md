@@ -5,6 +5,8 @@
 * **`scripts/verify_published_runs.py` checks the runs of 0.2 too.** A journal of 0.2 goes on past its last receipt, as the
   server seals and closes the run after the last stage: it is checked against each receipt as a prefix, and then whole. The
   four kernel runs of release v0.2.0 are in its list.
+* **`audit-proof --out` refuses to write over what the quittance is cut from:** its journal, the checkpoint of its seal and the
+  verifier key beside it, in any spelling of the path. In 0.2.0 a quittance written to the journal's path destroyed the run.
 * **An answer lists each of its records once.** After a repair in several attempts, the done line of the last attempt could name
   records that the same task had stored in its earlier attempts, by their local names, while the kernel added the same records
   again by their short ids as rows the answer keeps: the answer, the done record and its grounds listed them twice (control

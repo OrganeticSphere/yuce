@@ -1305,6 +1305,17 @@ fn a_server_with_a_signing_key_signs_its_seals_and_audit_verify_checks_them_with
     let stderr = String::from_utf8_lossy(&cut.stderr).to_string();
     let cut: Value = serde_json::from_slice(&cut.stdout).unwrap_or(Value::Null);
     assert_eq!(cut["status"], "PROOF", "{cut} {stderr}");
+    // a quittance is never written over its own journal, in any spelling of its path (the review of the 0.2.0 release)
+    let before = std::fs::read(&wal).unwrap();
+    let folder = std::path::Path::new(&wal).parent().unwrap().display().to_string();
+    let file = std::path::Path::new(&wal).file_name().unwrap().to_string_lossy().to_string();
+    for out in [wal.clone(), format!("{folder}/./{file}")] {
+        let r = Command::new(BIN).args(["audit-proof", "--wal", &wal, "--record", &claim, "--out", &out]).output().unwrap();
+        let v: Value = serde_json::from_slice(&r.stdout).unwrap_or(Value::Null);
+        assert_eq!((r.status.code(), v["status"].as_str()), (Some(1), Some("REFUSED")), "{out}: {v}");
+        assert!(v["error"].as_str().unwrap().contains("its journal"), "{v}");
+    }
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "the journal is untouched");
     std::fs::rename(&wal, fx.p("away.wal")).unwrap();
     let check = |extra: &[&str]| {
         let out = Command::new(BIN).args(["audit-proof-verify", "--proof", &proof_file]).args(extra).output().unwrap();
