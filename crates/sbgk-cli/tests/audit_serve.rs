@@ -1316,6 +1316,42 @@ fn a_server_with_a_signing_key_signs_its_seals_and_audit_verify_checks_them_with
         assert!(v["error"].as_str().unwrap().contains("its journal"), "{v}");
     }
     assert_eq!(std::fs::read(&wal).unwrap(), before, "the journal is untouched");
+    // a second name of the journal, a hard link, is no path of it: the quittance takes that name and the journal keeps its bytes
+    // (Codex's OUT-01 of 85742398)
+    let alias = fx.p("alias.wal");
+    std::fs::hard_link(&wal, &alias).unwrap();
+    let r = Command::new(BIN).args(["audit-proof", "--wal", &wal, "--record", &claim, "--out", &alias]).output().unwrap();
+    let v: Value = serde_json::from_slice(&r.stdout).unwrap_or(Value::Null);
+    assert_eq!((r.status.code(), v["status"].as_str()), (Some(0), Some("PROOF")), "{v}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "the journal is untouched by a quittance written to its hard link");
+    assert!(serde_json::from_slice::<Value>(&std::fs::read(&alias).unwrap()).is_ok(), "the second name now holds the quittance");
+    // nor are the checkpoints written over the journal or the signing key, and a hard link of the journal among them keeps the
+    // journal (Codex's OUT-02 of 85742398: a journal named verifier.key in the folder of --out was replaced by the verifier key)
+    let sign = |wal: &str, signing: &str, out: &std::path::Path| {
+        let r = Command::new(BIN).args(["audit-sign", "--wal", wal, "--signing-key", signing, "--out", &out.display().to_string()]).output().unwrap();
+        (r.status.code(), serde_json::from_slice::<Value>(&r.stdout).unwrap_or(Value::Null))
+    };
+    let (named_key, key_bytes) = (fx.0.join("as_key"), std::fs::read(&key).unwrap());
+    std::fs::create_dir_all(&named_key).unwrap();
+    std::fs::write(named_key.join("verifier.key"), &before).unwrap();
+    let (code, v) = sign(&named_key.join("verifier.key").display().to_string(), &key, &named_key);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("the journal"), "{v}");
+    assert_eq!(std::fs::read(named_key.join("verifier.key")).unwrap(), before, "a journal named verifier.key is untouched");
+    let key_there = fx.0.join("key_there");
+    std::fs::create_dir_all(&key_there).unwrap();
+    std::fs::write(key_there.join(&seals[0]), &key_bytes).unwrap();
+    let (code, v) = sign(&wal, &key_there.join(&seals[0]).display().to_string(), &key_there);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("the signing key"), "{v}");
+    assert_eq!(std::fs::read(key_there.join(&seals[0])).unwrap(), key_bytes, "the signing key is untouched");
+    let linked = fx.0.join("linked");
+    std::fs::create_dir_all(&linked).unwrap();
+    std::fs::hard_link(&wal, linked.join(&seals[0])).unwrap();
+    let (code, v) = sign(&wal, &key, &linked);
+    assert_eq!((code, v["status"].as_str()), (Some(0), Some("SIGNED")), "{v}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "the journal is untouched by a checkpoint written to its hard link");
+    assert_eq!(std::fs::read(linked.join(&seals[0])).unwrap(), std::fs::read(dir.join(&seals[0])).unwrap(), "the checkpoint took that name");
     std::fs::rename(&wal, fx.p("away.wal")).unwrap();
     let check = |extra: &[&str]| {
         let out = Command::new(BIN).args(["audit-proof-verify", "--proof", &proof_file]).args(extra).output().unwrap();

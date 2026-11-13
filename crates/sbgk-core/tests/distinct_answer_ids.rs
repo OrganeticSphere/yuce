@@ -192,3 +192,90 @@ fn a_recovered_answer_with_repeats_is_written_once_in_a_new_unresolved_checkpoin
     assert_unique(ids);
     assert_unique(&cp["context"]["retained_answer"]["fallen_ids"]);
 }
+
+/// The record a done line names by a local name of this attempt is that record, even where the name is spelled like the short id
+/// of a retained row: the store reads local names first (Codex's DID-03 of c9126019, its test kept as it was written).
+#[test]
+fn a_current_local_name_spelled_like_a_short_id_keeps_its_own_record_in_the_answer() {
+    let mut p = prepared();
+    let tid = p.task["task_id"].as_str().unwrap().to_string();
+    let first = p.d.submit(&mut p.s, &tid, "summary", &[claim("kept", &p.obs[0].short(), "Topic alpha holds."), done(&p.task, &["kept"])], 4);
+    assert_eq!(first["status"], "REPAIR_REQUIRED", "{first}");
+    let kept = first["accepted_locals"]["kept"].as_str().unwrap().to_string();
+    let r = p.d.submit(
+        &mut p.s,
+        &tid,
+        "summary",
+        &[
+            claim(&kept, &p.obs[0].short(), "Topic alpha is additionally qualified by the page."),
+            claim("cover_b", &p.obs[1].short(), "Topic beta holds."),
+            done(&p.task, &["kept", &kept, "cover_b"]),
+        ],
+        5,
+    );
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let extra = r["accepted_locals"][&kept].as_str().unwrap().to_string();
+    let cover = r["accepted_locals"]["cover_b"].as_str().unwrap().to_string();
+    assert_ne!(extra, kept);
+    assert_eq!(p.d.accepted_outcomes(&p.s)["RQ1"]["answer_ids"], json!([kept, extra, cover]), "DID-03: a distinct record was left out");
+}
+
+/// A retained row the done does not name is added to the answer under a name no local name of the answer shadows: here its short
+/// id is the local name of another record of the attempt.
+#[test]
+fn a_retained_row_is_added_under_a_name_no_local_name_shadows() {
+    let mut p = prepared();
+    let tid = p.task["task_id"].as_str().unwrap().to_string();
+    let first = p.d.submit(&mut p.s, &tid, "summary", &[claim("kept", &p.obs[0].short(), "Topic alpha holds."), done(&p.task, &["kept"])], 4);
+    assert_eq!(first["status"], "REPAIR_REQUIRED", "{first}");
+    let kept = first["accepted_locals"]["kept"].as_str().unwrap().to_string();
+    let r = p.d.submit(
+        &mut p.s,
+        &tid,
+        "summary",
+        &[
+            claim(&kept, &p.obs[0].short(), "Topic alpha is additionally qualified by the page."),
+            claim("cover_b", &p.obs[1].short(), "Topic beta holds."),
+            done(&p.task, &[&kept, "cover_b"]),
+        ],
+        5,
+    );
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let extra = r["accepted_locals"][&kept].as_str().unwrap().to_string();
+    let cover = r["accepted_locals"]["cover_b"].as_str().unwrap().to_string();
+    assert_eq!(p.d.accepted_outcomes(&p.s)["RQ1"]["answer_ids"], json!([extra, cover, kept]), "the retained row stays in the answer");
+}
+
+/// A reference the store takes, an "@" and 16..64 hex digits of either case, is read the same way before the done is stored, and
+/// the done names its record once (Codex's DID-01R of c9126019).
+#[test]
+fn another_spelling_of_a_record_is_that_record_once() {
+    let mut p = prepared();
+    let (a, b) = (p.seeds[0].short(), p.seeds[1].short());
+    let upper = a.to_ascii_uppercase();
+    let full = format!("@{}", to_hex(&p.seeds[0].0));
+    assert_ne!(upper, a);
+    let r = p.d.submit(&mut p.s, p.task["task_id"].as_str().unwrap(), "summary", &[done(&p.task, &[&upper, &a, &full, &b])], 4);
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    assert_eq!(p.d.accepted_outcomes(&p.s)["RQ1"]["answer_ids"], json!([a, b]));
+    let record = p.s.records_since(0).into_iter().find(|r| r.kind == sbgk_core::audit::RecordKind::Done).expect("the done is stored");
+    assert_eq!(record.body["answer_ids"], json!([full, format!("@{}", to_hex(&p.seeds[1].0))]), "the stored done names each record once");
+    assert_eq!(record.based_on, vec![p.seeds[0], p.seeds[1]]);
+    p.s.revoke_observation("owner", &p.obs[1]).unwrap();
+    let fallen = read::fallen(&p.s, 0, None, None);
+    let row = fallen["rows"].as_array().unwrap().iter().find(|v| v["id"] == to_hex(&record.id.0)).unwrap();
+    assert_eq!(row["grounds_standing"], json!(1), "{row}");
+}
+
+/// A name the dispatcher cannot read as a record this answer may cite is refused before the done is stored: no done record is
+/// left behind a refusal (DID-01R: the late check refused after the store had taken the done).
+#[test]
+fn a_reference_the_answer_may_not_cite_is_refused_before_the_done_is_stored() {
+    let mut p = prepared();
+    let a = p.seeds[0].short();
+    for name in ["not_a_record", "@0123456789abcdef", "@ab"] {
+        let r = p.d.submit(&mut p.s, p.task["task_id"].as_str().unwrap(), "summary", &[done(&p.task, &[&a, name])], 4);
+        assert_eq!(r["status"], "REPAIR_REQUIRED", "{name}: {r}");
+        assert!(p.s.records_since(0).into_iter().all(|r| r.kind != sbgk_core::audit::RecordKind::Done), "{name}: a done was stored");
+    }
+}
