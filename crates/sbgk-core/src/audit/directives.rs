@@ -250,9 +250,12 @@ struct Answer {
 impl Answer {
     /// Keep the rows that stand and remember the others.
     fn settle<S: AuditStore>(&mut self, s: &S, f: &Flags) {
-        let (kept, fallen): (Vec<RecordId>, Vec<RecordId>) = self.ids.iter().copied().partition(|id| f.support(s, id));
+        // an answer recovered from a journal of 0.2.0 may list a record twice: what is kept and written anew lists each once
+        // (Codex's DID-02 of 3d994d04); the recorded checkpoint stays as it was
+        let (kept, fallen): (Vec<RecordId>, Vec<RecordId>) = distinct_ids(self.ids.clone()).into_iter().partition(|id| f.support(s, id));
         self.ids = kept;
         self.fallen.extend(fallen);
+        self.fallen = distinct_ids(std::mem::take(&mut self.fallen));
     }
 }
 
@@ -364,9 +367,10 @@ fn names_grounds(references: &[Value], grounds: &BTreeSet<String>, names: &BTree
 /// same sentence with another date or on another quote is another claim. A copy would be a new record beside the kept row (a record's
 /// id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them distinct. A line another line rests on
 /// stays. Done here and not in the store: a journal holding such copies must replay.
-/// The records of an answer, each once, in the order first named. The kernel adds a kept row by its short id, and the model may name
-/// the same record again in another spelling: its own local id, or the id of a claim equal to a kept row, which the store gives the
-/// kept row's id (control run K02_1_r2 of 0.2: a repair in several attempts listed 11 of 54 records twice).
+/// The records of an answer, each once, in the order first named. In a repair over several attempts the done line of the last one
+/// may name records the same task stored in an earlier attempt by their local names, while the kernel adds the same records by their
+/// short ids as rows the answer keeps (control run K02_1_r2 of 0.2: 11 of 54 records twice). The store never merges two claims into
+/// one id: an id covers its author, directive and position.
 fn distinct_ids(ids: Vec<RecordId>) -> Vec<RecordId> {
     let mut seen = BTreeSet::new();
     ids.into_iter().filter(|id| seen.insert(*id)).collect()
@@ -1652,7 +1656,7 @@ impl Dispatcher {
             .retained
             .get(q)
             .or_else(|| self.answered.get(q).filter(|a| !Self::answer_holds(s, &f, q, a)))
-            .map(|a| a.ids.iter().copied().filter(|id| f.support(s, id)).collect())
+            .map(|a| distinct_ids(a.ids.iter().copied().filter(|id| f.support(s, id)).collect()))
             .unwrap_or_default();
         // A coverage repair has no accepted done record yet. Its prefix is retained by an ordinary coordinator checkpoint,
         // bound to this question set, so reopening the WAL can issue only the missing part without inventing a terminal answer.
@@ -2984,6 +2988,22 @@ impl Dispatcher {
                 }
             }
         }
+        // a done line names each record once, before anything stores it: the same name twice, or the local name of a record of an
+        // earlier attempt and the short id of that record, is one row; the store takes the done's grounds from these names (Codex's
+        // DID-01 of 3d994d04). A name the dispatcher cannot resolve stays, for the store to judge.
+        let earlier = |n: &str| -> Option<RecordId> {
+            lease
+                .locals
+                .get(n)
+                .copied()
+                .or_else(|| retained.iter().chain(&lease.own).chain(&lease.issued).chain(&lease.own_run).find(|id| id.short() == n).copied())
+        };
+        for v in composed.iter_mut().filter(|v| v["kind"] == "done") {
+            if let Some(ids) = v.get_mut("answer_ids").and_then(|x| x.as_array_mut()) {
+                let (mut names, mut records) = (BTreeSet::new(), BTreeSet::new());
+                ids.retain(|x| x.as_str().is_none_or(|n| names.insert(n.to_string()) && earlier(n).is_none_or(|id| records.insert(id))));
+            }
+        }
         let lines = composed.as_slice();
         // what a reading offered and stored is its own: the claims of its RELATE turn are not lines of the section
         if lease.kind == TaskKind::Extend && !lease.relate {
@@ -3805,8 +3825,8 @@ impl Dispatcher {
             context["question_set_revision"] = json!(self.question_set_revision());
             if let Some(a) = self.retained.get(q) {
                 context["retained_answer"] = json!({"done":crate::hash::to_hex(&a.done.0),"outcome":a.outcome,
-                    "answer_ids":a.ids.iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>(),
-                    "fallen_ids":a.fallen.iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>()});
+                    "answer_ids":distinct_ids(a.ids.clone()).iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>(),
+                    "fallen_ids":distinct_ids(a.fallen.clone()).iter().map(|id|crate::hash::to_hex(&id.0)).collect::<Vec<_>>()});
             }
         }
         let checkpoint = json!({"key": task_checkpoint(key), "from": 0, "to": 0, "context": context});
