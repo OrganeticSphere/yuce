@@ -63,7 +63,12 @@
   are counts of these rows: on the runs of 0.2.0 the table gives, number for number, the report a server recovered on the same
   journal gives. Nothing is stored for the table and no rule of the kernel reads it: it comes from the settings the run pinned,
   the completion of its tasks, its quotes and its withdrawals. A run without a gap pass has the units and no packs; a journal that
-  pins no section size, or one of 0.1, gives no table and says why.
+  pins no section size, or one of 0.1, gives no table and says why. With a filter the rows are filtered; the totals and the counts by
+  status stay those of the whole run.
+* **The coverage of the gap pass is complete only when no second reading is owed.** The report of the pass, and now the table,
+  said "every read unit is quoted or answered empty" while a second reader still owed its answer: `complete` counted the units the
+  budget left and those whose pack or second reading ran out, not those whose second reading was still to come. Both now count
+  them too and name them, `gap_units_second_reading_pending`. A finished run is as before: none of the runs of 0.2.0 owed one.
 * **The index is `yuce-index/2`.** Two more tables, `coverage_units` and `coverage_packs`, hold the coverage for SQL. Like `status`
   they are the state at the last frame indexed and are written again at every update, and `index_hash` covers them. An index of
   `yuce-index/1` is neither brought up to date nor compared with its journal: `sbgk audit-index --rebuild` builds it again.

@@ -203,7 +203,8 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
     }
     let n = |status: &str| count.get(status).copied().unwrap_or(0);
     let (left, pack_failed, second_failed) = (n("left_by_budget"), n("pack_failed"), n("second_reading_failed"));
-    let gap_units = n("empty") + n("second_reading_pending") + second_failed + pack_failed + left;
+    let second_pending = n("second_reading_pending");
+    let gap_units = n("empty") + second_pending + second_failed + pack_failed + left;
     let units_read = rows.len() - n("unread");
     let of = |second: bool, answered: bool| packs.iter().filter(move |p| p.second == second && p.answered == answered);
     let summary = if gap.limit == 0 {
@@ -218,15 +219,9 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
         "second_reader_exhausted": of(true, false).count(),
         "gap_left_by_budget": left, "gap_units_unanswered": pack_failed + second_failed,
         "gap_units_pack_failed": pack_failed, "gap_units_second_reading_failed": second_failed,
-        "complete": left + pack_failed + second_failed == 0,
-        "meaning": if left + pack_failed + second_failed == 0 {
-            "every read unit is quoted or answered empty".to_string()
-        } else {
-            format!(
-                "incomplete coverage: every read unit is quoted or answered empty, except {left} the budget left, {pack_failed} whose pack \
-                 ran out of attempts and {second_failed} whose second reading did not happen"
-            )
-        }})
+        "gap_units_second_reading_pending": second_pending,
+        "complete": super::gaps::coverage_complete(left, pack_failed, second_failed, second_pending),
+        "meaning": super::gaps::coverage_meaning(left, pack_failed, second_failed, second_pending)})
     };
     let packs = packs
         .iter()

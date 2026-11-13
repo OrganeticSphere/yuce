@@ -60,6 +60,26 @@ fn item(line: &str) -> bool {
 ///   the rest;
 /// - in any other text: a paragraph, up to a blank line.
 ///
+/// Whether the gap pass covered every read unit: none left by the budget, none of a pack that ran out of attempts, none whose second
+/// reading did not happen and none whose second reading is still owed (Codex's COV-01 of fe0ac7af: an owed second reading was
+/// counted as covered). The report of the pass and the coverage table say it with these words.
+pub(crate) fn coverage_complete(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize) -> bool {
+    left + pack_failed + second_failed + second_pending == 0
+}
+
+/// What `coverage_complete` means, in words.
+pub(crate) fn coverage_meaning(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize) -> String {
+    if coverage_complete(left, pack_failed, second_failed, second_pending) {
+        "every read unit is quoted or answered empty".to_string()
+    } else {
+        format!(
+            "incomplete coverage: every read unit is quoted or answered empty, except {left} the budget left, {pack_failed} whose pack \
+             ran out of attempts, {second_failed} whose second reading did not happen and {second_pending} whose second reading is \
+             still owed"
+        )
+    }
+}
+
 /// A range covers the unit's lines without the line break after its last line.
 pub(crate) fn units(doc: &str, text: &str) -> Vec<(usize, usize)> {
     let markdown = super::has_headings(doc);
@@ -458,6 +478,8 @@ impl Dispatcher {
         // second reader whose reading did not happen (its attempts ran out or no independent reader was left; Codex recheck of
         // 789b440d, GAP-02)
         let (mut pack_failed, mut second_failed) = (0usize, 0usize);
+        // and units whose second reading is still owed: no final answer yet either (Codex's COV-01 of fe0ac7af)
+        let mut second_pending = 0usize;
         for doc in s.docs() {
             let text = s.doc_text(&doc).unwrap_or_default();
             let secs = sections(&doc, &text, self.cfg.section_bytes);
@@ -473,8 +495,11 @@ impl Dispatcher {
                 let spanning =
                     |packs: &[(String, usize, usize, usize)]| packs.iter().find(|(d, lo, hi, t)| *d == doc && *lo <= a && b <= *hi && *t == tier).cloned();
                 if let Some((d, lo, hi, _)) = spanning(&answered) {
-                    if self.cfg.gap.second_reader_tiers.contains(&tier) && self.unresolved.contains(&pack_key(true, &d, lo, hi)) {
+                    let second = pack_key(true, &d, lo, hi);
+                    if self.cfg.gap.second_reader_tiers.contains(&tier) && self.unresolved.contains(&second) {
                         second_failed += 1;
+                    } else if self.cfg.gap.second_reader_tiers.contains(&tier) && !self.handled.contains(&second) {
+                        second_pending += 1;
                     }
                 } else if spanning(&exhausted).is_some() {
                     pack_failed += 1;
@@ -494,15 +519,9 @@ impl Dispatcher {
         "second_reader_exhausted": count(&self.unresolved, "gap2:"),
         "gap_left_by_budget": left, "gap_units_unanswered": pack_failed + second_failed,
         "gap_units_pack_failed": pack_failed, "gap_units_second_reading_failed": second_failed,
-        "complete": left + pack_failed + second_failed == 0,
-        "meaning": if left + pack_failed + second_failed == 0 {
-            "every read unit is quoted or answered empty".to_string()
-        } else {
-            format!(
-                "incomplete coverage: every read unit is quoted or answered empty, except {left} the budget left, {pack_failed} whose pack \
-                 ran out of attempts and {second_failed} whose second reading did not happen"
-            )
-        }})
+        "gap_units_second_reading_pending": second_pending,
+        "complete": coverage_complete(left, pack_failed, second_failed, second_pending),
+        "meaning": coverage_meaning(left, pack_failed, second_failed, second_pending)})
     }
 
     /// `gap_report` for a check from outside this crate (`examples/coverage_check.rs`): the totals a recovered dispatcher gives
