@@ -113,3 +113,13 @@ The v1.0.1 specification is source Markdown. Its tables of messages are 59 unexp
 
 - The launcher holds each run to $3. The total of the four runs is checked against $6 from their recorded costs, in the report.
 - The date of v0.3.0, 2025-07-31, is the date of the commit its tag names; the tag was moved there a day after the release.
+
+### Run 3 stopped
+
+Run 3 (`A2A_gap12_r2`, gap pass on) stopped in phase 1 after four minutes, at $0.10. One reader's reply to the first section of
+`v1.0.1/docs/whats-new-v1.md` still had 47 broken JSON lines after two repairs, and the runner stops a run on a reply it cannot
+repair, as in the runs of 0.2. The same section needed two repairs in run 1 as well.
+
+The stop came during the reading, before the gap pass. The run has no answers. It is kept as it is and reported, and it does not
+count toward the pair. A run added in its place (`A2A_gap12_r3`, on the same binary, tree and inputs, after run 4) counts as the
+second run of the side with the pass.
