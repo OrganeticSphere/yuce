@@ -262,8 +262,12 @@ withdraws, so 2B was not graded again.
     Run 1's readers stored 10 claims on the changelog. Run 2's gave 13 of their 16 the stance `superseded`.
   - The pass did not cause it: in both runs with the pass the changelog was read before the first pack, and its first reading had
     the prompts of the runs without the pass, apart from the list of records already in the journal.
-  - Replayed from the journal without a model, with `removed`, `renamed` and `deprecated` among those words, the window of run 5
-    holds 12 claims on the changelog instead of 1; run 1's still holds 1.
+* **What 0.2.1 changes.** For a question about what changed the kernel now also takes a `reported` claim that says something was
+  removed or renamed, where its sentence does not negate it (CHANGELOG.md). Replayed from the journals without a model, the window
+  of run 5 holds 11 claims on the changelog instead of 1 and that of run 4 11 instead of 8; run 1's still holds 1, its readers
+  having stored few. The window keeps its size: on the two control runs of 0.2, 3 claims and 1 claim of it change at its edge,
+  among them, in the first, the one claim that `ping` was removed. The runs above were made before the change, and no run with a
+  model has measured it.
 * **The pass itself.** In both runs it used all 12 packs: 123 and 126 units (111 and 116 quoted, 12 and 10 answered empty), 137 and
   138 records added, all standing at the end; the coverage table agrees with its report. The packs go to documents in the order of
   their ids, and here all 12 went to the v0.3.0 specification: on this corpus the pass added material on an older version only.

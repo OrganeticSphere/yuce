@@ -199,6 +199,45 @@ fn evolution_selection_admits_reported_change_markers_without_widening_rq2() {
 }
 
 #[test]
+fn evolution_selection_admits_reported_changelog_words_and_not_plain_reports() {
+    // 0.2.1, step A8 (the A2A corpus): a changelog states a change as "removed" or "renamed", and its readers kept the stance
+    // `reported`; such a claim answers an evolution question, a report of something else does not, nor a removal its sentence negates
+    let lines = [
+        "The redundant final field was removed from TaskStatusUpdateEvent.",
+        "supportsAuthenticatedExtendedCard was renamed to supportsExtendedAgentCard.",
+        "Blocking calls are clarified to return on interrupted states.",
+        "No features have been removed under the lifecycle policy yet.",
+        "The fallback guidance stays in the specification and is not removed.",
+        // a deprecation alone is not taken: on the first control run of 0.2 it made about 50 more claims eligible
+        "The kind field of streaming events is deprecated.",
+    ];
+    let (_w, mut s) = fresh(&[("d", doc("changelog", "2026-05-28", "", &lines.join("\n")))]);
+    let ids: Vec<RecordId> = lines.iter().map(|l| seed(&mut s, "d", l, l)[1]).collect();
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        vec![
+            ResearchQuestion {
+                id: "RQ1".into(),
+                text: "Evolution".into(),
+                about: vec!["stale".into()],
+                relations: vec!["supersedes".into()],
+                ..Default::default()
+            },
+            ResearchQuestion { id: "RQ2".into(), text: "Future work".into(), about: vec!["deferred".into()], ..Default::default() },
+        ],
+    );
+    let rq1 = d.summary_candidates(&s, "RQ1", false).unwrap().1;
+    let rq2 = d.summary_candidates(&s, "RQ2", false).unwrap().1;
+    for (line, id) in lines.iter().zip(&ids).take(2) {
+        assert!(rq1.contains(id), "a change stated as in a changelog answers the evolution question: {line}");
+        assert!(!rq2.contains(id), "and only that question: {line}");
+    }
+    for (line, id) in lines.iter().zip(&ids).skip(2) {
+        assert!(!rq1.contains(id), "no change, a negated one or a deprecation alone stays out: {line}");
+    }
+}
+
+#[test]
 fn a_report_title_prefix_is_not_an_explicit_scope_bridge() {
     let old = doc("old-report", "2026-07-29", "", "Exact-head validation is pending.").replace("report_id = ", "title = \"Release gate\"\nreport_id = ");
     let new = doc("new-report", "2026-08-10", "\"old-report\"", "Exact-head validation is required. Release gatekeeper worktree is pending.");
