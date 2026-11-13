@@ -10,7 +10,7 @@
   "clarified": "wording or guidance only, no normative change of behaviour",
   "governance": "process or governance, not the protocol"
  },
- "related_earlier": "the earlier events whose mechanism this event removes, replaces, deprecates or changes, in whole or in part. A catalog of relations between changelog items, NOT an oracle of stale answers: a link does not mean that every earlier statement about that mechanism became false (see mcp-spec-2026-07-28-stale-facts.json)",
+ "related_earlier": "the earlier events whose mechanism this event removes, replaces, deprecates or changes, in whole or in part. A clarified event has no mechanism of its own and is never the earlier end of a link: a later event that ends what a clarification says is linked to the event whose mechanism the clarification clarifies. A catalog of relations between changelog items, NOT an oracle of stale answers: a link does not mean that every earlier statement about that mechanism became false (see mcp-spec-2026-07-28-stale-facts.json)",
  "procedure": {
   "draft": "claude-opus-5-5 (author of the corpus selection)",
   "blind": "gemini-4-argon-high via Antigravity, labeled all items without seeing the draft",
@@ -19,7 +19,8 @@
   "notes": [
    "the blind call ended with Antigravity status ERROR after an internal error_message step; its final agent_response held the complete JSON answer, which was used",
    "Gemini 4 Argon's weekly limit ran out before the adjudication step, so Claude Fable 5.1 adjudicated",
-   "2026-07-28/major/2 corrected after Codex review MCP-02: the MCP-Protocol-Version header stays required, so the event does not end 2025-06-18/major/8"
+   "2026-07-28/major/2 corrected after Codex review MCP-02: the MCP-Protocol-Version header stays required, so the event does not end 2025-06-18/major/8",
+   "2026-11-13: the links of 2026-07-28/major/4 and 2026-07-28/major/9 to the clarification 2025-11-25/minor/7 were checked again by the same procedure (draft claude-opus-5-5, blind gemini-4-argon-high via Antigravity, adjudication claude-fable-5-2); with the decisions of 2026-10-29 the two procedures split three to three, so the rule on clarified events was written into related_earlier and no link changed"
   ]
  },
  "events": [

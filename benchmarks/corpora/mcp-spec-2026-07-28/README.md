@@ -75,6 +75,9 @@ Both files sit in `../gold/`, outside this folder, so a run never selects them.
   3. On the 24 items where the two differed, Claude Fable 5.1 decided between the unnamed sides, with a quote from the
      changelogs.
   4. One link was corrected after review: the `MCP-Protocol-Version` header stays required in 2026-07-28.
+  5. On 2026-11-13 the links of two later items to a clarification were checked again by the same procedure, with Claude
+     Fable 5.2 deciding. The two procedures split three to three, so the rule was written into the catalog: a clarified event
+     has no mechanism of its own and is never the earlier end of a link. No link changed.
 
 `benchmarks/test_mcp_corpus.py` checks:
 - the bytes of every file against the manifest;
