@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 fn dispatcher() -> Dispatcher {
-    Dispatcher::new(
-        DispatchConfig::default(),
-        vec![ResearchQuestion { id: "RQ1".into(), text: "What holds about topic?".into(), about: vec!["topic".into()], ..Default::default() }],
-    )
+    dispatcher_with(DispatchConfig::default())
+}
+fn dispatcher_with(cfg: DispatchConfig) -> Dispatcher {
+    Dispatcher::new(cfg, vec![ResearchQuestion { id: "RQ1".into(), text: "What holds about topic?".into(), about: vec!["topic".into()], ..Default::default() }])
 }
 fn claim(id: &str, on: &str, text: &str) -> Value {
     json!({"kind":"claim","local_id":id,"text":text,"subject":"topic","stance":"reported","based_on":[on]})
@@ -47,6 +47,9 @@ struct Prepared {
     task: Value,
 }
 fn prepared() -> Prepared {
+    prepared_with(DispatchConfig::default())
+}
+fn prepared_with(cfg: DispatchConfig) -> Prepared {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let wal = std::env::temp_dir().join(format!("distinct_answer_ids_{}_{nonce}_{}.wal", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let docs = vec![("a".into(), b"Topic alpha holds.\n".to_vec()), ("b".into(), b"Topic beta holds.\n".to_vec())];
@@ -63,7 +66,7 @@ fn prepared() -> Prepared {
         obs.push(r.accepted[0]);
         seeds.push(r.accepted[1]);
     }
-    let mut d = dispatcher();
+    let mut d = dispatcher_with(cfg);
     for n in 0..2 {
         let t = d.acquire(&s, "reader", true, n);
         assert_eq!(t["kind"], "EXTEND", "{t}");
@@ -278,4 +281,55 @@ fn a_reference_the_answer_may_not_cite_is_refused_before_the_done_is_stored() {
         assert_eq!(r["status"], "REPAIR_REQUIRED", "{name}: {r}");
         assert!(p.s.records_since(0).into_iter().all(|r| r.kind != sbgk_core::audit::RecordKind::Done), "{name}: a done was stored");
     }
+}
+
+/// A kept row whose short and full names are both local names of other records of the attempt is added under another free prefix
+/// of its id, and stays in the answer (Codex's DID-04 of 11c38def, its test kept as it was written).
+#[test]
+fn a_retained_row_survives_when_both_its_short_and_full_names_are_local_names() {
+    let mut p = prepared();
+    let tid = p.task["task_id"].as_str().unwrap().to_string();
+    let first = p.d.submit(&mut p.s, &tid, "summary", &[claim("kept", &p.obs[0].short(), "Topic alpha holds."), done(&p.task, &["kept"])], 4);
+    assert_eq!(first["status"], "REPAIR_REQUIRED", "{first}");
+    let kept = first["accepted_locals"]["kept"].as_str().unwrap().to_string();
+    let kept_id = p.s.records_since(0).into_iter().find(|r| r.id.short() == kept).unwrap().id;
+    let full = format!("@{}", to_hex(&kept_id.0));
+    let result = p.d.submit(
+        &mut p.s,
+        &tid,
+        "summary",
+        &[
+            claim(&kept, &p.obs[0].short(), "Topic alpha is additionally qualified by the page."),
+            claim(&full, &p.obs[0].short(), "Topic alpha is also reported by the page."),
+            claim("cover_b", &p.obs[1].short(), "Topic beta holds."),
+            done(&p.task, &[&kept, &full, "cover_b"]),
+        ],
+        5,
+    );
+    assert_eq!(result["status"], "COMMITTED", "{result}");
+    let got = p.d.accepted_outcomes(&p.s)["RQ1"]["answer_ids"].clone();
+    assert!(got.as_array().unwrap().contains(&json!(kept)), "DID-04: the kept row left the answer: {got}");
+    assert_eq!(got.as_array().unwrap().len(), 4, "{got}");
+}
+
+/// When every name of a kept row is a local name of the answer, the done line is refused before it is stored: the kernel does not
+/// claim a row it could not name (DID-04).
+#[test]
+fn a_kept_row_with_no_free_name_refuses_the_done_before_it_is_stored() {
+    let mut p = prepared_with(DispatchConfig { summary_lines: 200, ..DispatchConfig::default() });
+    let task = p.task.clone();
+    let tid = task["task_id"].as_str().unwrap().to_string();
+    let first = p.d.submit(&mut p.s, &tid, "summary", &[claim("kept", &p.obs[0].short(), "Topic alpha holds."), done(&task, &["kept"])], 4);
+    assert_eq!(first["status"], "REPAIR_REQUIRED", "{first}");
+    let kept = first["accepted_locals"]["kept"].as_str().unwrap().to_string();
+    let hex = to_hex(&p.s.records_since(0).into_iter().find(|r| r.id.short() == kept).unwrap().id.0);
+    let names: Vec<String> = (16..=64).map(|n| format!("@{}", &hex[..n])).chain((16..=64).map(|n| format!("@{}", hex[..n].to_ascii_uppercase()))).collect();
+    let mut lines: Vec<Value> =
+        names.iter().enumerate().map(|(i, n)| claim(n, &p.obs[0].short(), &format!("Topic alpha is reported on the page, reading {i}."))).collect();
+    lines.push(claim("cover_b", &p.obs[1].short(), "Topic beta holds."));
+    lines.push(done(&task, &["cover_b"]));
+    let r = p.d.submit(&mut p.s, &tid, "summary", &lines, 5);
+    assert_eq!(r["status"], "REPAIR_REQUIRED", "{r}");
+    assert!(r["refused"].as_array().unwrap().iter().any(|x| x["error"]["expected_by_kernel"]["rule"] == "kept_rows_named"), "{r}");
+    assert!(p.s.records_since(0).into_iter().all(|r| r.kind != sbgk_core::audit::RecordKind::Done), "no done record is stored");
 }

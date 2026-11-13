@@ -386,17 +386,18 @@ fn cite<'a>(name: &str, locals: &BTreeMap<String, RecordId>, citable: impl IntoI
     one.next().filter(|_| one.next().is_none())
 }
 
-/// The name under which the kernel adds a record to an answer: its short id, or its full id where the short id is a local name of
-/// the answer or of its task, which the store would read first.
-fn unshadowed(id: &RecordId, taken: impl Fn(&str) -> bool) -> String {
-    let short = id.short();
-    if taken(&short) {
-        let full = format!("@{}", crate::hash::to_hex(&id.0));
-        if !taken(&full) {
-            return full;
-        }
-    }
-    short
+/// The name under which the kernel adds a record to an answer: the first "@" prefix of its id, 16..64 hex digits in lower case and
+/// then in upper case (its short id first), that no local name of the answer or of its task takes, since the store reads those first,
+/// and that names this record alone among the records the answer may cite. `None` when every such name is taken: the done line is
+/// then refused before it is stored (Codex's DID-04 of 11c38def: with its short and full names both local names, the short name
+/// went in and named the other record).
+fn unshadowed(id: &RecordId, taken: impl Fn(&str) -> bool, citable: &[RecordId]) -> Option<String> {
+    let hex = crate::hash::to_hex(&id.0);
+    let none = BTreeMap::new();
+    (16..=64)
+        .map(|n| format!("@{}", &hex[..n]))
+        .chain((16..=64).map(|n| format!("@{}", hex[..n].to_ascii_uppercase())))
+        .find(|name| !taken(name) && cite(name, &none, citable) == Some(*id))
 }
 
 /// The claim lines that only repeat a row the answer keeps: the same statement on the same grounds. Words alone do not make a copy: the
@@ -3010,9 +3011,8 @@ impl Dispatcher {
                 if let Some(ids) = v.get_mut("answer_ids").and_then(|x| x.as_array_mut()) {
                     ids.retain(|x| !x.as_str().is_some_and(|n| copies.contains(n)));
                     let named: BTreeSet<RecordId> = ids.iter().filter_map(|x| x.as_str()).filter_map(names_kept).collect();
-                    for id in retained.iter().filter(|id| !named.contains(id)) {
-                        ids.push(json!(unshadowed(id, taken)));
-                    }
+                    // a kept row with no free name is not added: the check before the done is stored refuses the answer
+                    ids.extend(retained.iter().filter(|id| !named.contains(id)).filter_map(|id| unshadowed(id, taken, &shown)).map(Value::from));
                     if v["outcome"] == "unknown" {
                         v["outcome"] = json!("answered");
                     }
@@ -3221,13 +3221,27 @@ impl Dispatcher {
                 // An explicit unknown with no assertions is still an honest terminal outcome of the existing contract.
                 // Coverage guards delivered assertions; it must not force the agent to invent them to fill its window.
                 let bad = named.iter().find(|(_, id)| id.is_none()).map(|(v, _)| v);
-                let missing = if bad.is_none() && (!ids.is_empty() || outcome.as_deref() != Some("unknown")) && lease.repair_lines.is_none() {
+                // every row the kernel keeps for the answer is in it, or the done is not stored: the composition found no free name
+                // for it (Codex's DID-04 of 11c38def)
+                let lost = retained.iter().find(|r| !ids.contains(r));
+                let missing = if bad.is_none() && lost.is_none() && (!ids.is_empty() || outcome.as_deref() != Some("unknown")) && lease.repair_lines.is_none() {
                     Self::missing_summary_reports(s, &lease.issued, &ids)
                 } else {
                     Default::default()
                 };
                 if let Some(bad) = bad {
                     let e = KernelError::new(Code::UnknownLocalId, format!("{bad} in answer_ids is not a record of this answer")).field("answer_ids");
+                    items.refused.push((*d, e.to_json()));
+                } else if let Some(lost) = lost {
+                    let e = KernelError::new(
+                        Code::BadField,
+                        format!(
+                            "the answer keeps the row {} and every name of it is a local id of this task: give the new lines other local ids",
+                            lost.short()
+                        ),
+                    )
+                    .field("local_id")
+                    .expected(json!({"rule": "kept_rows_named", "kept_row": lost.short()}));
                     items.refused.push((*d, e.to_json()));
                 } else if !missing.is_empty() {
                     let e = KernelError::new(
