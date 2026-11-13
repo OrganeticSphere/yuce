@@ -52,7 +52,7 @@
   earlier beside one of this version, in either order. A reading command reads up to the last complete entry of that moment and
   says so (`live`, with `frames_read`): an entry in flight is no torn tail, while the end of a stopped journal that is no complete
   entry is `TORN_TAIL` as before. Beside a server of 0.2.0 or earlier, whose lock still stops reading on Windows, a reading command
-  says so in words (exit 2). `audit-index` and `audit-proof` take all they use from one read of the journal. The format of the
+  says so in words (exit 2). A quittance and the rows of an index are each built from one read of the journal. The format of the
   journal, the rules of the kernel and the replay are unchanged.
 * **A coverage table, drawn from the journal: what each unit of the documents came to.** The gap pass reported totals only.
   `sbgk audit-read coverage --wal <run.wal> [--doc-id <id>] [--unit-status <status>]`, and `audit_coverage` of the live server for
