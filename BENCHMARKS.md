@@ -230,6 +230,61 @@ pass the answers of both runs, of the K run of 0.1.7 and of T and L of run 2; ea
   receipt by a seal and the close: check it against `arm_c.phase3.receipt` without `--at-end`, or against the signed checkpoints in
   the archive's `signed/` folder with the verifier key in `signed/trusted.txt`.
 
+### The gap pass on a second corpus (0.2.1), grader Gemini 4 Argon
+
+As `benchmarks/PREREGISTRATION_0.2.1_A2A.md` fixed it before any run, with its amendment written before any answer was read: the
+A2A specification of v0.2.5, v0.3.0 and v1.0.1 with the v1.0.1 changelog and the summary of v1 (five files, 380,731 bytes, 2,562
+read units), side K alone, three readers on `deepseek-flash`, two runs with the gap pass (at most 12 packs of 8 units) and two
+without, one after the other, on one binary and one tree. Run 3 stopped during the reading, before the pass, on a reply that two
+repairs did not mend, with no answers; it is kept and does not count, and run 5, made in its place, counts as the second run with
+the pass. The oracle holds 14 facts that ended by v1.0.1 and 2 controls that still hold. One grader, Gemini 4 Argon at high effort
+through the Antigravity CLI, graded the answers blind, one run per call, in one label order.
+
+| Stage | With the pass: run 1 | Run 5 | Without: run 2 | Run 4 |
+|---|---|---|---|---|
+| 1: facts stated current / statements correct | 8 / 52.5% | 6 / 53.9% | 2 / 76.2% | 1 / 86.2% |
+| 2A: facts stated current / statements correct | 7 / 66.7% | 6 / 69.7% | 2 / 82.5% | 1 / 80.7% |
+
+No run stated a control as ended. At 2B every run's answers are the bytes of its 2A answers, because no answer rested on the line 2B
+withdraws, so 2B was not graded again.
+
+* **By the pre-registered rule this counts against the gap pass:** both runs with it stated more ended facts as current than both
+  runs without, at stage 1 and at 2A.
+* **What the journals say of the cause.** They point away from the pass, to the readers of one document and a gap in the kernel's
+  choice of claims; with two runs a side the rule cannot tell these apart.
+  - Of the 13 such errors at 2A on the side with the pass, 2 rest on records the pass added (run 5 gives the v0.3.0 name of the
+    extended card method and the `/v1` path without a version); 11 rest on records of the reading, which both sides do alike.
+  - The removals are stated in the changelog. The window of claims the kernel gives the summary of the first question (which
+    conclusions were superseded, made stale or qualified) held 1 claim on the changelog in each run with the pass, and 14 and 8 in
+    the runs without. It took every relevant claim on the changelog the journal had. Run 5's readers recorded 62 claims on it, 60
+    with the stance `reported`, 12 of these saying that something was removed, renamed or deprecated; for this question the kernel
+    picks a `reported` claim only by its words (`replaced`, `superseded`, `no longer` and a few more), and these are not among them.
+    Run 1's readers stored 10 claims on the changelog. Run 2's gave 13 of their 16 the stance `superseded`.
+  - The pass did not cause it: in both runs with the pass the changelog was read before the first pack, and its first reading had
+    the prompts of the runs without the pass, apart from the list of records already in the journal.
+  - Replayed from the journal without a model, with `removed`, `renamed` and `deprecated` among those words, the window of run 5
+    holds 12 claims on the changelog instead of 1; run 1's still holds 1.
+* **The pass itself.** In both runs it used all 12 packs: 123 and 126 units (111 and 116 quoted, 12 and 10 answered empty), 137 and
+  138 records added, all standing at the end; the coverage table agrees with its report. The packs go to documents in the order of
+  their ids, and here all 12 went to the v0.3.0 specification: on this corpus the pass added material on an older version only.
+* **Coverage.** Units quoted: 886 and 909 of 2,562 with the pass, 850 and 894 without; the rest were left by the reading budget,
+  apart from the units answered empty and 2 withdrawn.
+* **Withdrawals.** 2A withdraws a line of the summary of v1 that the changelog also states. Answers rested on it in runs 1 and 4,
+  and both kept the withdrawal (`ok`). Run 5 quoted it with no answer resting on it, and run 2 never quoted it: not hit. 2B hit no
+  run: run 5 quoted its line, and no answer rested on it.
+* **The grading.** The answers went to the grader as files in the folder of the call, and a grade counts only if the call's own log
+  shows the file of answers read to its end; all 8 were. The whole packet inline was cut by the CLI at 187 KB, and four runs in one
+  call thought past the output limit with no grade; both attempts are kept. Each call of stage 1 thought to its output limit as
+  well and gave the grade in the continuation the CLI asked for, and the CLI marks such a call `ERROR` though the grade is whole;
+  one of them ended with no grade and was made again, and the empty call is kept.
+  Runs 2 and 5 gave the same bytes at stages 1 and 2A, so each was graded twice: the facts stated current were the same both times
+  (2 and 6), the share of correct statements was not (76.2% and 82.5%, 53.9% and 69.7%).
+* **Cost.** With the pass 434 and 492 calls, 17.6 and 17.7 minutes, $0.56 and $0.58; without it 455 and 446 calls, 16.0 and 16.5
+  minutes, $0.55 and $0.56; no call failed. With the stopped run ($0.10), $2.35 of the $6 cap.
+* **The source of the files.** The manifest of these runs names one commit of the upstream repository for all five files, at paths
+  that commit does not hold. The bytes are the upstream bytes and both sides read them under the same names, but the journals keep
+  that wrong source in the identity of each document. The manifest is corrected for the release.
+
 ### How far these numbers go
 
 The tables are what was measured. What they do not show:
