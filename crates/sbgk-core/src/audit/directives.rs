@@ -3237,10 +3237,7 @@ impl Dispatcher {
                 } else if let Some(lost) = lost {
                     let e = KernelError::new(
                         Code::BadField,
-                        format!(
-                            "the answer keeps the row {} and no free name was found for it: give the new lines other local ids",
-                            lost.short()
-                        ),
+                        format!("the answer keeps the row {} and no free name was found for it: give the new lines other local ids", lost.short()),
                     )
                     .field("local_id")
                     .expected(json!({"rule": "kept_rows_named", "kept_row": lost.short()}));
