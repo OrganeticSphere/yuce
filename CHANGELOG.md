@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* **`scripts/verify_published_runs.py` checks the runs of 0.2 too.** A journal of 0.2 goes on past its last receipt, as the
+  server seals and closes the run after the last stage: it is checked against each receipt as a prefix, and then whole. The
+  four kernel runs of release v0.2.0 are in its list.
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.
