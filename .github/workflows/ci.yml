@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   check:
+    # Outside this repository (a fork, a mirror) CI runs only by hand, so that it spends no minutes it was not asked for.
+    if: github.repository == 'OrganeticSphere/yuce' || github.event_name == 'workflow_dispatch'
     name: ${{ matrix.os }}
     strategy:
       fail-fast: false
