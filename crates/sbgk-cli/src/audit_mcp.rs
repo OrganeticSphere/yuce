@@ -34,7 +34,7 @@
 use super::mcp::{self, LineServer};
 use super::{fail, Args};
 use sbgk_core::audit::builder::{Builder, BuilderConfig, LINK_RELATIONS};
-use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, GapProfile, ResearchQuestion, TaskKind};
+use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, GapProfile, ResearchQuestion, TaskKind, UNIT_STATUSES};
 use sbgk_core::audit::onto::AuditOntology;
 use sbgk_core::audit::sign::{self, NoteSigner, NoteVerifier};
 use sbgk_core::audit::state::{AuditState, GenesisSpec};
@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 const PROTOCOL: &str = "2025-06-18";
 /// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, and stay open after the
 /// run is closed.
-const READ_TOOLS: [&str; 4] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen"];
+const READ_TOOLS: [&str; 5] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage"];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
 /// Longest `max_wait_ms` an `audit_acquire` can ask for.
@@ -97,6 +97,7 @@ impl Role {
                 "audit_active_claims",
                 "audit_diff",
                 "audit_fallen",
+                "audit_coverage",
                 "audit_revoke",
                 "audit_withdraw_text",
                 "audit_seal",
@@ -521,6 +522,15 @@ fn tool_defs() -> Vec<Value> {
             schema(json!({"since": {"type": "integer"}, "limit": {"type": "integer"}}), &[]),
         ),
         t(
+            "audit_coverage",
+            "What each structural unit of the documents (a list item, a paragraph, a table row) came to: quoted and by which records, answered empty and by which pack of the gap pass, left by the budget, without an answer, under withdrawn text or not read yet; with the packs and the totals of the gap pass, which are counts of these rows.",
+            schema(
+                json!({"doc_id": s("only the units of this document"), "unit_status": s("only the units of this status, such as left_by_budget"),
+                        "limit": {"type": "integer"}}),
+                &[],
+            ),
+        ),
+        t(
             "audit_revoke",
             "Withdraw an observation (its source no longer holds): its text closes in that document, every stored quote overlapping it goes with it, new ones are refused, and the answers resting on them are reopened.",
             schema(json!({"record": s("full id of an observe record")}), &["record"]),
@@ -833,6 +843,10 @@ impl AuditServer {
                 Err(e) => e,
             },
             "audit_active_claims" => read::active_claims(&g.state, args.get("doc_id").and_then(Value::as_str), limit_arg(args)),
+            "audit_coverage" => match args.get("unit_status").and_then(Value::as_str) {
+                Some(status) if !UNIT_STATUSES.contains(&status) => bad_arg(format!("'unit_status' is one of {}", UNIT_STATUSES.join(", "))),
+                status => read::coverage(&g.state, g.state.entries().unwrap_or(0), args.get("doc_id").and_then(Value::as_str), status, limit_arg(args)),
+            },
             "audit_diff" => {
                 let now = g.state.entries().unwrap_or(0);
                 match points_arg(args, now) {
@@ -2044,11 +2058,15 @@ pub fn cmd_audit_proof_verify(a: &Args) {
 /// `sbgk audit-read <tool> --wal <run.wal>`: the reading tools of 0.2 over a recorded journal (SPEC_V02_STEP3). The journal is
 /// checked first, as `audit-verify` checks it, and a refused journal is not read (exit 1). The tools answer as the live server's
 /// do for the same state: `status`, `dependents` (`--record`, or `--doc-id` with an optional `--start`/`--end`), `active-claims`
-/// (`--doc-id`), `diff` (`--from`, `--to`), `record` (`--record`) and `fallen` (`--since`), each with `--limit`.
+/// (`--doc-id`), `diff` (`--from`, `--to`), `record` (`--record`), `fallen` (`--since`) and `coverage` (`--doc-id`, `--unit-status`),
+/// each with `--limit`.
 pub fn cmd_audit_read(a: &Args) {
-    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record or fallen");
-    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen") {
-        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record or fallen"));
+    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record, fallen or coverage");
+    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen" | "coverage") {
+        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record, fallen or coverage"));
+    }
+    if let Some(status) = a.get("unit-status").filter(|st| !UNIT_STATUSES.contains(st)) {
+        fail(&format!("--unit-status '{status}': one of {}", UNIT_STATUSES.join(", ")));
     }
     let wal = a.req("wal");
     let number = |k: &str| a.get(k).map(|v| v.parse::<usize>().unwrap_or_else(|_| fail(&format!("--{k}: an integer, not '{v}'"))));
@@ -2103,6 +2121,7 @@ pub fn cmd_audit_read(a: &Args) {
             Ok(id) => record_json(&state, &id),
             Err(e) => fail(&e.to_string()),
         },
+        "coverage" => read::coverage(&state, entries, a.get("doc-id"), a.get("unit-status"), limit),
         _ => read::fallen(&state, entries, since.map(snapshot), limit),
     };
     if journal.live {

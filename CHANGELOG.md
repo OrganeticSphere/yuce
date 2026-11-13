@@ -54,6 +54,19 @@
   entry is `TORN_TAIL` as before. Beside a server of 0.2.0 or earlier, whose lock still stops reading on Windows, a reading command
   says so in words (exit 2). `audit-index` and `audit-proof` take all they use from one read of the journal. The format of the
   journal, the rules of the kernel and the replay are unchanged.
+* **A coverage table, drawn from the journal: what each unit of the documents came to.** The gap pass reported totals only.
+  `sbgk audit-read coverage --wal <run.wal> [--doc-id <id>] [--unit-status <status>]`, and `audit_coverage` of the live server for
+  the owner, give a row for every structural unit of every document (a list item, a paragraph, a table row, by its bytes) with what
+  it came to: `quoted`, and by which records; `empty`, answered so by a pack of the gap pass, which the row names;
+  `left_by_budget`; `pack_failed`, `second_reading_failed` or `second_reading_pending`; `withdrawn`, under withdrawn text; or
+  `unread`. Every pack of the pass has a row too: what it recorded, who answered, or why it was given up. The totals of the pass
+  are counts of these rows: on the runs of 0.2.0 the table gives, number for number, the report a server recovered on the same
+  journal gives. Nothing is stored for the table and no rule of the kernel reads it: it comes from the settings the run pinned,
+  the completion of its tasks, its quotes and its withdrawals. A run without a gap pass has the units and no packs; a journal that
+  pins no section size, or one of 0.1, gives no table and says why.
+* **The index is `yuce-index/2`.** Two more tables, `coverage_units` and `coverage_packs`, hold the coverage for SQL. Like `status`
+  they are the state at the last frame indexed and are written again at every update, and `index_hash` covers them. An index of
+  `yuce-index/1` is neither brought up to date nor compared with its journal: `sbgk audit-index --rebuild` builds it again.
 
 ## 0.2.0 (2026-11-12)
 

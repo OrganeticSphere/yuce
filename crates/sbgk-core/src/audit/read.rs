@@ -549,6 +549,36 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
            "provable": PROVABLE, "heuristic": HEURISTIC, "not_erased": NOT_ERASED})
 }
 
+/// `coverage`: what each structural unit of the documents came to and each pack of the gap pass, at the state `s` of `at` frames
+/// (`directives::coverage`): the totals, the units of `doc` with `status` (all of them without the filters) and the packs. A
+/// journal that gives no coverage says why and has no rows.
+pub fn coverage(s: &AuditState, at: usize, doc: Option<&str>, status: Option<&str>, limit: Option<usize>) -> Value {
+    use super::directives::{by_status, PACK_COLUMNS, UNIT_COLUMNS};
+    let table = super::directives::coverage(s);
+    let limit = limit_of(limit, DEFAULT_LIMIT);
+    let object = |columns: &[&str], row: &[Value]| -> Value {
+        let mut out = serde_json::Map::new();
+        for (name, value) in columns.iter().zip(row) {
+            // the ids of the quotes are a list here; the index keeps them as one text
+            let value = if *name == "quoted_by" { value.as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or(Value::Null) } else { value.clone() };
+            out.insert(name.to_string(), value);
+        }
+        Value::Object(out)
+    };
+    let units: Vec<&Vec<Value>> = table.units.iter().filter(|r| doc.is_none_or(|d| r[0] == d)).filter(|r| status.is_none_or(|st| r[5] == st)).collect();
+    let packs: Vec<&Vec<Value>> = table.packs.iter().filter(|r| doc.is_none_or(|d| r[1] == d)).collect();
+    let mut out = json!({"status": "COVERAGE", "at": at, "doc_id": doc, "unit_status": status, "available": table.unavailable.is_none(),
+        "section_bytes": table.section_bytes, "gap_pass": table.gap_pass, "summary": table.summary, "by_status": by_status(&table.units),
+        "units": units.len(), "rows": units.iter().take(limit).map(|r| object(&UNIT_COLUMNS, r)).collect::<Vec<_>>(),
+        "truncated": units.len() > limit,
+        "packs": packs.iter().take(limit).map(|r| object(&PACK_COLUMNS, r)).collect::<Vec<_>>(), "packs_truncated": packs.len() > limit,
+        "meaning": "a unit is a list item, a paragraph or a table row of a document, by its bytes; the totals are counts of these rows, drawn from the journal alone"});
+    if let Some(reason) = table.unavailable {
+        out["reason"] = json!(reason);
+    }
+    out
+}
+
 /// The snapshots of a journal at the points `at`, with the state at its end and what the check read: one verified replay of the
 /// file, which is never written (`sbgk audit-read`, and a live server's `diff` and report `since`). A point past the end, or
 /// before the genesis, has no snapshot.

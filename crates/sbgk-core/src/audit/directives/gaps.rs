@@ -505,6 +505,13 @@ impl Dispatcher {
         }})
     }
 
+    /// `gap_report` for a check from outside this crate (`examples/coverage_check.rs`): the totals a recovered dispatcher gives
+    /// for a recorded run, to hold the coverage table against.
+    #[doc(hidden)]
+    pub fn gap_pass_report<S: AuditStore>(&self, s: &S) -> Value {
+        self.gap_report(s)
+    }
+
     /// The task of a gap pack: its target units, numbered, and read-only context (the section's heading, the parent item of a
     /// nested unit) that is never quoted. The scope is the targets alone, so a quote from the context is refused.
     pub(super) fn gap_prompt<S: AuditStore>(&self, s: &S, key: &str) -> (String, Scope, Vec<RecordId>) {
@@ -715,6 +722,69 @@ Ni 2010 | China | 2
         (i, i + q.len())
     }
 
+    /// The report of the pass, held against the coverage table drawn from the store alone: the totals of the table are the report.
+    fn report(d: &Dispatcher, s: &MemStore) -> Value {
+        let r = d.gap_report(s);
+        let table = super::super::coverage::coverage_with(s, d.cfg.section_bytes, &d.cfg.gap);
+        assert_eq!(table.summary, r, "the totals of the coverage table are not the report");
+        r
+    }
+
+    /// The units of LOG with what the coverage table says each came to, and its packs.
+    fn table(d: &Dispatcher, s: &MemStore) -> (Vec<(String, String)>, Vec<Vec<Value>>) {
+        let table = super::super::coverage::coverage_with(s, d.cfg.section_bytes, &d.cfg.gap);
+        let at = |v: &Value| v.as_u64().unwrap() as usize;
+        (table.units.iter().map(|r| (LOG[at(&r[1])..at(&r[2])].to_string(), r[5].as_str().unwrap().to_string())).collect(), table.packs)
+    }
+
+    fn with_status<'a>(units: &'a [(String, String)], status: &str) -> Vec<&'a str> {
+        units.iter().filter(|(_, st)| st == status).map(|(text, _)| text.as_str()).collect()
+    }
+
+    #[test]
+    fn the_coverage_table_says_what_each_unit_came_to_and_its_totals_are_the_report() {
+        let mut s = MemStore::new(&[("log.md", LOG)], &[]);
+        let mut d = dispatcher(GapProfile { limit: 1, units_per_task: 8, second_reader_tiers: vec![0], ..Default::default() });
+        // before any reading no unit is read
+        let (units, packs) = table(&d, &s);
+        assert_eq!((units.len(), with_status(&units, "unread").len(), packs.len()), (7, 7, 0), "{units:?}");
+        // read, one unit quoted: the others are gaps no pack has asked about yet
+        let t = read_all(&mut d, &mut s, &["3. Clarify the error text."]);
+        let (units, _) = table(&d, &s);
+        assert_eq!(with_status(&units, "quoted"), ["3. Clarify the error text."]);
+        assert_eq!(with_status(&units, "left_by_budget").len(), 6, "{units:?}");
+        report(&d, &s);
+        // the first reader quotes one unit of the pack: the rest wait for the second reader
+        let key = t["key"].as_str().unwrap().to_string();
+        let p = t["local_id_prefix"].as_str().unwrap().to_string();
+        assert_eq!(d.submit(&mut s, t["task_id"].as_str().unwrap(), "w1", &[observe(&p, 1, "1. Remove batching support.")], 0)["status"], "COMMITTED");
+        let (units, packs) = table(&d, &s);
+        assert_eq!(with_status(&units, "quoted"), ["1. Remove batching support.", "3. Clarify the error text."]);
+        assert_eq!(with_status(&units, "second_reading_pending").len(), 5, "{units:?}");
+        assert_eq!(packs.len(), 1);
+        report(&d, &s);
+        // the second reader quotes one more and leaves the others: an explicit empty answer of two readers
+        let second = d.acquire(&s, "w2", true, 0);
+        let p2 = second["local_id_prefix"].as_str().unwrap().to_string();
+        assert_eq!(d.submit(&mut s, second["task_id"].as_str().unwrap(), "w2", &[observe(&p2, 1, "5. Add icons.")], 0)["status"], "COMMITTED");
+        let (units, packs) = table(&d, &s);
+        assert_eq!(with_status(&units, "quoted"), ["1. Remove batching support.", "3. Clarify the error text.", "5. Add icons."]);
+        assert_eq!(with_status(&units, "empty"), ["2. Add tool titles.", "4. Remove sessions.", "A client MUST retry.", "Another plain note."]);
+        // every row of a unit the pack spans names it, and its second reading; a quoted unit names its quote
+        let rows = super::super::coverage::coverage_with(&s, d.cfg.section_bytes, &d.cfg.gap).units;
+        let second_key = key.replacen("gap:", "gap2:", 1);
+        assert!(rows.iter().all(|r| r[7] == json!(key) && r[8] == json!(second_key)), "{rows:?}");
+        let quoted_by: Vec<Value> = serde_json::from_str(rows[0][6].as_str().unwrap()).unwrap();
+        assert_eq!(quoted_by.len(), 1, "{rows:?}");
+        assert_eq!(rows[1][6], json!("[]"));
+        // the packs: the first reader's and the second's, each with what it recorded, in the order they closed
+        let pack = |n: usize| (packs[n][0].clone(), packs[n][4].clone(), packs[n][6].clone(), packs[n][7].clone(), packs[n][8].clone(), packs[n][9].clone());
+        assert_eq!(pack(0), (json!(key), json!(0), json!("answered"), json!(1), json!(0), json!("w1")));
+        assert_eq!(pack(1), (json!(second_key), json!(1), json!("answered"), json!(1), json!(1), json!("w2")));
+        let r = report(&d, &s);
+        assert_eq!((&r["units_quoted"], &r["gap_units"], &r["complete"]), (&json!(3), &json!(4), &json!(true)), "{r}");
+    }
+
     #[test]
     fn packs_follow_the_tiers_of_the_profile_within_the_budget_and_carry_their_targets_only() {
         let profile =
@@ -809,7 +879,7 @@ Ni 2010 | China | 2
         assert_eq!(s.checkpoint(&task_checkpoint(&key.replacen("gap:", "gap2:", 1))).unwrap()["context"]["gap"]["recorded"], json!(1));
         // the limit of one primary pack is spent; the second reader did not count against it
         assert_eq!(d.acquire(&s, "w3", true, 0)["kind"], "SUMMARIZE");
-        let r = d.gap_report(&s);
+        let r = report(&d, &s);
         assert_eq!(
             (
                 &r["units_read"],
@@ -908,7 +978,7 @@ Ni 2010 | China | 2
         assert!(errors.is_empty(), "{errors:?}");
         let mut d = Dispatcher::new(DispatchConfig { gap, agent_attempts: Some(1), ..Default::default() }, vec![q]);
         d.recover(&s);
-        let r = d.gap_report(&s);
+        let r = report(&d, &s);
         assert_eq!(
             (&r["gap_empty"], &r["gap_exhausted"], &r["gap_units_unanswered"], &r["gap_left_by_budget"]),
             (&json!(0), &json!(1), &json!(2), &json!(0)),
@@ -974,8 +1044,11 @@ Ni 2010 | China | 2
         let next = d.acquire(&s, "w2", true, 10_000_000);
         assert_eq!(next["kind"], "SUMMARIZE", "the exhausted pack opened no second reading: {next}");
         assert!(d.reading_done(&s));
-        let r = d.gap_report(&s);
+        let r = report(&d, &s);
         assert_eq!((&r["gap_units_pack_failed"], &r["second_reader_tasks"], &r["complete"]), (&json!(2), &json!(0), &json!(false)), "{r}");
+        let rows = super::super::coverage::coverage_with(&s, d.cfg.section_bytes, &d.cfg.gap);
+        assert!(rows.units.iter().all(|u| u[5] == "pack_failed"), "{:?}", rows.units);
+        assert_eq!((rows.packs.len(), &rows.packs[0][6], &rows.packs[0][7]), (1, &json!("exhausted"), &Value::Null), "{:?}", rows.packs);
     }
 
     #[test]
@@ -991,7 +1064,7 @@ Ni 2010 | China | 2
         assert!(d.persist_unresolved(&mut s).is_empty());
         let next = d.acquire(&s, "w3", true, 10_000_000);
         assert_eq!(next["kind"], "SUMMARIZE", "{next}");
-        let r = d.gap_report(&s);
+        let r = report(&d, &s);
         assert_eq!(
             (
                 &r["units_read"],
@@ -1006,5 +1079,8 @@ Ni 2010 | China | 2
         );
         assert_eq!(r["complete"], json!(false));
         assert!(r["meaning"].as_str().unwrap().contains("1 whose second reading did not happen"), "{r}");
+        let rows = super::super::coverage::coverage_with(&s, d.cfg.section_bytes, &d.cfg.gap);
+        let statuses: Vec<&str> = rows.units.iter().map(|u| u[5].as_str().unwrap()).collect();
+        assert_eq!(statuses, ["quoted", "second_reading_failed"]);
     }
 }
