@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+* **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
+  format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
+  specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.
+
 ## 0.2.0 (2026-11-12)
 
 A journal of sealed frames, signed checkpoints, quittances for one record, a report of what fell after a withdrawal, an index beside

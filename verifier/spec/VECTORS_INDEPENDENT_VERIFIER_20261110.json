@@ -1,0 +1,83 @@
+{
+ "_status": "CHECKED AGAINST THE KERNEL (2026-11-10)",
+ "_note": "Computed 2026-11-10 only from the text of the kernel's specification of the 0.2 journal format, without reading kernel code. Checked the same evening against sbgk-core: every value V1-V8 is given by the kernel's own functions, unchanged. The kernel pins them in its tests, so a change of the format breaks those tests first: trees.rs spec_text_vectors (V1, V2, V4), persistence.rs spec_text_vectors (V3, the whole frame line byte for byte), state_root.rs spec_text_vectors (V5, V6), state_tests.rs the_seal_and_projection_hashes_give_the_vectors_written_from_the_spec_text (V7, V8). V2_real (new): the records leaf of a real observation and of a real claim on it, as the kernel serializes them, and the records root their frame names (state_tests.rs a_real_record_leaf_and_its_frame_records_root). V5 and V6 check the state-root formula only: the verifier does not recompute the state root (level J4 is cancelled). V9 (added 10.11.2026, late evening): a real pair of lines, the frame before a seal and the seal frame, from withdrawal-version-close.wal (a synthetic run of the kernel on two short documents); the equalities it shows are listed in V9_checks and were checked before writing.",
+ "_definitions": {
+  "H": "SHA-256(ASCII(domain) || 0x00 || x1 || x2 ...)",
+  "JCS": "RFC 8785, UTF-8",
+  "lp": "4-byte big-endian length, then bytes",
+  "tree_shape": "RFC 6962: left subtree takes the largest power of two strictly less than n"
+ },
+ "vectors": {
+  "V1_rec_empty": "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41",
+  "V2_L_jcs": [
+   "{\"id\":\"vector-0\",\"kind\":\"observe\"}",
+   "{\"id\":\"vector-1\",\"kind\":\"observe\"}",
+   "{\"id\":\"vector-2\",\"kind\":\"observe\"}"
+  ],
+  "V2_leaf": [
+   "02cc8d3401b742e842f47e5eb86387d04c3e40caaaef6fefce763c6a14586b3a",
+   "91541b96915cc39cdacd38e0437d9257a5d24f043ddc7d7fb5d97d75d70b7170",
+   "7afb8d6308012bdd6bedebc2d8a2393af51a234827d9382f59a90f21f582cc24"
+  ],
+  "V2_root_n1": "02cc8d3401b742e842f47e5eb86387d04c3e40caaaef6fefce763c6a14586b3a",
+  "V2_root_n2": "0e47cfc6c3aafdf12a6a75d3c0834a9c3d44105565ae9661225cf18b28f2c9f4",
+  "V2_root_n3": "9ffe7bd62d1a3077572650027a8a5ff2f0e4a9470a43e4c3a98d507fd151b94e",
+  "V3_B_jcs": "{\"actor\":\"kernel\",\"note\":\"synthetic vector, not a real frame\"}",
+  "V3_body_hash": "8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d",
+  "V3_Hd_jcs": "{\"body_hash\":\"8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":0,\"wal_op\":\"genesis\"}",
+  "V3_h": "09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc",
+  "V3_line": "{\"body\":{\"actor\":\"kernel\",\"note\":\"synthetic vector, not a real frame\"},\"hash\":\"09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc\",\"header\":{\"body_hash\":\"8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":0,\"wal_op\":\"genesis\"}}\n",
+  "V3_line_sha256": "3e73136c14bb58c8091442795e0f3cfc2beb7224f907e7bd707afa20d9c8c53f",
+  "V3_line_len": 453,
+  "V4_frame_hashes": [
+   "09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc",
+   "b4bae464021d624403627580d82ca0648b01665e080bbe8c6d42f4e43fb56c1c",
+   "c9609d57fb2cffdcebc4c3834042f827576269e1556438ab854c8acf694cfed9"
+  ],
+  "V4_log_root_n1": "32afd763295e47fd58bb46c2586b435b862e2eddcb3647ae7d562bb8b52c2370",
+  "V4_log_root_n2": "3e318f3d65a78bf4f2f50a7f055fe8c937a69ac8838926dd71a0434ed1f460a2",
+  "V4_log_root_n3": "3e68089e94499e6df51727b8b615320676ff1e203d8b77551e28502e685da147",
+  "V5_bucket_meta_0_empty": "1c6cdbb266d0260bd4b04ce1e9eadbd16494e40891adf3ad162fa5a9828d5cb6",
+  "V5_section_meta_empty": "4a7b45a454c3180a968b4f38966412ba22ebbf53499e033b9d97b66afcdfa2ba",
+  "V5_section_withdrawn_empty": "e85d6d838983ee31cf9e31d7d7441938a9fb9ef27df8b0b152e047793d78a78d",
+  "V5_root_empty_state": "b556e673e5dbadeb5200567af4cabbe567b5df849e56a5855059c861a9b15e99",
+  "V6_key_jcs": "\"run_id\"",
+  "V6_value_jcs": "\"vector-run\"",
+  "V6_kh": "ec29e20c74d605ecabc16e1d26973e4990a130bb8f2757cf05d7019cd3630ca2",
+  "V6_bucket": 236,
+  "V6_leaf": "179ee8c007329c42e5e5eca7e239e29b9270110676d658930440dc4adc14c6ce",
+  "V6_section_meta": "2d43f69bb24904fa5b04b35be09496074658a1e5dfaab1266fdc5026464403c3",
+  "V6_root": "6102326a854af6dbcd524b7d0f8b0834ee9f3e79c0dded78925323c092a34741",
+  "V7_P_jcs": "{\"audit_root\":\"6102326a854af6dbcd524b7d0f8b0834ee9f3e79c0dded78925323c092a34741\",\"engine_root\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"format\":\"r2r-seal/2\",\"log_root\":\"3e68089e94499e6df51727b8b615320676ff1e203d8b77551e28502e685da147\",\"log_size\":3,\"projections\":{\"dependencies\":\"65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133\",\"status\":\"88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875\"},\"run_id\":\"vector-run\",\"wal_head\":\"c9609d57fb2cffdcebc4c3834042f827576269e1556438ab854c8acf694cfed9\"}",
+  "V7_seal_hash": "30f2caab8a2e00b324a3c42993822f7318be44dfd2068b8557427e44b68c6f72",
+  "V8_proj_status_empty": "88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875",
+  "V8_proj_deps_empty": "65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133",
+  "V8_session_root": "92bd027e0f65b39feac22b7ce1ddf60aafaa5955b7700056afa614811e917d79",
+  "V8_settings_hash_empty": "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e",
+  "V2_real_leaf_value_jcs": [
+   "{\"author\":\"worker\",\"based_on\":[],\"body\":{\"doc_id\":\"policy\",\"document_version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\",\"evidence_id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"exact_quote\":\"Prior witness.\",\"kind\":\"observe\",\"terms\":[\"witness\"]},\"directive\":\"task\",\"doc_id\":\"policy\",\"ends\":null,\"evidence\":{\"id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"span\":[0,14],\"version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\"},\"id\":\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\",\"kind\":\"observe\",\"quote\":\"Prior witness.\",\"seq\":1,\"stance\":null,\"terms\":[\"witness\"],\"text\":null}",
+   "{\"author\":\"worker\",\"based_on\":[\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"body\":{\"based_on\":[\"@fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"witness\",\"text\":\"Witnessed.\"},\"directive\":\"task\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"span\":[0,14],\"version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\"},\"id\":\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"}],\"id\":\"171d56daeb0b8a3d687b2c84475f2dcf03fcb370a476015529c38503067cf74b\",\"kind\":\"claim\",\"quote\":null,\"seq\":2,\"stance\":\"reported\",\"terms\":[\"witness\"],\"text\":\"Witnessed.\"}"
+  ],
+  "V2_real_leaf": [
+   "b635f5edec501dc2abee35d22ffd97d64978faec23dc11fc54fb0ebc0621fb50",
+   "2a2317d6c6cfca54d42dfb6da4c3d5ca04b6cc1fca50bc31841aef9dfef3cfc2"
+  ],
+  "V2_real_records_root": "6f99214ff9e8891fd0945b8394b24ee522d1eb9c45f3e5c5aaf4e0276020edcf",
+  "V9_real_seal_pair_source": "withdrawal-version-close.wal (a synthetic run of two short documents written by the kernel; no run data)",
+  "V9_seal_frame_index": 2,
+  "V9_line_frame_n_minus_1": "{\"body\":{\"actor\":\"reader-1\",\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"command\":{\"directive\":\"task-1\",\"kind\":\"submit\",\"lines\":[{\"doc_id\":\"trial.txt\",\"exact_quote\":\"Title: Tai chi for knee arthritis.\",\"kind\":\"observe\",\"local_id\":\"ot\",\"terms\":[\"trial\"]},{\"doc_id\":\"review.txt\",\"exact_quote\":\"Review A includes the Ni 2010 trial.\",\"kind\":\"observe\",\"local_id\":\"oa\",\"terms\":[\"review\"]},{\"based_on\":[\"oa\",\"ot\"],\"kind\":\"claim\",\"local_id\":\"c1\",\"stance\":\"reported\",\"subject\":\"review\",\"text\":\"Review A rests on the Ni 2010 trial.\"},{\"doc_id\":\"review.txt\",\"exact_quote\":\"Other trials: Wang 2009 — Kraków.\",\"kind\":\"observe\",\"local_id\":\"ow\",\"terms\":[\"trial\"]},{\"based_on\":[\"ow\"],\"kind\":\"claim\",\"local_id\":\"c2\",\"stance\":\"reported\",\"subject\":\"review\",\"text\":\"Review A also cites Wang 2009.\"}],\"scope\":{\"docs\":[\"trial.txt\",\"review.txt\"],\"ranges\":[],\"topic\":\"trials\"}},\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"outcome\":{\"kind\":\"records\",\"result\":{\"accepted\":[\"321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d\",\"9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894\",\"b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe\",\"5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d\",\"b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e\"],\"error\":null,\"failed_index\":null}},\"request_hash\":\"9116d4211721c46c36ec9e2646fdd8bd72247092f08d34c47eacf6e7325295fb\",\"submission_id\":\"seed\"},\"hash\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\",\"header\":{\"body_hash\":\"ebd1472742495ecfa2c5509c50c96de7db053c4fa869d01321eeb423ff3a946d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"21fc6a471ba0493b250dea51b8540f553af2b5993329fb2ee5ff520971b5e5ec\",\"records_root\":\"e0a6ce91138617ddd65660df6f23cdd62ef8c0cbc00ab1b0b6146fbac73a36e5\",\"seq\":1,\"wal_op\":\"audit\"}}",
+  "V9_line_seal_frame_n": "{\"body\":{\"actor\":\"kernel\",\"audit_root\":\"9750d7624a05799c86117e283b67f963098c2759c5dd64223f64d078dc279801\",\"command\":{\"kind\":\"seal\",\"seal\":{\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"format\":\"r2r-seal/2\",\"log_root\":\"c7c4bff5bb9f303fe3a080db14716e44880dde96eeca3a9698235307f427ae45\",\"log_size\":2,\"projections\":{\"dependencies\":\"5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307\",\"status\":\"e75ce9dc8c6158b0c5f52af78b0db65f1d402c73889e5d0219a892ff40256573\"},\"run_id\":\"reference-small\",\"wal_head\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\"}},\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"outcome\":{\"kind\":\"value\",\"result\":{\"seal\":{\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"format\":\"r2r-seal/2\",\"log_root\":\"c7c4bff5bb9f303fe3a080db14716e44880dde96eeca3a9698235307f427ae45\",\"log_size\":2,\"projections\":{\"dependencies\":\"5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307\",\"status\":\"e75ce9dc8c6158b0c5f52af78b0db65f1d402c73889e5d0219a892ff40256573\"},\"run_id\":\"reference-small\",\"wal_head\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\"},\"seal_hash\":\"3649c1601a583d7ef0d880f8ab89baeb91c1462d530807de76e1421a532d8574\"}},\"request_hash\":\"cdf5e62277473d302915c629ed9a8c82af851cb2f694e8270dd7273cf20f1483\",\"submission_id\":\"seal-2\"},\"hash\":\"7af5780a5eaa1dd005f13bdebb8018d18ae3a755ed71a7c72b9be4c473b68a04\",\"header\":{\"body_hash\":\"b6feee168dbf40373cbcd29607ce84be96f3552ef2dac02b8f4f52394c7d6dbf\",\"format\":\"sbgk-session-log/3\",\"previous\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":2,\"wal_op\":\"audit\"}}",
+  "V9_frame_hash_n_minus_1": "97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b",
+  "V9_frame_hash_n": "7af5780a5eaa1dd005f13bdebb8018d18ae3a755ed71a7c72b9be4c473b68a04",
+  "V9_seal_hash": "3649c1601a583d7ef0d880f8ab89baeb91c1462d530807de76e1421a532d8574",
+  "V9_checks": [
+   "P.log_size == n",
+   "P.wal_head == hash of frame n-1",
+   "P.audit_root == body.audit_root of frame n-1",
+   "P.engine_root == body.engine_root of frame n-1",
+   "body.audit_root of frame n != P.audit_root (the seal receipt)",
+   "outcome.result.seal_hash == H(R2R-SEAL/2, JCS(P))",
+   "P.log_root == RFC 6962 root over the hashes of frames 0..n-1"
+  ]
+ }
+}

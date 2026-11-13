@@ -346,6 +346,8 @@ More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core
 * `examples/findings-gate/`: a security review's findings on code files through the kernel: a made-up finding, a lost agent, a
   file that changes.
 * `benchmarks/`: the benchmark runner and its tests, and the open corpus in `benchmarks/corpora/`.
+* `verifier/`: `yuce-verify`, an independent verifier of 0.2 journals written in a clean room from the specification of the
+  format, in TypeScript for Node.js and the browser, with that specification and its test journals.
 * `scripts/check_no_cyrillic.py`: the repository language check; `scripts/check_snapshot.py`: the check of an unpacked
   release snapshot.
 * [BENCHMARKS.md](BENCHMARKS.md), [LIMITATIONS.md](LIMITATIONS.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md).

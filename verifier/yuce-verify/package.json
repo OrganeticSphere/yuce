@@ -1,0 +1,22 @@
+{
+  "name": "yuce-verify",
+  "version": "0.1.3",
+  "description": "Independent clean-room verifier for YuCe journals (sbgk-session-log/3), delivery 1.1 with amendments 1 and 2: levels J0 and J1.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "yuce-verify": "dist/yuce-verify.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "node scripts/build.mjs",
+    "test": "npm run typecheck && npm run build && node --test --test-reporter=dot test/*.test.mjs",
+    "test:verbose": "npm run build && node --test test/*.test.mjs",
+    "make-forged": "node test/make-forged.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

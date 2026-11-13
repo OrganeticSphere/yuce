@@ -12,6 +12,8 @@ crates/sbgk-core/examples/v02_reference_journals.rs export-ignore
 *.wal -text
 # open corpora are pinned upstream bytes: never convert their line endings
 benchmarks/corpora/** -text
+# the independent verifier hashes its journals, vectors and expected reports byte for byte: never convert their line endings
+verifier/** -text
 # parts of the runner that are not in the public source stay out of an exported snapshot
 benchmarks/sbgk_bench/closed export-ignore
 # The public snapshot (git archive of one dev commit) shows the product and its final results. The internal experiment history
