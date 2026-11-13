@@ -2,9 +2,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { adapter, room, yv } from "./helpers.mjs";
 
 const VECTORS = "spec/VECTORS_INDEPENDENT_VERIFIER_20261110.json";
+
+test("the vectors file has the size and SHA-256 that section 12 of the specification names", () => {
+  const spec = readFileSync(room("spec/SPEC_INDEPENDENT_VERIFIER_v3.md"), "utf8");
+  const named = spec.match(/Current version: ([\d,]+) bytes, SHA-256 `([0-9a-f]{64})`/);
+  assert.ok(named, "section 12 names the size and SHA-256 of the vectors file");
+  const bytes = readFileSync(room(VECTORS));
+  assert.equal(bytes.length, Number(named[1].replaceAll(",", "")));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), named[2]);
+});
 
 test("A1: every vector delivery 1 can compute passes; V5, V6, V8 are named as skipped", async () => {
   const parsed = yv.parseJson(readFileSync(room(VECTORS), "utf8"));
