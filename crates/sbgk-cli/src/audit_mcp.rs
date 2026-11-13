@@ -880,11 +880,10 @@ impl AuditServer {
             // a seal when the owner asks for one, between the seals the server writes by itself: the library's seal, a kernel frame
             // that replay already accepts at any point of a 0.2 journal (no rule changes)
             "audit_seal" => {
-                // the last frame is a seal already: another would seal nothing new
-                let already = g.state.seals().last().is_some_and(|(n, _)| g.state.entries() == Some(n + 1));
-                let written = if already { Ok(()) } else { g.state.seal().map(drop) };
-                match written {
-                    Ok(()) => {
+                // the library writes no seal right after another and says so: another would seal nothing new
+                match g.state.seal() {
+                    Ok(v) => {
+                        let already = v["already"] == true;
                         let (n, hash) = *g.state.seals().last().expect("the last frame is a seal");
                         let mut sealed = json!({"status": if already { "ALREADY_SEALED" } else { "SEALED" }, "log_size": n,
                             "seal_hash": to_hex(&hash), "wal_head": g.state.wal_head().map(|h| to_hex(&h))});
