@@ -1066,6 +1066,29 @@ fn every_forged_body_records_root_and_genesis_field_of_a_v3_journal_is_refused()
     assert!(AuditState::verify(&work.0, &mut |_, _, _, _| {}).is_err());
 }
 
+/// The library writes no seal right after another, as its doc says (the architect's decision of 13.11 on step 4 of 0.2.1): a second
+/// seal says `already`, and the close of a run whose last frame is a seal writes the close only. A seal after a new frame is written.
+#[test]
+fn a_seal_right_after_a_seal_is_not_written_again() {
+    let path = TempPath::new();
+    let mut s = v3_run(&path.0);
+    let first = s.seal().unwrap();
+    let entries = s.entries();
+    let again = s.seal().unwrap();
+    assert_eq!(again["already"], true, "{again}");
+    assert_eq!(again["seal_hash"], first["seal_hash"]);
+    assert_eq!(again["log_size"], first["seal"]["log_size"]);
+    assert_eq!(s.entries(), entries, "no frame written");
+    assert_eq!(s.seals().len(), 1);
+    s.close_run().unwrap();
+    assert_eq!(s.entries(), entries.map(|n| n + 1), "the close only");
+    assert_eq!(s.seals().len(), 1);
+    drop(s);
+    assert_eq!(AuditState::open(&path.0).unwrap().seals().len(), 1);
+    let verified = AuditState::verify(&path.0, &mut |_, _, _, _| {});
+    assert!(verified.is_ok(), "{:?}", verified.err());
+}
+
 #[test]
 fn a_seal_names_the_frames_the_roots_and_the_projections_and_a_forged_seal_is_refused() {
     let path = TempPath::new();

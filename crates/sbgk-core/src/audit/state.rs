@@ -1335,10 +1335,16 @@ impl AuditState {
     }
 
     /// Write a seal (SPEC_V02_STEP2 section 7): the frames so far, the roots of this state and the hashes of its two projections.
-    /// Its outcome holds the seal and its hash. A seal right after another changes nothing and is not written again.
+    /// Its outcome holds the seal and its hash. A seal right after another would seal nothing new and is not written again: the
+    /// answer is then `{"already": true, "log_size", "seal_hash"}` of the seal that is the last frame (the architect's decision of
+    /// 13.11 on step 4 of 0.2.1: the library keeps this promise itself, not only the owner's `audit_seal`). Replay is unchanged:
+    /// it takes a seal at any frame.
     pub fn seal(&mut self) -> KResult<Value> {
         if !self.is_v3() || self.journal.is_none() {
             return Err(bad("seal", "only a 0.2 journal is sealed"));
+        }
+        if let Some((n, hash)) = self.seals.last().filter(|(n, _)| self.frames.len() == n + 1) {
+            return Ok(json!({"already": true, "log_size": n, "seal_hash": to_hex(hash)}));
         }
         #[cfg(test)]
         if FAIL_SEALS.with(|n| n.replace(n.get().saturating_sub(1)) > 0) {
