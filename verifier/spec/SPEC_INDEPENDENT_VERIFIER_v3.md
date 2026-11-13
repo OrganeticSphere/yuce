@@ -374,7 +374,7 @@ In differential testing, these do not count as divergences.
 
 ## 12. Vectors
 
-File `VECTORS_INDEPENDENT_VERIFIER_20261110.json`, status "checked against the kernel". Current version: 12,860 bytes, SHA-256 `50b3193c643f86fa615010f3fa3272f8e1b036fbf21685fd183d87fe9a9d9acb`. It differs from version `74a745f1…` (7601 bytes) only by the added vector V9.
+File `VECTORS_INDEPENDENT_VERIFIER_20261110.json`, status "checked against the kernel". Current version: 12,779 bytes, SHA-256 `c5e695b6800f4e8205644cfc0b075c323e0c79a81b8d361b58ef741c1c90649b`. It is the version checked against the kernel (12,860 bytes, SHA-256 `50b3193c643f86fa615010f3fa3272f8e1b036fbf21685fd183d87fe9a9d9acb`) with its two notes, `_note` and `_status`, put into English for publication; every vector is the same. That version differs from version `74a745f1…` (7601 bytes) only by the added vector V9. The tests of `yuce-verify` check that the file in this folder has the size and SHA-256 named here.
 
 | Vector | What it checks | Needed in delivery 1 |
 |---|---|---|

@@ -10,6 +10,9 @@
   that is the last frame, and closing a run right after a seal writes the close only. In 0.2.0 a run closed right after a seal
   of the server could get a second seal of the same frames; none of the four runs of release 0.2.0 has one. Replay takes a seal at
   any frame, as before.
+* **`verifier/`: the specification names the vectors file as published,** 12,779 bytes, and a test checks its size and SHA-256.
+  The numbers were those of the file before its two notes were put into English; every vector is the same. The README says that a
+  journal of 0.1 is checked by the kernel, not by `yuce-verify`.
 * **`scripts/verify_published_runs.py` checks the runs of 0.2 too.** A journal of 0.2 goes on past its last receipt, as the
   server seals and closes the run after the last stage: it is checked against each receipt as a prefix, and then whole. The
   four kernel runs of release v0.2.0 are in its list.

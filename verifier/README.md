@@ -32,6 +32,8 @@ Read this before you trust a PASS.
 * It does not recompute the withdrawal cascade or the projections of what stands and what rests on what: those stay the kernel's
   (`sbgk audit-verify`).
 * Quotes against their sources (level J3) and signatures, anchors and quittances (J5) are not part of this verifier.
+* It reads only the format `sbgk-session-log/3`. A journal of YuCe 0.1 (`sbgk-session-log/2`, releases 0.1.0 to 0.1.7) has no frame
+  header, and the verifier stops at its first frame with `OUTER_KEYS`: check such a journal with the kernel, `sbgk audit-verify`.
 
 ## How it was checked
 
