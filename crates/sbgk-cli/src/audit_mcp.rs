@@ -99,6 +99,7 @@ impl Role {
                 "audit_fallen",
                 "audit_revoke",
                 "audit_withdraw_text",
+                "audit_seal",
                 "audit_terminal_receipt",
                 "audit_close",
             ],
@@ -529,6 +530,11 @@ fn tool_defs() -> Vec<Value> {
             "Withdraw text of a document, quoted or not, with the effect of audit_revoke.",
             schema(json!({"doc_id": s("document id"), "exact_quote": s("the text, byte for byte")}), &["doc_id", "exact_quote"]),
         ),
+        t(
+            "audit_seal",
+            "Seal the journal now, for example before a withdrawal, so that a quittance can later show what stood at this point: the frames so far, the roots of the state and the hashes of what stands and what rests on what. A server with a signing key signs it. A seal right after another is not written again.",
+            schema(json!({}), &[]),
+        ),
         t("audit_terminal_receipt", "The terminal receipt when the run is complete (contract v0.1 R7), else NOT_COMPLETE.", schema(json!({}), &[])),
         t(
             "audit_close",
@@ -871,6 +877,25 @@ impl AuditServer {
                 }
                 _ => bad_arg("give 'doc_id' and 'exact_quote'"),
             },
+            // a seal when the owner asks for one, between the seals the server writes by itself: the library's seal, a kernel frame
+            // that replay already accepts at any point of a 0.2 journal (no rule changes)
+            "audit_seal" => {
+                // the last frame is a seal already: another would seal nothing new
+                let already = g.state.seals().last().is_some_and(|(n, _)| g.state.entries() == Some(n + 1));
+                let written = if already { Ok(()) } else { g.state.seal().map(drop) };
+                match written {
+                    Ok(()) => {
+                        let (n, hash) = *g.state.seals().last().expect("the last frame is a seal");
+                        let mut sealed = json!({"status": if already { "ALREADY_SEALED" } else { "SEALED" }, "log_size": n,
+                            "seal_hash": to_hex(&hash), "wal_head": g.state.wal_head().map(|h| to_hex(&h))});
+                        if let Some(failed) = signing_failures(&g.state) {
+                            sealed["signing"] = failed;
+                        }
+                        sealed
+                    }
+                    Err(e) => json!({"status": "error", "code": "SEAL_REFUSED", "error": e.to_json()}),
+                }
+            }
             "audit_terminal_receipt" | "audit_close" => {
                 let r = &mut *g;
                 if r.pool.is_none() {

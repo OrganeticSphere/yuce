@@ -226,6 +226,11 @@ class Client:
         """Withdraw text of a document, quoted or not: stored quotes overlapping it go with it, and new ones are refused."""
         return self.call("audit_withdraw_text", doc_id=doc_id, exact_quote=exact_quote)
 
+    def seal(self) -> dict:
+        """Seal the journal now, for example before a withdrawal, so that a quittance can later show what stood at this point.
+        A server with a signing key signs it. A seal right after another is not written again (`ALREADY_SEALED`)."""
+        return self.call("audit_seal")
+
     def links(self, status: str | None = None) -> dict:
         return self.call("audit_links", **({} if status is None else {"status": status}))
 

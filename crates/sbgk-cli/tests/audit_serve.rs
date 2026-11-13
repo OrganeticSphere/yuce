@@ -228,7 +228,7 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 13, "nine tools of 0.1 and the four reading tools of 0.2");
+    assert_eq!(own.tools().len(), 14, "nine tools of 0.1, the four reading tools of 0.2 and audit_seal of 0.2.1");
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims
@@ -1618,4 +1618,70 @@ fn a_second_reader_needs_a_second_agent() {
     assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stderr).contains("at least two swarm agents"), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!Path::new(&fx.p("run.wal")).exists(), "refused before the journal");
+}
+
+/// 0.2.1: the owner seals the journal before a withdrawal (`audit_seal`), so that a quittance can show an answer's claim as it stood
+/// then, after it fell. The seal is signed as the server's own seals are, the journal verifies, and a seal right after a seal is
+/// not written again (the finding of the SaneCite run on 0.2.0: no seal fell between the answers and the withdrawal).
+#[test]
+fn an_owner_seal_before_a_withdrawal_lets_a_quittance_show_what_stood_then() {
+    let fx = Fixture::new("ownerseal");
+    let key = fx.p("operator.key");
+    assert!(Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap().status.success());
+    let mut args = fx.args(true);
+    args.extend(["--signing-key".to_string(), key.clone()]);
+    let server = Server::start(&args);
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    let receipt = own.call("audit_terminal_receipt", json!({}));
+    assert_eq!(receipt["status"], "TERMINAL", "{receipt}");
+    assert_eq!(w1.call("audit_seal", json!({}))["code"], -32003, "only the owner seals");
+    let sealed = own.call("audit_seal", json!({}));
+    assert_eq!(sealed["status"], "SEALED", "{sealed}");
+    assert!(sealed.get("signing").is_none(), "the seal was signed: {sealed}");
+    let at = sealed["log_size"].as_u64().unwrap();
+    let again = own.call("audit_seal", json!({}));
+    assert_eq!((again["status"].as_str(), again["log_size"].as_u64()), (Some("ALREADY_SEALED"), Some(at)), "{again}");
+    let claim = own.call("audit_record", json!({"record": receipt["outcomes"]["RQ1"]["answer_ids"][0]}));
+    let observe = own.call("audit_record", json!({"record": claim["based_on"][0]}));
+    assert_eq!(own.call("audit_revoke", json!({"record": observe["short"]}))["status"], "REVOKED");
+    assert_eq!(own.call("audit_record", json!({"record": claim["id"]}))["grounded"], false, "the claim fell");
+    let after = own.call("audit_seal", json!({}));
+    assert_eq!(after["status"], "SEALED", "{after}");
+    let later = after["log_size"].as_u64().unwrap();
+    assert!(later > at, "{after}");
+    drop(server);
+
+    let wal = fx.p("run.wal");
+    let verified: Value = serde_json::from_slice(&Command::new(BIN).args(["audit-verify", "--wal", &wal]).output().unwrap().stdout).unwrap();
+    assert_eq!(verified["status"], "VERIFIED", "a seal the owner asked for replays as the server's own: {verified}");
+    for n in [at, later] {
+        assert!(fx.0.join("run.wal.checkpoints").join(format!("seal-{n}.txt")).is_file(), "the seal at {n} is signed");
+    }
+    let quittance = fx.p("claim.proof.json");
+    let cut = |seal: u64| {
+        let out = Command::new(BIN)
+            .args(["audit-proof", "--wal", &wal, "--record", claim["id"].as_str().unwrap(), "--seal", &seal.to_string(), "--out", &quittance])
+            .output()
+            .unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (code, v) = cut(at);
+    assert_eq!((code, v["status"].as_str()), (Some(0), Some("PROOF")), "the claim stood at the owner's seal: {v}");
+    let check = Command::new(BIN).args(["audit-proof-verify", "--proof", &quittance]).output().unwrap();
+    let check: Value = serde_json::from_slice(&check.stdout).unwrap_or(Value::Null);
+    assert_eq!(check["status"], "PROOF_VALID", "{check}");
+    let (code, v) = cut(later);
+    assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "the claim fell before the later seal: {v}");
 }

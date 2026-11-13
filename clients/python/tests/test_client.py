@@ -204,6 +204,9 @@ class RealServer(unittest.TestCase):
         quote, claim = done["accepted_locals"][p + "o1"], done["accepted_locals"][p + "c1"]
         self.assertTrue(owner.record(claim)["grounded"])
 
+        sealed = owner.seal()
+        self.assertEqual(sealed["status"], "SEALED")
+        self.assertEqual((owner.seal()["status"], owner.seal()["log_size"]), ("ALREADY_SEALED", sealed["log_size"]))
         revoked = owner.revoke(quote)
         self.assertEqual((revoked["also_revoked"], revoked["fell"], revoked["quotes_gone"]), (0, 1, 1))
         self.assertFalse(owner.record(claim)["grounded"])
@@ -245,7 +248,7 @@ class RealServer(unittest.TestCase):
         self.assertEqual(named - served, set())
         self.assertEqual({t for t in served if t in {"audit_" + n for n in ("acquire", "submit", "renew", "release", "next_card", "submit_ops",
                                                                             "builder_failure", "status", "links", "link_status", "concept_status",
-                                                                            "record", "revoke", "withdraw_text", "terminal_receipt", "close",
+                                                                            "record", "revoke", "withdraw_text", "seal", "terminal_receipt", "close",
                                                                             "dependents", "active_claims", "diff", "fallen")}} - named, set())
 
 

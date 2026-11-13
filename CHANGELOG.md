@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* **`audit_seal`: the owner seals the journal when he asks,** for example before a withdrawal, between the seals the server writes by
+  itself, so that a quittance can show what stood at that point after it fell. A server with a signing key signs it; a seal right
+  after another is not written again (`ALREADY_SEALED`). It is the seal the kernel already writes, a frame replay accepts at any point:
+  no rule changes. The Python client has `seal()`. In 0.2.0 no seal fell between an answer and a withdrawal made right after it.
 * **`scripts/verify_published_runs.py` checks the runs of 0.2 too.** A journal of 0.2 goes on past its last receipt, as the
   server seals and closes the run after the last stage: it is checked against each receipt as a prefix, and then whole. The
   four kernel runs of release v0.2.0 are in its list.
