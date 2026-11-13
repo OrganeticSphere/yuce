@@ -250,24 +250,28 @@ withdraws, so 2B was not graded again.
 
 * **By the pre-registered rule this counts against the gap pass:** both runs with it stated more ended facts as current than both
   runs without, at stage 1 and at 2A.
-* **What the journals say of the cause.** They point away from the pass, to the readers of one document and a gap in the kernel's
-  choice of claims; with two runs a side the rule cannot tell these apart.
-  - Of the 13 such errors at 2A on the side with the pass, 2 rest on records the pass added (run 5 gives the v0.3.0 name of the
-    extended card method and the `/v1` path without a version); 11 rest on records of the reading, which both sides do alike.
+* **What the journals show.** A defect in how the kernel admitted claims on the changelog to the first question; it explains why
+  that question's window was narrow in the runs with the pass. How much of the difference in errors comes from this defect and how
+  much from the pass, this comparison does not separate.
+  - None of the 13 such errors at 2A on the side with the pass rests on a record the pass made: by the grounds the journal
+    records, each of those answer rows rests on quotes of the first reading or of later investigations. Some of them say what
+    claims of the pass also say; whether the model took them from there, the journal cannot tell.
   - The removals are stated in the changelog. The window of claims the kernel gives the summary of the first question (which
     conclusions were superseded, made stale or qualified) held 1 claim on the changelog in each run with the pass, and 14 and 8 in
-    the runs without. It took every relevant claim on the changelog the journal had. Run 5's readers recorded 62 claims on it, 60
-    with the stance `reported`, 12 of these saying that something was removed, renamed or deprecated; for this question the kernel
-    picks a `reported` claim only by its words (`replaced`, `superseded`, `no longer` and a few more), and these are not among them.
-    Run 1's readers stored 10 claims on the changelog. Run 2's gave 13 of their 16 the stance `superseded`.
-  - The pass did not cause it: in both runs with the pass the changelog was read before the first pack, and its first reading had
-    the prompts of the runs without the pass, apart from the list of records already in the journal.
+    the runs without. Those were all the claims on the changelog that the rule of 0.2.0 admitted, and the window took all of them;
+    the rule's count is no measure of what the changelog held that mattered. Run 5's readers recorded 62 claims on it, 60 with the
+    stance `reported`, 8 of these saying in their text that something was removed or renamed; for this question the kernel took a
+    `reported` claim only by its words (`replaced`, `superseded`, `no longer` and a few more), and these were not among them. Run
+    1's readers stored 10 claims on the changelog. Run 2's gave 13 of their 16 the stance `superseded`.
+  - In both runs with the pass the changelog was read before the first pack, and its first reading had the prompts of the runs
+    without it, apart from the list of records already in the journal: the claims on it were there before the pass. That does not
+    rule out an effect of the pass's records on what else the window took and on the answers.
 * **What 0.2.1 changes.** For a question about what changed the kernel now also takes a `reported` claim that says something was
-  removed or renamed, where its sentence does not negate it (CHANGELOG.md). Replayed from the journals without a model, the window
-  of run 5 holds 11 claims on the changelog instead of 1 and that of run 4 11 instead of 8; run 1's still holds 1, its readers
-  having stored few. The window keeps its size: on the two control runs of 0.2, 3 claims and 1 claim of it change at its edge,
-  among them, in the first, the one claim that `ping` was removed. The runs above were made before the change, and no run with a
-  model has measured it.
+  removed or renamed, as words of their own and where the sentence does not negate them (CHANGELOG.md). Replayed from the journals
+  without a model, through the kernel's own prompt: the window of run 5 holds 11 claims on the changelog instead of 1 and that of
+  run 4 11 instead of 8; run 1's still holds 1, its readers having stored few. The window keeps its size: 6, 18, 3 and 9 of its
+  claims go out and 11, 19, 2 and 11 come in, in runs 1, 5, 2 and 4; on the first control run of 0.2, 2 go out and 3 come in, and
+  the second's does not change. The runs above were made before the change, and no run with a model has measured it.
 * **The pass itself.** In both runs it used all 12 packs: 123 and 126 units (111 and 116 quoted, 12 and 10 answered empty), 137 and
   138 records added, all standing at the end; the coverage table agrees with its report. The packs go to documents in the order of
   their ids, and here all 12 went to the v0.3.0 specification: on this corpus the pass added material on an older version only.
@@ -287,7 +291,8 @@ withdraws, so 2B was not graded again.
   minutes, $0.55 and $0.56; no call failed. With the stopped run ($0.10), $2.35 of the $6 cap.
 * **The source of the files.** The manifest of these runs names one commit of the upstream repository for all five files, at paths
   that commit does not hold. The bytes are the upstream bytes and both sides read them under the same names, but the journals keep
-  that wrong source in the identity of each document. The manifest is corrected for the release.
+  that wrong source in the identity of each document, and they are kept as they are. The manifest is to be corrected before the
+  release.
 
 ### How far these numbers go
 

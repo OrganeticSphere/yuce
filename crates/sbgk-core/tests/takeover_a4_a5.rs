@@ -210,6 +210,8 @@ fn evolution_selection_admits_reported_changelog_words_and_not_plain_reports() {
         "The fallback guidance stays in the specification and is not removed.",
         // a deprecation alone is not taken: on the first control run of 0.2 it made about 50 more claims eligible
         "The kind field of streaming events is deprecated.",
+        // the word inside an identifier reports no renaming (Codex's review of e25b4efd, WIN-02)
+        "The RenamedOptions message has an optional parameter.",
     ];
     let (_w, mut s) = fresh(&[("d", doc("changelog", "2026-05-28", "", &lines.join("\n")))]);
     let ids: Vec<RecordId> = lines.iter().map(|l| seed(&mut s, "d", l, l)[1]).collect();
@@ -233,7 +235,51 @@ fn evolution_selection_admits_reported_changelog_words_and_not_plain_reports() {
         assert!(!rq2.contains(id), "and only that question: {line}");
     }
     for (line, id) in lines.iter().zip(&ids).skip(2) {
-        assert!(!rq1.contains(id), "no change, a negated one or a deprecation alone stays out: {line}");
+        assert!(!rq1.contains(id), "no change, a negated one, a deprecation alone or an identifier stays out: {line}");
+    }
+}
+
+#[test]
+fn evolution_selection_reads_a_changelog_word_in_the_text_first_then_in_the_subject_predicate_object() {
+    // Codex's review of e25b4efd, WIN-01: a claim's object is among its terms, and "is not" and "removed" read apart turned a
+    // negated removal into one. The text decides; the triple, read as one sentence, only where the text does not use the word.
+    let rows = [
+        ("The fallback feature is not removed.", "fallback feature", "is not", "removed", false),
+        ("The final field of TaskStatusUpdateEvent is gone.", "final field", "was", "removed", true),
+        ("The legacy flow is not removed.", "legacy flow", "was", "removed", false),
+    ];
+    let body = rows.iter().map(|r| r.0).collect::<Vec<_>>().join("\n");
+    let (_w, mut s) = fresh(&[("d", doc("changelog", "2026-05-28", "", &body))]);
+    let ids: Vec<RecordId> = rows
+        .iter()
+        .map(|(text, subject, predicate, object, _)| {
+            let r = s.submit_records(
+                "reader",
+                &format!("triple-{}", s.head()),
+                &Scope { docs: vec!["d".into()], ..Default::default() },
+                &[
+                    json!({"kind":"observe","local_id":"o","doc_id":"d","exact_quote":text}),
+                    json!({"kind":"claim","local_id":"c","text":text,"subject":subject,"predicate":predicate,"object":object,
+                           "stance":"reported","based_on":["o"]}),
+                ],
+            );
+            assert!(r.error.is_none(), "{:?}", r.error);
+            r.accepted[1]
+        })
+        .collect();
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        vec![ResearchQuestion {
+            id: "RQ1".into(),
+            text: "Evolution".into(),
+            about: vec!["stale".into()],
+            relations: vec!["supersedes".into()],
+            ..Default::default()
+        }],
+    );
+    let rq1 = d.summary_candidates(&s, "RQ1", false).unwrap().1;
+    for (row, id) in rows.iter().zip(&ids) {
+        assert_eq!(rq1.contains(id), row.4, "{row:?}");
     }
 }
 
