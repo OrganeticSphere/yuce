@@ -363,10 +363,6 @@ fn names_grounds(references: &[Value], grounds: &BTreeSet<String>, names: &BTree
     named.is_some_and(|n| n.len() == grounds.len())
 }
 
-/// The claim lines that only repeat a row the answer keeps: the same statement on the same grounds. Words alone do not make a copy: the
-/// same sentence with another date or on another quote is another claim. A copy would be a new record beside the kept row (a record's
-/// id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them distinct. A line another line rests on
-/// stays. Done here and not in the store: a journal holding such copies must replay.
 /// The records of an answer, each once, in the order first named. In a repair over several attempts the done line of the last one
 /// may name records the same task stored in an earlier attempt by their local names, while the kernel adds the same records by their
 /// short ids as rows the answer keeps (control run K02_1_r2 of 0.2: 11 of 54 records twice). The store never merges two claims into
@@ -376,6 +372,37 @@ fn distinct_ids(ids: Vec<RecordId>) -> Vec<RecordId> {
     ids.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
+/// The record a name in an answer stands for, read as the store reads it (`Core::resolve`): a local name of the task first, this
+/// attempt's included, then "@" and 16..64 hex digits of either case, the prefix of exactly one record this answer may cite. Codex's
+/// review of c9126019: a lookup by the literal short id took a new local name spelled like a short id for that record (DID-03) and
+/// missed an upper-case prefix the store takes (DID-01R).
+fn cite<'a>(name: &str, locals: &BTreeMap<String, RecordId>, citable: impl IntoIterator<Item = &'a RecordId>) -> Option<RecordId> {
+    if let Some(id) = locals.get(name) {
+        return Some(*id);
+    }
+    let prefix = name.strip_prefix('@').filter(|p| (16..=64).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_hexdigit()))?.to_ascii_lowercase();
+    let found: BTreeSet<RecordId> = citable.into_iter().filter(|id| crate::hash::to_hex(&id.0).starts_with(&prefix)).copied().collect();
+    let mut one = found.into_iter();
+    one.next().filter(|_| one.next().is_none())
+}
+
+/// The name under which the kernel adds a record to an answer: its short id, or its full id where the short id is a local name of
+/// the answer or of its task, which the store would read first.
+fn unshadowed(id: &RecordId, taken: impl Fn(&str) -> bool) -> String {
+    let short = id.short();
+    if taken(&short) {
+        let full = format!("@{}", crate::hash::to_hex(&id.0));
+        if !taken(&full) {
+            return full;
+        }
+    }
+    short
+}
+
+/// The claim lines that only repeat a row the answer keeps: the same statement on the same grounds. Words alone do not make a copy: the
+/// same sentence with another date or on another quote is another claim. A copy would be a new record beside the kept row (a record's
+/// id holds its directive): runs K015 and K016 got answers of 80 and 71 rows, 47 and 48 of them distinct. A line another line rests on
+/// stays. Done here and not in the store: a journal holding such copies must replay.
 fn copies_of_kept<S: AuditStore>(s: &S, kept: &[RecordId], lines: &[Value]) -> BTreeSet<String> {
     let rows: Vec<_> = kept
         .iter()
@@ -2972,36 +2999,24 @@ impl Dispatcher {
         let copies = copies_of_kept(s, &retained, lines);
         let mut composed: Vec<Value> =
             lines.iter().filter(|v| v["kind"] != "claim" || !v["local_id"].as_str().is_some_and(|n| copies.contains(n))).cloned().collect();
+        // a kept row the done already names, by any name the store reads as that row, is not added again; a name a line of this
+        // answer defines is a new record, not a kept row (Codex's DID-03 of c9126019), unless it is the task's own earlier name
+        let defined: BTreeSet<String> = composed.iter().filter_map(|v| v["local_id"].as_str()).map(str::to_string).collect();
+        let shown: Vec<RecordId> = retained.iter().chain(&lease.own).chain(&lease.issued).chain(&lease.own_run).copied().collect();
+        let taken = |n: &str| defined.contains(n) || lease.locals.contains_key(n);
+        let names_kept = |n: &str| (!defined.contains(n) || lease.locals.contains_key(n)).then(|| cite(n, &lease.locals, &shown)).flatten();
         for v in &mut composed {
             if !retained.is_empty() && v["kind"] == "done" && v["rq_id"] == lease.question.as_deref().unwrap_or("") {
                 if let Some(ids) = v.get_mut("answer_ids").and_then(|x| x.as_array_mut()) {
                     ids.retain(|x| !x.as_str().is_some_and(|n| copies.contains(n)));
-                    for id in &retained {
-                        let n = json!(id.short());
-                        if !ids.contains(&n) {
-                            ids.push(n);
-                        }
+                    let named: BTreeSet<RecordId> = ids.iter().filter_map(|x| x.as_str()).filter_map(names_kept).collect();
+                    for id in retained.iter().filter(|id| !named.contains(id)) {
+                        ids.push(json!(unshadowed(id, taken)));
                     }
                     if v["outcome"] == "unknown" {
                         v["outcome"] = json!("answered");
                     }
                 }
-            }
-        }
-        // a done line names each record once, before anything stores it: the same name twice, or the local name of a record of an
-        // earlier attempt and the short id of that record, is one row; the store takes the done's grounds from these names (Codex's
-        // DID-01 of 3d994d04). A name the dispatcher cannot resolve stays, for the store to judge.
-        let earlier = |n: &str| -> Option<RecordId> {
-            lease
-                .locals
-                .get(n)
-                .copied()
-                .or_else(|| retained.iter().chain(&lease.own).chain(&lease.issued).chain(&lease.own_run).find(|id| id.short() == n).copied())
-        };
-        for v in composed.iter_mut().filter(|v| v["kind"] == "done") {
-            if let Some(ids) = v.get_mut("answer_ids").and_then(|x| x.as_array_mut()) {
-                let (mut names, mut records) = (BTreeSet::new(), BTreeSet::new());
-                ids.retain(|x| x.as_str().is_none_or(|n| names.insert(n.to_string()) && earlier(n).is_none_or(|id| records.insert(id))));
             }
         }
         let lines = composed.as_slice();
@@ -3181,28 +3196,40 @@ impl Dispatcher {
                         names.insert(name.to_string(), *id);
                     }
                 }
-                let ids: Option<Vec<RecordId>> = done["answer_ids"].as_array().and_then(|a| {
-                    a.iter()
-                        .map(|v| {
-                            let name = v.as_str()?;
-                            names
-                                .get(name)
-                                .copied()
-                                .or_else(|| lease.own.iter().chain(&lease.issued).chain(&lease.own_run).find(|id| id.short() == name).copied())
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        .map(distinct_ids)
-                });
+                // each name of the done is read as the store will read it, before the done is stored: a name this answer may not
+                // cite is refused here, not after the store took the done (Codex's DID-01R of c9126019), and the done names each
+                // record once, under the name first given to it (DID-01 of 3d994d04)
+                let citable: Vec<RecordId> = lease
+                    .own
+                    .iter()
+                    .chain(items.stored.iter().map(|(_, id)| id))
+                    .chain(&lease.issued)
+                    .chain(&lease.own_run)
+                    .chain(&retained)
+                    .copied()
+                    .collect();
+                let named: Vec<(Value, Option<RecordId>)> = done["answer_ids"]
+                    .as_array()
+                    .map_or(Vec::new(), |a| a.iter().map(|v| (v.clone(), v.as_str().and_then(|n| cite(n, &names, &citable)))).collect());
+                let mut seen = BTreeSet::new();
+                let once: Vec<(Value, RecordId)> = named.iter().filter_map(|(v, id)| id.map(|id| (v.clone(), id))).filter(|(_, id)| seen.insert(*id)).collect();
+                let ids: Vec<RecordId> = once.iter().map(|(_, id)| *id).collect();
+                let mut done = done.clone();
+                if done["answer_ids"].is_array() {
+                    done["answer_ids"] = json!(once.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>());
+                }
                 // An explicit unknown with no assertions is still an honest terminal outcome of the existing contract.
                 // Coverage guards delivered assertions; it must not force the agent to invent them to fill its window.
-                let missing = ids
-                    .as_ref()
-                    .filter(|ids| !ids.is_empty() || outcome.as_deref() != Some("unknown"))
-                    .filter(|_| lease.repair_lines.is_none())
-                    .map(|ids| Self::missing_summary_reports(s, &lease.issued, ids))
-                    .unwrap_or_default();
-                if !missing.is_empty() {
-                    let ids = ids.expect("resolved coverage roots");
+                let bad = named.iter().find(|(_, id)| id.is_none()).map(|(v, _)| v);
+                let missing = if bad.is_none() && (!ids.is_empty() || outcome.as_deref() != Some("unknown")) && lease.repair_lines.is_none() {
+                    Self::missing_summary_reports(s, &lease.issued, &ids)
+                } else {
+                    Default::default()
+                };
+                if let Some(bad) = bad {
+                    let e = KernelError::new(Code::UnknownLocalId, format!("{bad} in answer_ids is not a record of this answer")).field("answer_ids");
+                    items.refused.push((*d, e.to_json()));
+                } else if !missing.is_empty() {
                     let e = KernelError::new(
                         Code::NoEvidence,
                         "the answer omits a report of its issued window; retain accepted rows and add only the missing coverage",
@@ -3327,10 +3354,10 @@ impl Dispatcher {
             return answer;
         }
         // what this answer may cite: its own records (this attempt or an earlier accepted one, with own_refs any of the run) and the
-        // records the directive showed
-        let citable = |name: &str| -> Option<RecordId> {
-            locals.get(name).copied().or_else(|| own.iter().chain(&lease.issued).chain(&lease.own_run).find(|r| r.short() == name).copied())
-        };
+        // records the directive showed, and the rows a summary keeps; each name read as the store reads it, as the done's names were
+        // read before it was stored
+        let may_cite: Vec<RecordId> = own.iter().chain(&lease.issued).chain(&lease.own_run).chain(&retained).copied().collect();
+        let citable = |name: &str| -> Option<RecordId> { cite(name, &locals, &may_cite) };
         let resolve_all = |v: &Value, key: &str| -> Result<Vec<RecordId>, String> {
             v.get(key)
                 .and_then(|x| x.as_array())

@@ -1868,6 +1868,34 @@ pub fn cmd_keygen(a: &Args) {
     );
 }
 
+/// Refused, exit 1, when `out` names one of `inputs` by its path: the same path written another way, or a link to it (S6-01 for the
+/// index, the review of the 0.2.0 release for the quittance). A second name of the same file, a hard link, is no path of it: that
+/// one `write_aside` keeps safe.
+fn not_over_inputs(wal: &str, out: &Path, inputs: &[(PathBuf, &str)], what: &str) {
+    if let Some((_, input)) = inputs.iter().find(|(input, _)| super::audit_index::same_file(out, input)) {
+        let error = format!("{what} would be written over {input}: give --out another path");
+        println!("{}", json!({"status": "REFUSED", "wal": wal, "out": out.display().to_string(), "error": error}));
+        std::process::exit(1)
+    }
+}
+
+/// `bytes` written to a new file beside `out` and renamed over it: a rename replaces the name `out`, not the file behind it, so a
+/// file `out` is a second name of (a hard link to the journal) keeps its bytes, and a failed write leaves `out` as it was (Codex's
+/// OUT-01 of 85742398: `audit-proof --out` naming a hard link of the journal replaced the run by the quittance).
+fn write_aside(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let mut tmp = out.as_os_str().to_owned();
+    tmp.push(format!(".{}-{nonce}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
+    let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).and_then(|mut file| {
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()
+    });
+    written.and_then(|()| std::fs::rename(&tmp, out)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 /// `sbgk audit-sign --wal <run.wal> --signing-key <file> [--out <folder>]`: a checkpoint for every seal of a recorded `/3` journal,
 /// checked first as `audit-verify` checks it (SPEC_V02_STEP4 section 3), and the verifier key beside them.
 pub fn cmd_audit_sign(a: &Args) {
@@ -1888,16 +1916,22 @@ pub fn cmd_audit_sign(a: &Args) {
         std::process::exit(1);
     }
     let dir = PathBuf::from(a.get("out").map_or(format!("{wal}.checkpoints"), str::to_string));
+    // every file it writes is named before the first is written, and none of them is the journal or the signing key (Codex's
+    // OUT-02 of 85742398: a journal named verifier.key in the folder of --out was checked, then replaced by the verifier key)
+    let files: Vec<PathBuf> = state.seals().iter().map(|(n, _)| dir.join(format!("seal-{n}.txt"))).chain([dir.join("verifier.key")]).collect();
+    let inputs = [(PathBuf::from(&wal), "the journal"), (PathBuf::from(&key), "the signing key")];
+    for file in &files {
+        not_over_inputs(&wal, file, &inputs, "a checkpoint or the verifier key");
+    }
     std::fs::create_dir_all(&dir).unwrap_or_else(|e| fail(&format!("cannot create {}: {e}", dir.display())));
     let mut written = Vec::new();
-    for (n, seal_hash) in state.seals() {
+    for ((n, seal_hash), file) in state.seals().iter().zip(&files) {
         let body = sign::checkpoint_body(&sign::origin(state.run_id()), &heads[..=*n]);
-        let file = dir.join(format!("seal-{n}.txt"));
-        std::fs::write(&file, signer.sign(&body).unwrap_or_else(|e| fail(&e.to_json().to_string())))
+        write_aside(file, signer.sign(&body).unwrap_or_else(|e| fail(&e.to_json().to_string())).as_bytes())
             .unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", file.display())));
         written.push(json!({"seal": n, "frames": n + 1, "seal_hash": to_hex(seal_hash), "file": file.display().to_string()}));
     }
-    std::fs::write(dir.join("verifier.key"), format!("{}\n", signer.verifier().text()))
+    write_aside(&dir.join("verifier.key"), format!("{}\n", signer.verifier().text()).as_bytes())
         .unwrap_or_else(|e| fail(&format!("cannot write the verifier key: {e}")));
     println!("{}", json!({"status": "SIGNED", "wal": wal, "checkpoints": written, "verifier_key": signer.verifier().text()}));
 }
@@ -1918,20 +1952,15 @@ pub fn cmd_audit_proof(a: &Args) {
     };
     let checkpoint = PathBuf::from(a.get("checkpoint").map_or(format!("{wal}.checkpoints/seal-{seal}.txt"), str::to_string));
     // a quittance is never written over what it is cut from: the journal, the checkpoint of its seal or the verifier key beside it
-    // (the review of the 0.2.0 release: `--out` naming the journal wrote the quittance over the run)
+    // (the review of the 0.2.0 release: `--out` naming the journal wrote the quittance over the run); checked before anything is read
+    // for a given --out, and again on the path it is written to, the default one included
+    let inputs = [
+        (PathBuf::from(&wal), "its journal"),
+        (checkpoint.clone(), "the checkpoint of its seal"),
+        (checkpoint.with_file_name("verifier.key"), "the verifier key of that checkpoint"),
+    ];
     if let Some(out) = a.get("out") {
-        let inputs = [
-            (PathBuf::from(&wal), "its journal"),
-            (checkpoint.clone(), "the checkpoint of its seal"),
-            (checkpoint.with_file_name("verifier.key"), "the verifier key of that checkpoint"),
-        ];
-        if let Some((_, what)) = inputs.iter().find(|(input, _)| super::audit_index::same_file(Path::new(out), input)) {
-            println!(
-                "{}",
-                json!({"status": "REFUSED", "wal": wal, "out": out, "error": format!("the quittance would be written over {what}: give --out another path")})
-            );
-            std::process::exit(1)
-        }
+        not_over_inputs(&wal, Path::new(out), &inputs, "the quittance");
     }
     let text = std::fs::read_to_string(&checkpoint)
         .unwrap_or_else(|e| fail(&format!("cannot read the checkpoint {}: {e}; sbgk audit-sign writes the checkpoints of a journal", checkpoint.display())));
@@ -1943,8 +1972,9 @@ pub fn cmd_audit_proof(a: &Args) {
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(&format!("cannot create {}: {e}", dir.display())));
     }
+    not_over_inputs(&wal, &out, &inputs, "the quittance");
     let bytes = proof::to_file(&made);
-    std::fs::write(&out, &bytes).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", out.display())));
+    write_aside(&out, &bytes).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", out.display())));
     println!(
         "{}",
         json!({"status": "PROOF", "file": out.display().to_string(), "target": target, "seal": seal, "mode": made["mode"],
