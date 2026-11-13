@@ -1730,11 +1730,11 @@ pub(crate) fn refuse_locked_whole(wal: &str) {
     let _ = wal;
 }
 
-/// What a reading command says of a journal a server was writing while it read: how far it read, and that the journal may have
+/// What a reading command says of a journal a writer held while it read: how far it read, and that the journal may have
 /// grown since. `in_flight` counts the bytes of an entry the server had not finished at that moment, when the command knows them.
 pub(crate) fn live_read(frames: usize, in_flight: Option<u64>) -> Value {
     let mut live = json!({"frames_read": frames,
-        "note": "a server was writing this journal: it was read up to its last complete frame at that moment and may have grown since"});
+        "note": "a writer held this journal: it was read up to its last complete frame at that moment and may have grown since"});
     if let Some(bytes) = in_flight {
         live["in_flight_bytes"] = json!(bytes);
     }

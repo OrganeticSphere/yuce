@@ -3238,7 +3238,7 @@ impl Dispatcher {
                     let e = KernelError::new(
                         Code::BadField,
                         format!(
-                            "the answer keeps the row {} and every name of it is a local id of this task: give the new lines other local ids",
+                            "the answer keeps the row {} and no free name was found for it: give the new lines other local ids",
                             lost.short()
                         ),
                     )
