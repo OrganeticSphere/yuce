@@ -27,8 +27,9 @@
   run 1 of 0.2: 11 of 54 records), and the report of what fell counted the standing grounds of such an answer too high. The
   kernel now keeps each record once, in the order first named, in the done record it stores, in the answer, in a summary's
   coverage prefix and in the lists it writes after recovering an answer. It reads each name of the done line as the store reads
-  it, a local name of the task first, and refuses a name the answer may not cite before the done record is stored. Journals
-  already written replay as they are.
+  it, a local name of the task first, and refuses a name the answer may not cite before the done record is stored. A row the
+  kernel keeps goes into the answer under a prefix of its id that no local name takes, and a done line that would leave such a
+  row out is refused before it is stored. Journals already written replay as they are.
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.

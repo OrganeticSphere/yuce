@@ -1886,10 +1886,10 @@ fn write_aside(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut tmp = out.as_os_str().to_owned();
     tmp.push(format!(".{}-{nonce}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);
-    let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).and_then(|mut file| {
-        std::io::Write::write_all(&mut file, bytes)?;
-        file.sync_all()
-    });
+    // only a file this call created is removed on failure: a name already taken is someone else's (Codex's third review)
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+    let written = std::io::Write::write_all(&mut file, bytes).and_then(|()| file.sync_all());
+    drop(file);
     written.and_then(|()| std::fs::rename(&tmp, out)).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
