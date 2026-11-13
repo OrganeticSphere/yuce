@@ -91,6 +91,14 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   alike; the repair is told so and answers from the quotes. It holds at most 12 claims, 4 per fallen row: when many rows fall,
   the later rows in id order may get none, and a claim too large for what the kept rows leave of the window is left out. A
   question whose every answer row fell is not repaired but answered anew, from a window chosen by the question alone.
+* **The window of an answer is chosen by words and kept to its size.** For a question about what changed, a claim of stance
+  `reported` is taken by its words ("replaced", "superseded", "no longer", "removed", "renamed" and a few more, where its sentence
+  does not negate them); a change worded otherwise is taken only under a stance the question names or through a link. The window
+  holds at most 100 claims and 256 records, taken in turns by document, so a claim it takes can put another out at its edge; the
+  summary is told how many did not fit. On the A2A corpus the stance the readers chose for one changelog decided whether its
+  claims reached the window (BENCHMARKS.md).
+* **The packs of the gap pass go to documents in the order of their ids,** not by version or reading order: on the A2A corpus all
+  12 packs of each run went to the v0.3.0 specification, and the pass added material on an older version only.
 * **What the coverage table says.** That a quote touches the bytes of a unit, or that a pack was answered with no quote of it:
   not that the quote records what matters there, nor that an empty answer was right. A unit is cut by the lines of the text (a
   list item, a paragraph, a table row), not by its meaning. The table is the state of now: a unit under withdrawn text is

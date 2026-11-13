@@ -917,6 +917,25 @@ fn take_in_turns(ranked: &[Vec<RecordId>], per: usize, all: usize) -> Vec<Record
     out
 }
 
+/// Whether a `reported` or `confirmed` claim says by its words that something changed, for the choice of an evolution question's
+/// claims: `pairs::change_marker`, and the words a changelog states a change with. 0.2.1, step A8 (the A2A corpus): the readers of
+/// its changelog wrote "was removed" and "was renamed" under the stance `reported`, and in both runs with the gap pass 1 claim on
+/// the changelog reached the window of that question, against 14 and 8 in the runs without it, whose readers had chosen the stance
+/// `superseded`; replayed without a model, run 5's window takes 11 instead of 1. A word counts only where its own sentence does not
+/// negate it, in each part of the claim apart ("no features have been removed" states no change). Not "deprecated": replayed on the
+/// first control run of 0.2 it made about 50 more claims eligible, most of them the same two deprecations, and changed 18 claims of
+/// the window, where these two words change 3 (and 1 in the second run). The window keeps its size, so a claim it takes can put out
+/// one at its edge. Kept apart from `pairs::change_marker`, which also chooses the rows a pair is looked for in and the words a pair
+/// may not share.
+fn says_a_change(parts: &[String]) -> bool {
+    const CHANGELOG: &[&str] = &["removed", "renamed"];
+    super::pairs::change_marker(&parts.join(" "))
+        || parts.iter().any(|part| {
+            let part = part.to_ascii_lowercase();
+            CHANGELOG.iter().any(|m| part.match_indices(m).any(|(at, _)| super::s0::negation_before(&part, at, m).is_none()))
+        })
+}
+
 /// Words by which a claim says that something ended or was replaced (wider than `pairs::change_marker`: the MCP changelogs say
 /// "removed" and "deprecated").
 const ENDING: &[&str] = &["deprecat", "remov", "replac", "no longer", "supersed", "retire", "dropped", "obsolete", "withdrawn", "eliminat", "moved to"];
@@ -2677,7 +2696,7 @@ impl Dispatcher {
                 || q.stances.iter().any(|r| matches!(r.as_str(), "superseded" | "refuted"));
             (evolution
                 && matches!(r.status.as_deref(), Some("reported" | "confirmed"))
-                && super::pairs::change_marker(
+                && says_a_change(
                     &r.terms
                         .iter()
                         .cloned()
@@ -2686,8 +2705,7 @@ impl Dispatcher {
                             r.body["predicate"].as_str().unwrap_or("").to_string(),
                             r.body["object"].as_str().unwrap_or("").to_string(),
                         ])
-                        .collect::<Vec<_>>()
-                        .join(" "),
+                        .collect::<Vec<_>>(),
                 ))
                 || mapped.contains(&r.id)
                 || linked_by.contains(&r.id)

@@ -43,6 +43,16 @@
   it, a local name of the task first, and refuses a name the answer may not cite before the done record is stored. A row the
   kernel keeps goes into the answer under a prefix of its id that no local name takes, and a done line that would leave such a
   row out is refused before it is stored. Journals already written replay as they are.
+* **A question about what changed takes the claims that say something was removed or renamed.** For such a question the kernel
+  took a claim of stance `reported` only by words such as "replaced", "superseded" or "no longer". On the A2A corpus the readers of
+  the changelog wrote "was removed" and "was renamed" under that stance, and in two of four runs one claim on the changelog
+  reached the window of that question, against 14 and 8 in the other two (BENCHMARKS.md, the gap pass on a second corpus).
+  "removed" and "renamed" now count too, where their own sentence does not negate them: replayed from the journals without a
+  model, the window of the run with 1 takes 11, and that of the run with 8 takes 11. "deprecated" does not count: on the first
+  control run of 0.2 it made about 50 more claims eligible, most of them restating two deprecations. The window keeps its size, so
+  what it takes can put other claims out at its edge: on the two control runs of 0.2, 3 claims and 1 claim of it change, and in
+  the first the one claim that `ping` was removed is put out. The change was measured by replay only, not by a run with a model.
+  No rule of the journal changes, and journals replay as before.
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.
