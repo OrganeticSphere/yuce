@@ -58,10 +58,13 @@ class McpCorpus(unittest.TestCase):
                          if line[:1].isdigit() or line.startswith("- ")]) for v in ("2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"))
         self.assertEqual(len(events), items, "one event per changelog item")
         ids = [e["id"] for e in events]
+        kinds = {e["id"]: e["kind"] for e in events}
         for e in events:
             self.assertIn(e["quote"], texts[e["file"]], e["id"])
             self.assertIn(e["kind"], gold["kinds"], e["id"])
             self.assertTrue(all(x in ids and ids.index(x) < ids.index(e["id"]) for x in e["related_earlier"]), e["id"])
+            # a clarified event has no mechanism of its own: never the earlier end of a link (the rule of 2026-11-13)
+            self.assertTrue(all(kinds[x] != "clarified" for x in e["related_earlier"]), e["id"])
             if e["basis"] == "decided":
                 self.assertIn(e["decision"]["quote"], sources, e["id"])
             if e["basis"] == "corrected":
