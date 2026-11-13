@@ -260,7 +260,7 @@ withdraws, so 2B was not graded again.
     conclusions were superseded, made stale or qualified) held 1 claim on the changelog in each run with the pass, and 14 and 8 in
     the runs without. Those were all the claims on the changelog that the rule of 0.2.0 admitted, and the window took all of them;
     the rule's count is no measure of what the changelog held that mattered. Run 5's readers recorded 62 claims on it, 60 with the
-    stance `reported`, 8 of these saying in their text that something was removed or renamed; for this question the kernel took a
+    stance `reported`, 9 of these saying in their text that something was removed or renamed; for this question the kernel took a
     `reported` claim only by its words (`replaced`, `superseded`, `no longer` and a few more), and these were not among them. Run
     1's readers stored 10 claims on the changelog. Run 2's gave 13 of their 16 the stance `superseded`.
   - In both runs with the pass the changelog was read before the first pack, and its first reading had the prompts of the runs
