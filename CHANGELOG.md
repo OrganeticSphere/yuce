@@ -12,7 +12,8 @@
   needed only to write the file again. Where the kernel was more lenient it now reads a note as the reference does: a malformed
   signature line, or more than 100, refuses the note; the first signature line of a known key decides; a known key whose signature
   does not verify refuses the whole note; a key id may be written in upper case; a key text may end with its line end and nothing
-  else. The kernel stays stricter on purpose in three places, each named in the test: a weak key, a control character in a key
+  else. The same key known twice (from the trusted keys and from the checker) is one key, and two different keys known under one
+  name and id are an ambiguous list: a note signed under them is refused. The kernel stays stricter on purpose in three places, each named in the test: a weak key, a control character in a key
   name, and base64 that sets the unused bits of its padding.
 * **`audit_seal`: the owner seals the journal when he asks,** for example before a withdrawal, between the seals the server writes by
   itself, so that a quittance can show what stood at that point after it fell. A server with a signing key signs it; a seal right

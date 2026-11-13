@@ -195,6 +195,51 @@ const STRICTER: [(&str, &str); 4] = [
     ("a signature whose base64 sets the unused padding bits", "base64 has one spelling"),
 ];
 
+/// The outcome the kernel gives where it is stricter in opening a note: the weak key is not known, so no known key signed; the base64
+/// of another spelling makes the note malformed.
+const STRICTER_OPEN: [(&str, &str); 2] =
+    [("a forged signature for a weak key", "unverified"), ("a signature whose base64 sets the unused padding bits", "malformed note")];
+
+/// The same key known twice is one key; two different keys known under one name and id are an ambiguous list, and a note signed
+/// under them is refused, as the reference refuses such a list (Codex's review of 30efb85b).
+#[test]
+fn a_key_known_twice_is_one_key_and_two_keys_under_one_name_and_id_refuse_the_note() {
+    let note = open_note(SIGNED).unwrap();
+    let v = NoteSigner::parse(SIGNER).unwrap().verifier();
+    let twice = v.clone();
+    assert_eq!(verified_by(&note, &[&v, &twice]).unwrap(), vec![&v], "the same key twice is one");
+    let impostor = NoteVerifier { name: v.name.clone(), id: v.id, key: NoteSigner::generate("PeterNeumann").unwrap().verifier().key };
+    assert!(verified_by(&note, &[&v, &impostor]).is_err(), "two keys under one name and id");
+    assert!(verified_by(&note, &[&impostor, &v]).is_err(), "in either order");
+    let trusted = |k: &NoteVerifier| TrustedKey { verifier: k.clone(), role: "operator".into(), valid_after: None, valid_before: None, revoked: None };
+    let verdict = signature_verdict(&note, &[trusted(&v)], Some(&impostor), None);
+    assert_eq!((verdict.status, verdict.refused), ("signature not valid", true), "{verdict:?}");
+}
+
+/// A bad signature of a known key refuses the note before its dates and its revocation are read: a witness key revoked, or outside
+/// its days, still makes the note it signed badly unacceptable; a witness key not known is passed over (Codex's review of 30efb85b).
+#[test]
+fn a_bad_signature_of_a_known_key_refuses_the_note_whatever_its_days_or_revocation() {
+    let (operator, witness) = (NoteSigner::generate("operator").unwrap(), NoteSigner::generate("witness").unwrap());
+    let good = operator.sign(TEXT).unwrap();
+    let bad_line = witness.sign("another text\n").unwrap().rsplit_once("\n\n").unwrap().1.to_string();
+    let note = open_note(&format!("{good}{bad_line}")).unwrap();
+    let key = |s: &NoteSigner, role: &str, days: (Option<&str>, Option<&str>, Option<&str>)| TrustedKey {
+        verifier: s.verifier(),
+        role: role.into(),
+        valid_after: days.0.map(str::to_string),
+        valid_before: days.1.map(str::to_string),
+        revoked: days.2.map(str::to_string),
+    };
+    for days in [(None, None, None), (None, None, Some("2026-01-01")), (Some("2030-01-01"), None, None), (None, Some("2020-01-01"), None)] {
+        let trusted = [key(&operator, "operator", (None, None, None)), key(&witness, "witness", days)];
+        let verdict = signature_verdict(&note, &trusted, None, Some("2026-06-01"));
+        assert_eq!((verdict.status, verdict.refused), ("signature not valid", true), "{days:?}: {verdict:?}");
+    }
+    let verdict = signature_verdict(&note, &[key(&operator, "operator", (None, None, None))], None, Some("2026-06-01"));
+    assert_eq!((verdict.status, verdict.refused), ("signature valid, key pinned", false), "{verdict:?}");
+}
+
 #[test]
 fn signed_notes_hold_to_the_reference_implementation() {
     let v: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
@@ -238,20 +283,26 @@ fn signed_notes_hold_to_the_reference_implementation() {
         assert_eq!(verified_by(&open_note(note).unwrap(), &known).unwrap().len(), names.len(), "{case}");
         checked += 1;
     }
-    // notes opened with known keys: the keys that verify are the reference's
+    // notes opened with known keys: the keys that verify are the reference's, and so is the kind of the outcome, the names the
+    // reference gives it: a malformed note, an invalid signature of a known key, no signature of a known key, or verified (Codex's
+    // review of 30efb85b)
     for c in cases("open") {
         let case = c["case"].as_str().unwrap();
         let known: Vec<NoteVerifier> = c["known"].as_array().unwrap().iter().filter_map(|k| NoteVerifier::parse(k.as_str().unwrap()).ok()).collect();
         let known: Vec<&NoteVerifier> = known.iter().collect();
-        let ours: Vec<String> = String::from_utf8(unbase64(c["msg_b64"].as_str().unwrap()).unwrap())
-            .ok()
-            .and_then(|m| open_note(&m).ok())
-            .and_then(|n| verified_by(&n, &known).ok())
-            .map(|keys| keys.iter().map(|k| k.name.clone()).collect())
-            .unwrap_or_default();
+        let opened = String::from_utf8(unbase64(c["msg_b64"].as_str().unwrap()).unwrap()).ok().and_then(|m| open_note(&m).ok());
+        let (outcome, ours): (&str, Vec<String>) = match opened.map(|n| verified_by(&n, &known)) {
+            None => ("malformed note", Vec::new()),
+            Some(Err(_)) => ("invalid signature", Vec::new()),
+            Some(Ok(keys)) if keys.is_empty() => ("unverified", Vec::new()),
+            Some(Ok(keys)) => ("ok", keys.iter().map(|k| k.name.clone()).collect()),
+        };
         let reference: Vec<String> = c["verified"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_string()).collect();
-        let want = if stricter(case) { Vec::new() } else { reference };
-        assert_eq!(ours, want, "open, {case}: the reference says {}", c["go"]);
+        let (want, want_outcome) = match STRICTER_OPEN.iter().find(|(c, _)| *c == case) {
+            Some((_, ours)) => (Vec::new(), *ours),
+            None => (reference, c["go"].as_str().unwrap()),
+        };
+        assert_eq!((outcome, &ours), (want_outcome, &want), "open, {case}: the reference says {}", c["go"]);
         checked += 1;
     }
     // RFC 6962 roots over frame hashes

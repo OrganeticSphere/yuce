@@ -247,11 +247,19 @@ pub fn open_note(note: &str) -> KResult<OpenedNote> {
 /// key not known is passed over, the first line of a known key decides and its repeats are passed over, and a known key whose
 /// signature does not verify refuses the whole note. The check of a signature is strict (`verify_strict`: no weak key, no
 /// signature point of small order), where the reference takes a signature made for a weak key.
+///
+/// The same key known twice (from a trusted keys file and from the checker, say) is one key; two different keys known under one name
+/// and id are an ambiguous list, and a note signed under that name and id is refused, as the reference refuses such a list (Codex's
+/// review of 30efb85b).
 pub fn verified_by<'a>(note: &OpenedNote, known: &[&'a NoteVerifier]) -> KResult<Vec<&'a NoteVerifier>> {
     let mut seen = std::collections::BTreeSet::new();
     let mut signed = Vec::new();
     for (name, id, sig) in &note.signatures {
-        let Some(key) = known.iter().find(|k| k.name == *name && k.id == *id) else { continue };
+        let mut matching = known.iter().filter(|k| k.name == *name && k.id == *id);
+        let Some(key) = matching.next() else { continue };
+        if matching.any(|other| other.key != key.key) {
+            return Err(bad("checkpoint", format!("two different known keys are named {name} with the id {id:08x}: the note cannot say which signed")));
+        }
         if !seen.insert((name.as_str(), *id)) {
             continue;
         }
