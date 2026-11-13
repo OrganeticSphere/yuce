@@ -28,6 +28,27 @@ fn the_texts_of_signed_note_are_the_standards() {
     assert!(!other.verifier().signed(&note), "same name, another key and id");
 }
 
+/// A weak verifier key, the identity point: under the cofactorless check a "signature" of R = identity and S = 0 verifies any text,
+/// so whoever names such a key could deny every signature made with it. The key is refused, and the check of a note is strict.
+#[test]
+fn a_weak_verifier_key_is_refused_and_a_forged_signature_for_it_does_not_verify() {
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    let name = "Weak";
+    let id = key_id(name, &identity);
+    let mut data = vec![ED25519];
+    data.extend_from_slice(&identity);
+    let refused = NoteVerifier::parse(&format!("{name}+{id:08x}+{}", base64(&data))).unwrap_err();
+    assert!(refused.message.contains("weak"), "{refused}");
+    let key = VerifyingKey::from_bytes(&identity).unwrap();
+    let mut forged = [0u8; 64];
+    forged[0] = 1;
+    assert!(ed25519_dalek::Verifier::verify(&key, TEXT.as_bytes(), &Signature::from_bytes(&forged)).is_ok(), "the cofactorless check takes it");
+    let line = base64(&[id.to_be_bytes().as_slice(), &forged].concat());
+    let note = open_note(&format!("{TEXT}\n\u{2014} {name} {line}\n")).unwrap();
+    assert!(!NoteVerifier { name: name.into(), id, key }.signed(&note), "the strict check refuses it");
+}
+
 #[test]
 fn base64_has_one_spelling() {
     for bytes in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
@@ -159,4 +180,86 @@ fn a_note_with_a_control_character_is_refused_whole() {
     let two = format!("{}{}", SIGNED, other.sign(TEXT).unwrap().rsplit_once("\n\n").unwrap().1);
     let opened = open_note(&two).unwrap();
     assert!(signer.verifier().signed(&opened) && other.verifier().signed(&opened));
+}
+
+/// The vectors of the reference implementation of `signed-note` (golang.org/x/mod/sumdb/note) and of its RFC 6962 tree
+/// (golang.org/x/mod/sumdb/tlog), written by `scripts/signed_note_vectors`: keys, signed notes, notes opened with known keys, tree
+/// roots. Go is needed only to write the file again.
+const VECTORS: &str = include_str!("signed_note_vectors.json");
+
+/// Where the kernel is stricter than the reference on purpose, and why.
+const STRICTER: [(&str, &str); 4] = [
+    ("name with a control character", "a note holds no control character, so such a key could verify no note"),
+    ("weak key, the identity point", "a weak key verifies forged signatures"),
+    ("a forged signature for a weak key", "a weak key is refused"),
+    ("a signature whose base64 sets the unused padding bits", "base64 has one spelling"),
+];
+
+#[test]
+fn signed_notes_hold_to_the_reference_implementation() {
+    let v: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
+    let stricter = |case: &str| STRICTER.iter().any(|(c, _)| *c == case);
+    let cases = |k: &str| v[k].as_array().unwrap().clone();
+    let mut checked = 0;
+    // keys: their texts are the reference's, both ways
+    let mut signers = std::collections::BTreeMap::new();
+    for k in cases("keys") {
+        let signer = NoteSigner::parse(k["skey"].as_str().unwrap()).unwrap();
+        assert_eq!(signer.text(), k["skey"]);
+        assert_eq!(signer.verifier().text(), k["vkey"]);
+        assert_eq!(NoteVerifier::parse(k["vkey"].as_str().unwrap()).unwrap(), signer.verifier());
+        signers.insert(k["name"].as_str().unwrap().to_string(), signer);
+    }
+    for c in cases("verifier_keys") {
+        let case = c["case"].as_str().unwrap();
+        let ours = NoteVerifier::parse(c["key"].as_str().unwrap()).is_ok();
+        assert_eq!(ours, c["go"] == "ok" && !stricter(case), "verifier key, {case}: the reference says {}", c["go"]);
+        checked += 1;
+    }
+    for c in cases("signer_keys") {
+        let case = c["case"].as_str().unwrap();
+        let ours = NoteSigner::parse(c["key"].as_str().unwrap()).is_ok();
+        assert_eq!(ours, c["go"] == "ok" && !stricter(case), "signer key, {case}: the reference says {}", c["go"]);
+        checked += 1;
+    }
+    // signed notes: one signer signs as the reference does, byte for byte, and every signer's key verifies the note
+    for c in cases("signed") {
+        let (case, text, note) = (c["case"].as_str().unwrap(), c["text"].as_str().unwrap(), c["note"].as_str().unwrap());
+        let names: Vec<&str> = c["signers"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
+        if let [one] = names[..] {
+            match signers[one].sign(text) {
+                Ok(ours) => assert_eq!(ours, note, "{case}"),
+                // the kernel signs no body with a blank line: a checkpoint has none
+                Err(_) => assert!(text.contains("\n\n"), "{case}: the kernel refused to sign it"),
+            }
+        }
+        let known: Vec<NoteVerifier> = names.iter().map(|n| signers[*n].verifier()).collect();
+        let known: Vec<&NoteVerifier> = known.iter().collect();
+        assert_eq!(verified_by(&open_note(note).unwrap(), &known).unwrap().len(), names.len(), "{case}");
+        checked += 1;
+    }
+    // notes opened with known keys: the keys that verify are the reference's
+    for c in cases("open") {
+        let case = c["case"].as_str().unwrap();
+        let known: Vec<NoteVerifier> = c["known"].as_array().unwrap().iter().filter_map(|k| NoteVerifier::parse(k.as_str().unwrap()).ok()).collect();
+        let known: Vec<&NoteVerifier> = known.iter().collect();
+        let ours: Vec<String> = String::from_utf8(unbase64(c["msg_b64"].as_str().unwrap()).unwrap())
+            .ok()
+            .and_then(|m| open_note(&m).ok())
+            .and_then(|n| verified_by(&n, &known).ok())
+            .map(|keys| keys.iter().map(|k| k.name.clone()).collect())
+            .unwrap_or_default();
+        let reference: Vec<String> = c["verified"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_string()).collect();
+        let want = if stricter(case) { Vec::new() } else { reference };
+        assert_eq!(ours, want, "open, {case}: the reference says {}", c["go"]);
+        checked += 1;
+    }
+    // RFC 6962 roots over frame hashes
+    let frames: Vec<Hash> = (0..1000).map(|i| sha256(format!("frame {i}").as_bytes())).collect();
+    for t in cases("trees") {
+        let n = t["size"].as_u64().unwrap() as usize;
+        assert_eq!(crate::hash::to_hex(&crate::audit::trees::log_root(&frames[..n])), t["root"], "the tree of {n} frames");
+        checked += 1;
+    }
+    assert!(checked > 100, "{checked} cases");
 }

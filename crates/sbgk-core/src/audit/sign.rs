@@ -9,7 +9,7 @@
 use super::persistence::AuditJournal;
 use crate::error::{Code, KResult, KernelError};
 use crate::hash::{sha256, Hash};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use std::path::Path;
 
 /// The algorithm byte of an Ed25519 key in C2SP `signed-note`.
@@ -70,6 +70,15 @@ pub fn key_id(name: &str, public: &[u8; 32]) -> u32 {
     u32::from_be_bytes([h[0], h[1], h[2], h[3]])
 }
 
+/// A key id as a key text writes it: eight hex digits, in either case, as the reference implementation of `signed-note` reads them
+/// (golang.org/x/mod/sumdb/note; the vectors of `signed_note_vectors.json`). The kernel writes lower case.
+fn parse_key_id(id: &str) -> Option<u32> {
+    (id.len() == 8 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| u32::from_str_radix(id, 16).ok()).flatten()
+}
+
+/// At most this many signature lines in a note, as the reference implementation allows: more is a malformed note.
+const MAX_SIGNATURES: usize = 100;
+
 /// Random bytes from the system as lowercase hex: a token for a subject the server makes itself (`audit-serve --profile solo`).
 pub fn random_hex(bytes: usize) -> KResult<String> {
     let mut buf = vec![0u8; bytes];
@@ -127,12 +136,12 @@ impl NoteSigner {
 
     /// The text of a signing key file.
     pub fn parse(text: &str) -> KResult<Self> {
-        let parts: Vec<&str> = text.trim_end().splitn(5, '+').collect();
+        let parts: Vec<&str> = text.trim_end_matches(['\n', '\r']).splitn(5, '+').collect();
         let [priv_, key, name, id, data] = parts[..] else { return Err(bad("signing_key", "expected PRIVATE+KEY+<name>+<id>+<base64>")) };
         let bytes = unbase64(data).filter(|b| priv_ == "PRIVATE" && key == "KEY" && b.len() == 33 && b[0] == ED25519);
         let bytes = bytes.ok_or_else(|| bad("signing_key", "not an Ed25519 signing key of signed-note"))?;
         let signer = Self { name: key_name(name)?.to_string(), key: SigningKey::from_bytes(bytes[1..].try_into().expect("32 bytes")) };
-        if format!("{:08x}", signer.id()) != id {
+        if parse_key_id(id) != Some(signer.id()) {
             return Err(bad("signing_key", "the key id does not match the key"));
         }
         Ok(signer)
@@ -174,12 +183,17 @@ pub struct NoteVerifier {
 
 impl NoteVerifier {
     pub fn parse(text: &str) -> KResult<Self> {
-        let parts: Vec<&str> = text.trim().splitn(3, '+').collect();
+        // a key read from a file may end with its line end; nothing else is taken off (the reference refuses a space before the key)
+        let parts: Vec<&str> = text.trim_end_matches(['\n', '\r']).splitn(3, '+').collect();
         let [name, id, data] = parts[..] else { return Err(bad("verifier_key", "expected <name>+<id>+<base64>")) };
         let bytes = unbase64(data).filter(|b| b.len() == 33 && b[0] == ED25519).ok_or_else(|| bad("verifier_key", "not an Ed25519 verifier key"))?;
         let key = VerifyingKey::from_bytes(bytes[1..].try_into().expect("32 bytes")).map_err(|_| bad("verifier_key", "not a valid Ed25519 public key"))?;
+        // a key of small order verifies a forged signature of any text, so whoever names it could deny every signature it holds
+        if key.is_weak() {
+            return Err(bad("verifier_key", "a weak Ed25519 public key (of small order): it would verify forged signatures"));
+        }
         let v = Self { name: key_name(name)?.to_string(), id: key_id(name, key.as_bytes()), key };
-        if format!("{:08x}", v.id) != id {
+        if parse_key_id(id) != Some(v.id) {
             return Err(bad("verifier_key", "the key id does not match the key"));
         }
         Ok(v)
@@ -199,7 +213,10 @@ pub struct OpenedNote {
     pub signatures: Vec<(String, u32, Vec<u8>)>,
 }
 
-/// The parts of a signed note: the body up to the blank line, then signature lines `— <name> <base64(id, signature)>`.
+/// The parts of a signed note: the body up to the blank line, then signature lines `— <name> <base64(id, signature)>`. A note is
+/// malformed, as the reference implementation of `signed-note` finds it (golang.org/x/mod/sumdb/note, `Open`), when any of its
+/// signature lines is: a name that is empty or holds a space or `+`, base64 that does not decode or holds under five bytes, or
+/// more than 100 lines. A line of a key the checker does not know counts too, whatever key signed the note.
 pub fn open_note(note: &str) -> KResult<OpenedNote> {
     if has_control(note) {
         return Err(bad("checkpoint", "a signed note holds no control character but the line end"));
@@ -209,22 +226,47 @@ pub fn open_note(note: &str) -> KResult<OpenedNote> {
     if !rest.ends_with('\n') || rest.len() < 2 {
         return Err(bad("checkpoint", "a signed note ends with its signature lines"));
     }
+    let lines: Vec<&str> = rest[..rest.len() - 1].split('\n').collect();
+    if lines.len() > MAX_SIGNATURES {
+        return Err(bad("checkpoint", format!("a signed note has at most {MAX_SIGNATURES} signature lines")));
+    }
     let mut signatures = Vec::new();
-    for line in rest[..rest.len() - 1].split('\n') {
+    for line in lines {
         let line = line.strip_prefix(SIGNATURE_START).ok_or_else(|| bad("checkpoint", "a signature line begins with an em dash and a space"))?;
         let (name, data) = line.split_once(' ').ok_or_else(|| bad("checkpoint", "a signature line names its key and its signature"))?;
+        if name.is_empty() || name.contains('+') || name.chars().any(char::is_whitespace) {
+            return Err(bad("checkpoint", "a signature line names its key: not empty, no space and no '+'"));
+        }
         let bytes = unbase64(data).filter(|b| b.len() > 4).ok_or_else(|| bad("checkpoint", "a signature is base64 of a key id and a signature"))?;
         signatures.push((name.to_string(), u32::from_be_bytes(bytes[..4].try_into().expect("4 bytes")), bytes[4..].to_vec()));
     }
     Ok(OpenedNote { body: body.to_string(), signatures })
 }
 
+/// The keys among `known` that signed the note, as the reference implementation of `signed-note` opens a note (`Open`): a line of a
+/// key not known is passed over, the first line of a known key decides and its repeats are passed over, and a known key whose
+/// signature does not verify refuses the whole note. The check of a signature is strict (`verify_strict`: no weak key, no
+/// signature point of small order), where the reference takes a signature made for a weak key.
+pub fn verified_by<'a>(note: &OpenedNote, known: &[&'a NoteVerifier]) -> KResult<Vec<&'a NoteVerifier>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut signed = Vec::new();
+    for (name, id, sig) in &note.signatures {
+        let Some(key) = known.iter().find(|k| k.name == *name && k.id == *id) else { continue };
+        if !seen.insert((name.as_str(), *id)) {
+            continue;
+        }
+        if !Signature::from_slice(sig).is_ok_and(|s| key.key.verify_strict(note.body.as_bytes(), &s).is_ok()) {
+            return Err(bad("checkpoint", format!("the signature of the known key {name} does not verify: the note is refused")));
+        }
+        signed.push(*key);
+    }
+    Ok(signed)
+}
+
 impl NoteVerifier {
-    /// Whether this key signed the note's body: a signature line with its name and id whose Ed25519 signature verifies.
+    /// Whether this key signed the note's body, by `verified_by` with this key the only one known.
     pub fn signed(&self, note: &OpenedNote) -> bool {
-        note.signatures.iter().any(|(name, id, sig)| {
-            *name == self.name && *id == self.id && Signature::from_slice(sig).is_ok_and(|s| self.key.verify(note.body.as_bytes(), &s).is_ok())
-        })
+        verified_by(note, &[self]).is_ok_and(|keys| !keys.is_empty())
     }
 }
 
@@ -330,7 +372,14 @@ pub fn signature_verdict(note: &OpenedNote, trusted: &[TrustedKey], untrusted: O
         return SignatureVerdict { status: "the anchored day is not a calendar day YYYY-MM-DD", key: None, refused: true, time: "not pinned" };
     }
     let time = if anchored_at.is_some() { "anchored" } else { "not pinned" };
-    if let Some(k) = trusted.iter().find(|k| k.verifier.signed(note)) {
+    // the keys known to the check are the trusted ones and the one the checker gave; a signature of any of them that does not
+    // verify refuses the note, as the reference implementation of signed-note does
+    let known: Vec<&NoteVerifier> = trusted.iter().map(|k| &k.verifier).chain(untrusted).collect();
+    let Ok(verified) = verified_by(note, &known) else {
+        return SignatureVerdict { status: "signature not valid", key: None, refused: true, time };
+    };
+    let signed = |v: &NoteVerifier| verified.contains(&v);
+    if let Some(k) = trusted.iter().find(|k| signed(&k.verifier)) {
         let key = Some(k.verifier.text());
         // the days a key is valid hold for a revoked key too (S4-02): before its first day it signed nothing that counts
         let outside = anchored_at.is_some_and(|a| k.valid_after.as_deref().is_some_and(|v| a < v) || k.valid_before.as_deref().is_some_and(|v| a >= v));
@@ -350,7 +399,7 @@ pub fn signature_verdict(note: &OpenedNote, trusted: &[TrustedKey], untrusted: O
         return SignatureVerdict { status: "signature valid, key pinned", key, refused: false, time };
     }
     match untrusted {
-        Some(v) if v.signed(note) => SignatureVerdict { status: "signature valid, key not pinned", key: Some(v.text()), refused: false, time },
+        Some(v) if signed(v) => SignatureVerdict { status: "signature valid, key not pinned", key: Some(v.text()), refused: false, time },
         Some(_) => SignatureVerdict { status: "signature not valid", key: None, refused: true, time },
         None => SignatureVerdict { status: "no signature of a known key", key: None, refused: true, time },
     }

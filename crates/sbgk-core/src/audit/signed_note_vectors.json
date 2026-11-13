@@ -1,0 +1,840 @@
+{
+  "_note": "Made by the reference implementation of C2SP signed-note (golang.org/x/mod/sumdb/note) and its RFC 6962 tree (golang.org/x/mod/sumdb/tlog). 'go' is that code's outcome; the kernel's tests hold their own to it, and name each case where the kernel is stricter on purpose.",
+  "generator": "scripts/signed_note_vectors, go1.27.4, golang.org/x/mod v0.43.0",
+  "keys": [
+    {
+      "name": "operator",
+      "skey": "PRIVATE+KEY+operator+72b08312+AY5astGLnDeMof8I8iv/9Qb72njSp1AgkGsRlecd4XWB",
+      "vkey": "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol"
+    },
+    {
+      "name": "witness",
+      "skey": "PRIVATE+KEY+witness+aabedb13+ATJn+wMlRDCeji4wVXltMbbdGZipyHmdGyccyXVDwalo",
+      "vkey": "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+    },
+    {
+      "name": "PeterNeumann",
+      "skey": "PRIVATE+KEY+PeterNeumann+78f2af0d+AXcIT7uC4KwqRys68QdCARjkGJBx5sQ8V91DA7o5Wx7j",
+      "vkey": "PeterNeumann+78f2af0d+ASGcXyCWoIp1Ua/Ivpq2fzjg8BOd9gVJUMFdaajce+ik"
+    },
+    {
+      "name": "example.com/log",
+      "skey": "PRIVATE+KEY+example.com/log+49020466+AZHRMY1rHdORqu/WI4hfk5goDco0jf/TAc2tx6BhZxEf",
+      "vkey": "example.com/log+49020466+AUGciuqvyITaU358Mlj3Q/MLKt3dc/8N12w0c6xyWeSK"
+    },
+    {
+      "name": "yuce/run-1",
+      "skey": "PRIVATE+KEY+yuce/run-1+2f33dddc+AUgYOpPE4xwoQQ4Jv3m0Gp/nCZbZwn7lKBTMARqsE7fk",
+      "vkey": "yuce/run-1+2f33dddc+AYGoTdEe34+9y5WmCDVSOyK0XsAXcuzgyIE/0+nHmCze"
+    },
+    {
+      "name": "café",
+      "skey": "PRIVATE+KEY+café+a37847b9+AfMVtu+R42uFDbRBwHK9a+3i6ck4uNw4rI8yl66plEjA",
+      "vkey": "café+a37847b9+AdihzzwMyloertczfCxhiDOtCwoq7BdPo5VrkzWvri3q"
+    },
+    {
+      "name": "日本",
+      "skey": "PRIVATE+KEY+日本+2cd782dc+AT5kpfyW6+WHmi+/LZzJidtIYpHJr3UB5uRg27zn77yB",
+      "vkey": "日本+2cd782dc+ARvLbyDqP6fJ3DlifpcHVCbnOmm1KafoNPgUdtdtfV5g"
+    }
+  ],
+  "verifier_keys": [
+    {
+      "case": "generated operator",
+      "key": "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "ok"
+    },
+    {
+      "case": "generated witness",
+      "key": "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr",
+      "go": "ok"
+    },
+    {
+      "case": "generated PeterNeumann",
+      "key": "PeterNeumann+78f2af0d+ASGcXyCWoIp1Ua/Ivpq2fzjg8BOd9gVJUMFdaajce+ik",
+      "go": "ok"
+    },
+    {
+      "case": "generated example.com/log",
+      "key": "example.com/log+49020466+AUGciuqvyITaU358Mlj3Q/MLKt3dc/8N12w0c6xyWeSK",
+      "go": "ok"
+    },
+    {
+      "case": "generated yuce/run-1",
+      "key": "yuce/run-1+2f33dddc+AYGoTdEe34+9y5WmCDVSOyK0XsAXcuzgyIE/0+nHmCze",
+      "go": "ok"
+    },
+    {
+      "case": "generated café",
+      "key": "café+a37847b9+AdihzzwMyloertczfCxhiDOtCwoq7BdPo5VrkzWvri3q",
+      "go": "ok"
+    },
+    {
+      "case": "generated 日本",
+      "key": "日本+2cd782dc+ARvLbyDqP6fJ3DlifpcHVCbnOmm1KafoNPgUdtdtfV5g",
+      "go": "ok"
+    },
+    {
+      "case": "id in upper case",
+      "key": "operator+72B08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "ok"
+    },
+    {
+      "case": "id of another key",
+      "key": "operator+72b08313+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "invalid verifier hash"
+    },
+    {
+      "case": "id of seven digits",
+      "key": "operator+72b0831+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "id of nine digits",
+      "key": "operator+072b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "base64 with a bad character",
+      "key": "operator+72b08312+AWVZqcWW7S*ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "algorithm byte 2",
+      "key": "operator+b970ad66+AmVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "unknown verifier algorithm"
+    },
+    {
+      "case": "key of 31 bytes",
+      "key": "operator+3b92c55f+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMo=",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "key of 33 bytes",
+      "key": "operator+ab17a786+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMolAA==",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "empty name",
+      "key": "+a243aa1e+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "name with a space",
+      "key": "op erator+78a3d6a6+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "name with a no-break space",
+      "key": "op erator+7604260c+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "name with a control character",
+      "key": "op\u0001erator+4e3f4860+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "ok"
+    },
+    {
+      "case": "weak key, the identity point",
+      "key": "weak+8b94416d+AQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "go": "ok"
+    },
+    {
+      "case": "line end after the key",
+      "key": "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol\n",
+      "go": "ok"
+    },
+    {
+      "case": "space before the key",
+      "key": " operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    }
+  ],
+  "signer_keys": [
+    {
+      "case": "generated operator",
+      "key": "PRIVATE+KEY+operator+72b08312+AY5astGLnDeMof8I8iv/9Qb72njSp1AgkGsRlecd4XWB",
+      "go": "ok"
+    },
+    {
+      "case": "generated witness",
+      "key": "PRIVATE+KEY+witness+aabedb13+ATJn+wMlRDCeji4wVXltMbbdGZipyHmdGyccyXVDwalo",
+      "go": "ok"
+    },
+    {
+      "case": "generated PeterNeumann",
+      "key": "PRIVATE+KEY+PeterNeumann+78f2af0d+AXcIT7uC4KwqRys68QdCARjkGJBx5sQ8V91DA7o5Wx7j",
+      "go": "ok"
+    },
+    {
+      "case": "generated example.com/log",
+      "key": "PRIVATE+KEY+example.com/log+49020466+AZHRMY1rHdORqu/WI4hfk5goDco0jf/TAc2tx6BhZxEf",
+      "go": "ok"
+    },
+    {
+      "case": "generated yuce/run-1",
+      "key": "PRIVATE+KEY+yuce/run-1+2f33dddc+AUgYOpPE4xwoQQ4Jv3m0Gp/nCZbZwn7lKBTMARqsE7fk",
+      "go": "ok"
+    },
+    {
+      "case": "generated café",
+      "key": "PRIVATE+KEY+café+a37847b9+AfMVtu+R42uFDbRBwHK9a+3i6ck4uNw4rI8yl66plEjA",
+      "go": "ok"
+    },
+    {
+      "case": "generated 日本",
+      "key": "PRIVATE+KEY+日本+2cd782dc+AT5kpfyW6+WHmi+/LZzJidtIYpHJr3UB5uRg27zn77yB",
+      "go": "ok"
+    },
+    {
+      "case": "id in upper case",
+      "key": "PRIVATE+KEY+operator+72B08312+AY5astGLnDeMof8I8iv/9Qb72njSp1AgkGsRlecd4XWB",
+      "go": "ok"
+    },
+    {
+      "case": "id of another key",
+      "key": "PRIVATE+KEY+operator+72b08313+AY5astGLnDeMof8I8iv/9Qb72njSp1AgkGsRlecd4XWB",
+      "go": "invalid verifier hash"
+    },
+    {
+      "case": "PRIVATE+KEYS",
+      "key": "PRIVATE+KEYS+operator+72b08312+AY5astGLnDeMof8I8iv/9Qb72njSp1AgkGsRlecd4XWB",
+      "go": "malformed verifier id"
+    },
+    {
+      "case": "verifier key given as signer key",
+      "key": "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+      "go": "malformed verifier id"
+    }
+  ],
+  "signed": [
+    {
+      "case": "one line, signed by operator",
+      "text": "a\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "a\n\n— operator crCDEiH6fzgJT1jTogYot4AcIx71JbsQ2+IIAVM3xWTfQM6LwukmEr/ZCG3fFvAFz66ujLP9yogUr5+8hMYnNViDlA8=\n"
+    },
+    {
+      "case": "one line, signed by café",
+      "text": "a\n",
+      "signers": [
+        "café"
+      ],
+      "note": "a\n\n— café o3hHuew7zNlyg09nfrNbIn8VjFadiA30DbhLuXf5lMbbmicHcRCmNkgyopgjpGdc4iB7lBH416IJkEiiDUWojWBrPAk=\n"
+    },
+    {
+      "case": "one line, signed by operator and witness",
+      "text": "a\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "a\n\n— operator crCDEiH6fzgJT1jTogYot4AcIx71JbsQ2+IIAVM3xWTfQM6LwukmEr/ZCG3fFvAFz66ujLP9yogUr5+8hMYnNViDlA8=\n— witness qr7bEwrsMVLrdvT8DexeQQ8tan4IxnCvgePPDmXzwhqBjoFIAzZlZoxyOi42bqwlqVwRaFdMBzikwCR5cv7XWyyCZAQ=\n"
+    },
+    {
+      "case": "the example of the documentation, signed by operator",
+      "text": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n\n— operator crCDEkYo2HehRvO76et1KOgDCj7i4BblwJ7yfZXLWRwQqdJDu2jRm0AqtgmuvPQvFxkaQztqRQhYUbgte8AJYUJH2A0=\n"
+    },
+    {
+      "case": "the example of the documentation, signed by café",
+      "text": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n",
+      "signers": [
+        "café"
+      ],
+      "note": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n\n— café o3hHuS/ps4VVKbUeuqpWWh7GWgYW0epSAJl3p1RRUn/NeF5iA6XdVbMJ+jykIzW7NIFqBtF69Lze3fiD7wx3hW8UWgE=\n"
+    },
+    {
+      "case": "the example of the documentation, signed by operator and witness",
+      "text": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "If you think cryptography is the answer to your problem,\nthen you don't know what your problem is.\n\n— operator crCDEkYo2HehRvO76et1KOgDCj7i4BblwJ7yfZXLWRwQqdJDu2jRm0AqtgmuvPQvFxkaQztqRQhYUbgte8AJYUJH2A0=\n— witness qr7bE/7B6liGdrzSlUOOm+XdsurcRKlNDsoQG3m9ap4f3MAYBeQK16qHlG+GkiJPcHnnndTmUlGayyf4RQ74kFSavQg=\n"
+    },
+    {
+      "case": "a checkpoint, signed by operator",
+      "text": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n\n— operator crCDEokVGdngheJ3GeNo/qgO4NOY7ctFQe8iznogIee/qRY36qM+exMhrsrAHZVucjVn74lakpz0UJojtzM2rXxs+Ag=\n"
+    },
+    {
+      "case": "a checkpoint, signed by café",
+      "text": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n",
+      "signers": [
+        "café"
+      ],
+      "note": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n\n— café o3hHuZo/NLyt5NpFZhCvSYif2ye0zKcmTxf4L1MjY4H7LMItHozkAbhEi2uC7eLOKG54byFVIhGQgPGA/0j+eEkLnQo=\n"
+    },
+    {
+      "case": "a checkpoint, signed by operator and witness",
+      "text": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "yuce/run-1\n42\nn+8wvmZRY5/X3oR6vMbvwGHqmLrIX5KVDd8F0P5xnHU=\n\n— operator crCDEokVGdngheJ3GeNo/qgO4NOY7ctFQe8iznogIee/qRY36qM+exMhrsrAHZVucjVn74lakpz0UJojtzM2rXxs+Ag=\n— witness qr7bE9hJfh80KaLGBq5I/LcVXpwIXkEZGbZZkEAd8Z2uaTEPrUEhdktHHs7I2gIV3tdrQtS9Ni489A5X9SYVSgTaoAg=\n"
+    },
+    {
+      "case": "text outside ASCII, signed by operator",
+      "text": "café 日本\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "café 日本\n\n— operator crCDEnrl58N3VmjGZxdlhJXVWQ5tk7U6bm7NLGpN4CI4HAy+P9Yi2zJU+7HEZqNYvDIHnDV/FKZL2yOe6xO7RQ9aUQA=\n"
+    },
+    {
+      "case": "text outside ASCII, signed by café",
+      "text": "café 日本\n",
+      "signers": [
+        "café"
+      ],
+      "note": "café 日本\n\n— café o3hHuZa7LdB/tMtpgzJia2OWvF1Wukerd80X2PFK6365Zzt/hGJiH32LPbJblm1IV52ImL7XRd7G8hL/ZNRmMIQW9Ag=\n"
+    },
+    {
+      "case": "text outside ASCII, signed by operator and witness",
+      "text": "café 日本\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "café 日本\n\n— operator crCDEnrl58N3VmjGZxdlhJXVWQ5tk7U6bm7NLGpN4CI4HAy+P9Yi2zJU+7HEZqNYvDIHnDV/FKZL2yOe6xO7RQ9aUQA=\n— witness qr7bEyB34KUfLKx7fe35aLNx/IVNu8O2hDZJ7RAMLvGygggUlrURTscGFvgSMVEN5pKP43g17pMb5Yv1skMcpWdAswA=\n"
+    },
+    {
+      "case": "a blank line inside, signed by operator",
+      "text": "a\n\nb\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "a\n\nb\n\n— operator crCDEhSDezRyqJyw2DZu8j/iSHoVCSgYGWzEtB8q1llR4V9rh4GBHr/V6AvPCryrgPGPcS3gZD4Pwvhenv8d+TfsUgM=\n"
+    },
+    {
+      "case": "a blank line inside, signed by café",
+      "text": "a\n\nb\n",
+      "signers": [
+        "café"
+      ],
+      "note": "a\n\nb\n\n— café o3hHuTJ1gOvBmSVjJu0VhW7MNlr5cT/dkunFU+gWxMBPefjW7TZK0fx74AQ9UuNsXslWi29xI4yqcAEjkQd8EiJHbgo=\n"
+    },
+    {
+      "case": "a blank line inside, signed by operator and witness",
+      "text": "a\n\nb\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "a\n\nb\n\n— operator crCDEhSDezRyqJyw2DZu8j/iSHoVCSgYGWzEtB8q1llR4V9rh4GBHr/V6AvPCryrgPGPcS3gZD4Pwvhenv8d+TfsUgM=\n— witness qr7bE/akpL/QYeGhYvHB5XDTS0n/xLlAMINeqjuff8UL24HcKy5qnPQNMCVyQ2wcSK78wSqv9BeecxZrr5RFHkMKQwI=\n"
+    },
+    {
+      "case": "a line end only, signed by operator",
+      "text": "\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "\n\n— operator crCDEtoWQ3oAMaC1XAeu6EHockj1Bhl/JYjl2d7jhRqPSqvVKl027/DTw751CvPOb3JDt4Qyv696HToj4vEUpQYIAwg=\n"
+    },
+    {
+      "case": "a line end only, signed by café",
+      "text": "\n",
+      "signers": [
+        "café"
+      ],
+      "note": "\n\n— café o3hHuYJjpiGFLc8FthLb3QS45RzSrhAau5PFTiHJhD4+77vM2gfPN4k+eAoN679QZGWBW2uy+zifC+dM8MKuEMHoUQ8=\n"
+    },
+    {
+      "case": "a line end only, signed by operator and witness",
+      "text": "\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "\n\n— operator crCDEtoWQ3oAMaC1XAeu6EHockj1Bhl/JYjl2d7jhRqPSqvVKl027/DTw751CvPOb3JDt4Qyv696HToj4vEUpQYIAwg=\n— witness qr7bE3TGcPaKvyYopwwheRzoTENE6WY2kzaVE5w8UDh+jwcTE2SVz7aYymEu56ZTJwc1ir/B1l0rAsNjAOF8b2wyYgA=\n"
+    },
+    {
+      "case": "a long text, signed by operator",
+      "text": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n",
+      "signers": [
+        "operator"
+      ],
+      "note": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n\n— operator crCDEr91a493WznCXTxTgKpVdFUVbFaLncyoj60etDBCv603XKhPqxPxMz6gzIwutv2pBE9yA7w+gfSYg60QaEwdbAU=\n"
+    },
+    {
+      "case": "a long text, signed by café",
+      "text": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n",
+      "signers": [
+        "café"
+      ],
+      "note": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n\n— café o3hHuRtYnW0rnNstKLSF5Vw5jjFH3CxKEsRauIkB4q2cck8rD0XfSnHttqGjIaVrOzFiolqf8OECn4ucZ5nPKVjAqg4=\n"
+    },
+    {
+      "case": "a long text, signed by operator and witness",
+      "text": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n",
+      "signers": [
+        "operator",
+        "witness"
+      ],
+      "note": "A line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\nA line of a long note, to sign more than a block of bytes.\n\n— operator crCDEr91a493WznCXTxTgKpVdFUVbFaLncyoj60etDBCv603XKhPqxPxMz6gzIwutv2pBE9yA7w+gfSYg60QaEwdbAU=\n— witness qr7bE3+C+h+3LTYmT/tQrU1c8sg/FE3uvvMCKtOqevM09z07W/KWaR41CxiB0o8Gi2T8xPXX6on2DL02MJh+IWGbuAY=\n"
+    }
+  ],
+  "open": [
+    {
+      "case": "signed by the operator",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "signed by the operator and the witness",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCB3aXRuZXNzIHFyN2JFOWhKZmg4MEthTEdCcTVJL0xjVlhwd0lYa0VaR2JaWmtFQWQ4WjJ1YVRFUHJVRWhka3RISHM3STJnSVYzdGRyUXRTOU5pNDg5QTVYOVNZVlNnVGFvQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator",
+        "witness"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "signed by an unknown key only",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIFBldGVyTmV1bWFubiBlUEt2RFlnNTh6dndYTkFCdkUrVXpjb2hmUWhHL3NjQUNYenpoSDBHbWRrRlhBTFlIalhoU0R4Yk9ieWpuOS90MTQ1NGJ4OGFOcFlUU2x0dEJnVXJnSDRwbGdvPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "unverified"
+    },
+    {
+      "case": "a byte of the text changed",
+      "msg_b64": "eXVjZS9ydW4tMQo0MwpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "invalid signature"
+    },
+    {
+      "case": "a byte of the signature changed",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5wL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "invalid signature"
+    },
+    {
+      "case": "no line end at the end",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "no blank line before the signatures",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQrigJQgb3BlcmF0b3IgY3JDREVva1ZHZG5naGVKM0dlTm8vcWdPNE5PWTdjdEZRZThpem5vZ0llZS9xUlkzNnFNK2V4TWhyc3JBSFpWdWNqVm43NGxha3B6MFVKb2p0ek0yclh4cytBZz0K",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a carriage return in the text",
+      "msg_b64": "eXVjZS9ydW4tMQo0Mg0Kbis4d3ZtWlJZNS9YM29SNnZNYnZ3R0hxbUxySVg1S1ZEZDhGMFA1eG5IVT0KCuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a tab in the text",
+      "msg_b64": "eXVjZS9ydW4tMQo0CTIKbis4d3ZtWlJZNS9YM29SNnZNYnZ3R0hxbUxySVg1S1ZEZDhGMFA1eG5IVT0KCuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a byte that is not UTF-8 in the text",
+      "msg_b64": "eXVj/2UvcnVuLTEKNDIKbis4d3ZtWlJZNS9YM29SNnZNYnZ3R0hxbUxySVg1S1ZEZDhGMFA1eG5IVT0KCuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature line without the em dash",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoKLSBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature line whose name holds a plus",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXIrYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature line with no base64",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIAo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature of four bytes",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFZz09Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature line without a space",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yCg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a space after the base64",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9IAo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "the same signature twice",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a bad signature of a key, then its good one",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5wL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOby9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "invalid signature"
+    },
+    {
+      "case": "a good signature of a key, then a bad one",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBvcGVyYXRvciBjckNERW9rVkdkbmdoZUozR2VOcC9xZ080Tk9ZN2N0RlFlOGl6bm9nSWVlL3FSWTM2cU0rZXhNaHJzckFIWlZ1Y2pWbjc0bGFrcHowVUpvanR6TTJyWHhzK0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a good signature and a bad one of another known key",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCB3aXRuZXNzIHFyN2JFOWhKZmg0MEthTEdCcTVJL0xjVlhwd0lYa0VaR2JaWmtFQWQ4WjJ1YVRFUHJVRWhka3RISHM3STJnSVYzdGRyUXRTOU5pNDg5QTVYOVNZVlNnVGFvQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "invalid signature"
+    },
+    {
+      "case": "a good signature and a bad one of a key not known",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCB3aXRuZXNzIHFyN2JFOWhKZmg0MEthTEdCcTVJL0xjVlhwd0lYa0VaR2JaWmtFQWQ4WjJ1YVRFUHJVRWhka3RISHM3STJnSVYzdGRyUXRTOU5pNDg5QTVYOVNZVlNnVGFvQWc9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a good signature and a line of an unknown key",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBzb21lb25lIEFBQUFCd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "the signature under another known name",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIHdpdG5lc3MgY3JDREVva1ZHZG5naGVKM0dlTm8vcWdPNE5PWTdjdEZRZThpem5vZ0llZS9xUlkzNnFNK2V4TWhyc3JBSFpWdWNqVm43NGxha3B6MFVKb2p0ek0yclh4cytBZz0K",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "unverified"
+    },
+    {
+      "case": "101 signature lines",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCB1bmtub3duMCBBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEgQUFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yIEFBQUFBZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMyBBQUFBQXdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQgQUFBQUJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241IEFBQUFCUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNiBBQUFBQmdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjcgQUFBQUJ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244IEFBQUFDQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOSBBQUFBQ1FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEwIEFBQUFDZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTEgQUFBQUN3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xMiBBQUFBREFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEzIEFBQUFEUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTQgQUFBQURnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xNSBBQUFBRHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjE2IEFBQUFFQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTcgQUFBQUVRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xOCBBQUFBRWdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjE5IEFBQUFFd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjAgQUFBQUZBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yMSBBQUFBRlFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjIyIEFBQUFGZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjMgQUFBQUZ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yNCBBQUFBR0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjI1IEFBQUFHUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjYgQUFBQUdnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yNyBBQUFBR3dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjI4IEFBQUFIQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjkgQUFBQUhRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zMCBBQUFBSGdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjMxIEFBQUFId0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzIgQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zMyBBQUFBSVFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjM0IEFBQUFJZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzUgQUFBQUl3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zNiBBQUFBSkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjM3IEFBQUFKUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzggQUFBQUpnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zOSBBQUFBSndBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQwIEFBQUFLQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDEgQUFBQUtRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240MiBBQUFBS2dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQzIEFBQUFLd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDQgQUFBQUxBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240NSBBQUFBTFFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQ2IEFBQUFMZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDcgQUFBQUx3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240OCBBQUFBTUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQ5IEFBQUFNUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTAgQUFBQU1nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241MSBBQUFBTXdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjUyIEFBQUFOQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTMgQUFBQU5RQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241NCBBQUFBTmdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjU1IEFBQUFOd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTYgQUFBQU9BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241NyBBQUFBT1FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjU4IEFBQUFPZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTkgQUFBQU93QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242MCBBQUFBUEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjYxIEFBQUFQUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjIgQUFBQVBnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242MyBBQUFBUHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjY0IEFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjUgQUFBQVFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242NiBBQUFBUWdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjY3IEFBQUFRd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjggQUFBQVJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242OSBBQUFBUlFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjcwIEFBQUFSZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzEgQUFBQVJ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243MiBBQUFBU0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjczIEFBQUFTUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzQgQUFBQVNnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243NSBBQUFBU3dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjc2IEFBQUFUQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzcgQUFBQVRRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243OCBBQUFBVGdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjc5IEFBQUFUd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODAgQUFBQVVBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244MSBBQUFBVVFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjgyIEFBQUFVZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODMgQUFBQVV3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244NCBBQUFBVkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjg1IEFBQUFWUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODYgQUFBQVZnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244NyBBQUFBVndBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjg4IEFBQUFXQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODkgQUFBQVdRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245MCBBQUFBV2dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjkxIEFBQUFXd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTIgQUFBQVhBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245MyBBQUFBWFFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjk0IEFBQUFYZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTUgQUFBQVh3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245NiBBQUFBWUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjk3IEFBQUFZUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTggQUFBQVlnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245OSBBQUFBWXdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a blank line between the signatures",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CgrigJQgd2l0bmVzcyBxcjdiRTloSmZoODBLYUxHQnE1SS9MY1ZYcHdJWGtFWkdiWlprRUFkOFoydWFURVByVUVoZGt0SEhzN0kyZ0lWM3RkclF0UzlOaTQ4OUE1WDlTWVZTZ1Rhb0FnPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "invalid signature"
+    },
+    {
+      "case": "no known key",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9Cg==",
+      "known": [],
+      "verified": [],
+      "go": "unverified"
+    },
+    {
+      "case": "a forged signature for a weak key",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIHdlYWsgaTVSQmJRRUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K",
+      "known": [
+        "weak+8b94416d+AQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      ],
+      "verified": [
+        "weak"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a good signature and a line whose name holds a plus",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBzb21lK29uZSBBQUFBQndBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQo=",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a good signature and a signature of four bytes",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCBzb21lb25lIGNyQ0RFZz09Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "100 signature lines",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9CuKAlCB1bmtub3duMCBBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEgQUFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yIEFBQUFBZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMyBBQUFBQXdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQgQUFBQUJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241IEFBQUFCUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNiBBQUFBQmdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjcgQUFBQUJ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244IEFBQUFDQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOSBBQUFBQ1FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEwIEFBQUFDZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTEgQUFBQUN3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xMiBBQUFBREFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjEzIEFBQUFEUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTQgQUFBQURnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xNSBBQUFBRHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjE2IEFBQUFFQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMTcgQUFBQUVRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24xOCBBQUFBRWdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjE5IEFBQUFFd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjAgQUFBQUZBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yMSBBQUFBRlFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjIyIEFBQUFGZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjMgQUFBQUZ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yNCBBQUFBR0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjI1IEFBQUFHUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjYgQUFBQUdnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24yNyBBQUFBR3dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjI4IEFBQUFIQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMjkgQUFBQUhRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zMCBBQUFBSGdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjMxIEFBQUFId0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzIgQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zMyBBQUFBSVFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjM0IEFBQUFJZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzUgQUFBQUl3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zNiBBQUFBSkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjM3IEFBQUFKUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duMzggQUFBQUpnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd24zOSBBQUFBSndBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQwIEFBQUFLQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDEgQUFBQUtRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240MiBBQUFBS2dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQzIEFBQUFLd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDQgQUFBQUxBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240NSBBQUFBTFFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQ2IEFBQUFMZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNDcgQUFBQUx3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd240OCBBQUFBTUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjQ5IEFBQUFNUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTAgQUFBQU1nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241MSBBQUFBTXdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjUyIEFBQUFOQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTMgQUFBQU5RQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241NCBBQUFBTmdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjU1IEFBQUFOd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTYgQUFBQU9BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd241NyBBQUFBT1FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjU4IEFBQUFPZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNTkgQUFBQU93QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242MCBBQUFBUEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjYxIEFBQUFQUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjIgQUFBQVBnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242MyBBQUFBUHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjY0IEFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjUgQUFBQVFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242NiBBQUFBUWdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjY3IEFBQUFRd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNjggQUFBQVJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd242OSBBQUFBUlFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjcwIEFBQUFSZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzEgQUFBQVJ3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243MiBBQUFBU0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjczIEFBQUFTUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzQgQUFBQVNnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243NSBBQUFBU3dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjc2IEFBQUFUQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duNzcgQUFBQVRRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd243OCBBQUFBVGdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjc5IEFBQUFUd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODAgQUFBQVVBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244MSBBQUFBVVFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjgyIEFBQUFVZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODMgQUFBQVV3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244NCBBQUFBVkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjg1IEFBQUFWUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODYgQUFBQVZnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd244NyBBQUFBVndBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjg4IEFBQUFXQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duODkgQUFBQVdRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245MCBBQUFBV2dBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjkxIEFBQUFXd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTIgQUFBQVhBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245MyBBQUFBWFFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjk0IEFBQUFYZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTUgQUFBQVh3QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K4oCUIHVua25vd245NiBBQUFBWUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQrigJQgdW5rbm93bjk3IEFBQUFZUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CuKAlCB1bmtub3duOTggQUFBQVlnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0K",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a signature without its base64 padding",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWcK",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [],
+      "go": "malformed note"
+    },
+    {
+      "case": "a signature whose base64 sets the unused padding bits",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWg9Cg==",
+      "known": [
+        "operator+72b08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol",
+        "witness+aabedb13+AV1RdD5r+/8pBlBf8ooKfbkytGnYSP+iM26m4vTRj7Dr"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    },
+    {
+      "case": "a verifier key with its id in upper case",
+      "msg_b64": "eXVjZS9ydW4tMQo0MgpuKzh3dm1aUlk1L1gzb1I2dk1idndHSHFtTHJJWDVLVkRkOEYwUDV4bkhVPQoK4oCUIG9wZXJhdG9yIGNyQ0RFb2tWR2RuZ2hlSjNHZU5vL3FnTzROT1k3Y3RGUWU4aXpub2dJZWUvcVJZMzZxTStleE1ocnNyQUhaVnVjalZuNzRsYWtwejBVSm9qdHpNMnJYeHMrQWc9Cg==",
+      "known": [
+        "operator+72B08312+AWVZqcWW7S1ND/dXeulAJgCEq68nU6VH6S4I3g09VMol"
+      ],
+      "verified": [
+        "operator"
+      ],
+      "go": "ok"
+    }
+  ],
+  "trees": [
+    {
+      "size": 1,
+      "root": "4ed62a41deb798e7c1f1aea93a43e056741e00377df9fda765fad823d7205e20"
+    },
+    {
+      "size": 2,
+      "root": "3faca3992ff0e445981e4827fd940b1ab4eaa53aa29352030bf7a00b752f17be"
+    },
+    {
+      "size": 3,
+      "root": "9422c88685e30db5458ffe4840fa964cf8c6318ffd9279a0f6c4341dedde0bb3"
+    },
+    {
+      "size": 4,
+      "root": "8db5000d1d38c083a0a398ce5dc3f31238fba23fa15fc2ccb531f79fc79bfda6"
+    },
+    {
+      "size": 5,
+      "root": "bb7d8bfa3aaa374ec04b1a3393edaeb2ea5a544b1edb97d4a1bc5dd9cda78e85"
+    },
+    {
+      "size": 6,
+      "root": "944dff921b2e458974d44bee3e4968a4963b6b5ce4bb07305885497c4dd953fe"
+    },
+    {
+      "size": 7,
+      "root": "bfeec625b828b64582c9e27fd3cdbaf2890f30776c263a0fe66572a87b53122b"
+    },
+    {
+      "size": 8,
+      "root": "129d422c41adb759822c5a299d7bedb544821471c9fd7acfcdecea2348b9893c"
+    },
+    {
+      "size": 9,
+      "root": "f350ca6cbdd06e7b532233472e0219c6e12ab89febf3439857f24187988544d7"
+    },
+    {
+      "size": 10,
+      "root": "4adc1c9a918850844fac7635db18d34fb40ff918d07b17b3bac4474c83cf5fe1"
+    },
+    {
+      "size": 11,
+      "root": "25a1a9a2ad8d502ff1301477b42bf9c4827178e4d43686b09e7d0b2bebb31bac"
+    },
+    {
+      "size": 12,
+      "root": "aa2597ddf620df8331d6b6bdb61eb3904297853d6b2ad1b841cae945f2cee7ec"
+    },
+    {
+      "size": 13,
+      "root": "fba7134da0e5f57b3566ac867f9baf028072db229ed399c279a5a2a0ab78d731"
+    },
+    {
+      "size": 14,
+      "root": "76f3aacfc1289a6028da535bdea0fc5a34ec2b570268cddbb1a441a3480a23ed"
+    },
+    {
+      "size": 15,
+      "root": "b08142e7c150fc716da076bd7e535a5a18a2c1f838f0c250b356d894addba9f0"
+    },
+    {
+      "size": 16,
+      "root": "0e117d5ae4cdd635420d07a8fd6df2b6e0921f3282982f59635ccfec738d2a71"
+    },
+    {
+      "size": 17,
+      "root": "23b89e539758d687596fd47793414035c038973c992b0e98cd14dfc2b65fafd2"
+    },
+    {
+      "size": 31,
+      "root": "dca6360dc63804d606bfd1d237472c491023423ccc39105a8edfc41cd572c9d7"
+    },
+    {
+      "size": 32,
+      "root": "1367c0c4fe4ea3c9e1f6894785ddb1285b72b3f6210397fb5bceb9ecf15ed62e"
+    },
+    {
+      "size": 33,
+      "root": "0a447bb762098cd1a4d53d4337c4f6567f62d9bda7e94f843417a6a68028e786"
+    },
+    {
+      "size": 64,
+      "root": "f5cfb52960f117e8e7492db21c4fa6e3a8a14b45be93abfa9727eaea28f17a91"
+    },
+    {
+      "size": 100,
+      "root": "e9d96618dcf971c07ed6fca67d3814318c7a40278d1270ffd4e264790827a4a0"
+    },
+    {
+      "size": 255,
+      "root": "e7bce88750c103038e1f2b5bffb95433a0779b43d0cf58a4b9a5ef9ab9543303"
+    },
+    {
+      "size": 256,
+      "root": "46738f5ed8465b0236a17638c1e7b0eedcae69ece2b4af0b25501ee87e857547"
+    },
+    {
+      "size": 257,
+      "root": "a11aca66ce1590697a4151d4a5d53602710a628a7ab3f0add88bcd401ccc75ea"
+    },
+    {
+      "size": 1000,
+      "root": "de437dd98980102b8a111d07174b0f8d1101cace2dcd5812246e3808c7281501"
+    }
+  ]
+}
