@@ -198,7 +198,7 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "audit-proof" => &["checkpoint", "out", "record", "seal", "self-contained", "wal", "with-status"],
         "audit-proof-verify" => &["anchored-at", "expect-seal", "key", "proof", "trusted-keys"],
         "audit-index" => &["check", "db", "rebuild", "wal"],
-        "audit-read" => &["doc-id", "end", "from", "limit", "pretty", "record", "since", "start", "to", "wal"],
+        "audit-read" => &["doc-id", "end", "from", "limit", "pretty", "record", "since", "start", "to", "unit-status", "wal"],
         "update-doc" => &["doc-id", "file", "out", "pretty"],
         "root" | "dump-claims" | "verify" => &["pretty"],
         "dump-nodes" => &["ids-only", "pretty"],
@@ -1009,8 +1009,9 @@ Audit server for a team of agents:
                 again; --check compares it with the journal row by row; exit 1 if refused or different
   audit-read    the reading tools over a recorded journal, checked first as audit-verify checks it: audit-read <tool> --wal <run.wal>;
                 tools: status, dependents (--record <id> or --doc-id <id> [--start --end]), active-claims [--doc-id], diff --from <n>
-                [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood); --limit; a point <n> is a
-                number of frames, as a seal's log_size; exit 1 if the journal is refused
+                [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood), coverage [--doc-id]
+                [--unit-status <status>] (what each list item, paragraph and table row came to, and the packs of the gap pass);
+                --limit; a point <n> is a number of frames, as a seal's log_size; exit 1 if the journal is refused
 
 Engine and container:
   apply         apply a JSONL stream: --ontology <file> --docs <dir> --stream <file> --out <container>

@@ -218,6 +218,16 @@ pub trait AuditStore {
             .filter_map(|r| r.quote.filter(|q| !q.is_empty()).and_then(|q| text.find(&q).map(|a| (a, a + q.len()))))
             .collect()
     }
+    /// The standing quotes of a document with the bytes they are bound to: the spans of `quoted_spans`, each with its record, for
+    /// the coverage table. The default places each standing quote at its first occurrence, as `quoted_spans` does.
+    fn quoted_records(&self, doc_id: &str) -> Vec<(RecordId, usize, usize)> {
+        let text = self.doc_text(doc_id).unwrap_or_default();
+        self.records_of_kind(RecordKind::Observe)
+            .into_iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id) && self.is_grounded(&r.id))
+            .filter_map(|r| r.quote.filter(|q| !q.is_empty()).and_then(|q| text.find(&q).map(|a| (r.id, a, a + q.len()))))
+            .collect()
+    }
     /// The byte ranges of a document closed by a withdrawal of its text (every occurrence of each closed text). Default: none.
     fn closed_spans(&self, _doc_id: &str) -> Vec<(usize, usize)> {
         Vec::new()

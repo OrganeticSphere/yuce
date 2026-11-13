@@ -306,8 +306,10 @@ C2SP `signed-note` format; `sbgk audit-verify --wal demo.wal --checkpoint <file>
 that the checkpoint names this journal's frames. Keep the checkpoint where the journal's writer cannot change it.
 
 `sbgk audit-read <tool> --wal demo.wal` reads a recorded journal after the same check: `status`, `dependents --record <id>` (or
-`--doc-id`), `active-claims`, `diff --from <n> [--to <n>]`, `record --record <id>` and `fallen [--since <n>]`, where a point `<n>`
-is a number of frames, as in a seal. They answer as the owner's tools of the live server do.
+`--doc-id`), `active-claims`, `diff --from <n> [--to <n>]`, `record --record <id>`, `fallen [--since <n>]` and `coverage
+[--doc-id] [--unit-status <status>]`, where a point `<n>` is a number of frames, as in a seal. They answer as the owner's tools of
+the live server do. `coverage` says what each list item, paragraph and table row of the documents came to: quoted, answered empty
+by a pack of the gap pass, left by its budget, or not read.
 
 An MCP client joins as one agent through the bridge, for example with this `.mcp.json` entry:
 

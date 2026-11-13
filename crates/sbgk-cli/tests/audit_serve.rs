@@ -20,6 +20,11 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(tag: &str) -> Fixture {
+        Fixture::with_docs(tag, &[("a.md", A), ("b.md", B)])
+    }
+
+    /// A fixture whose two reports have the given text.
+    fn with_docs(tag: &str, docs: &[(&str, &str); 2]) -> Fixture {
         static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = format!(
             "{}-{}",
@@ -29,7 +34,7 @@ impl Fixture {
         let dir = std::env::temp_dir().join(format!("sbgk_audit_serve_{tag}_{}_{nonce}", std::process::id()));
         std::fs::create_dir_all(dir.join("repo/reports")).unwrap();
         let mut entries = Vec::new();
-        for (name, text) in [("a.md", A), ("b.md", B)] {
+        for (name, text) in *docs {
             std::fs::write(dir.join("repo/reports").join(name), text).unwrap();
             entries.push(json!({"path": format!("reports/{name}"), "extension": ".md", "corpus_role": "markdown_document_candidate",
                                 "size_bytes": text.len(), "raw_sha256": sbgk_core::hash::to_hex(&sbgk_core::hash::sha256(text.as_bytes())),
@@ -228,7 +233,7 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 14, "nine tools of 0.1, the four reading tools of 0.2 and audit_seal of 0.2.1");
+    assert_eq!(own.tools().len(), 15, "nine tools of 0.1, the four reading tools of 0.2, and audit_seal and the coverage of 0.2.1");
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims
@@ -1894,4 +1899,141 @@ fn a_torn_tail_of_a_stopped_journal_is_still_a_torn_tail() {
     let (code, v, _) = reading(&fx, &["audit-index", "--db", &fx.p("torn.index.sqlite")]);
     assert_eq!((code, v["status"].as_str()), (Some(1), Some("REFUSED")), "{v}");
     assert_eq!(std::fs::read(fx.p("run.wal")).unwrap(), bytes);
+}
+
+/// A report with four structural units: its topic line, two list items and a closing paragraph.
+const LIST: &str = "# Alpha\nTopic A is reported.\n\n- The first extra item.\n- The second extra item.\n\nA closing paragraph.\n";
+
+/// The coverage table (0.2.1) on the wire, over the journal and in the index: what each unit came to, with the pack of the gap pass
+/// that asked about it. The index takes it up at every update, an index of the earlier format is built again, and a run without a
+/// gap pass has the units and no packs.
+#[test]
+fn the_coverage_table_is_read_on_the_wire_over_the_journal_and_from_the_index() {
+    let fx = Fixture::with_docs("coverage", &[("a.md", LIST), ("b.md", B)]);
+    let mut args = fx.args(true);
+    args.extend(["--gap-pass", "2", "--gap-units", "4"].map(String::from));
+    let server = Server::start(&args);
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    assert!(own.tools().iter().any(|t| t == "audit_coverage") && !w1.tools().iter().any(|t| t == "audit_coverage"), "the owner's tool");
+    let index = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-index").args(["--wal", &fx.p("run.wal")]).args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let counts = |db: &str, table: &str, column: &str| -> Vec<(String, i64)> {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        let mut statement = conn.prepare(&format!("SELECT {column}, COUNT(*) FROM {table} GROUP BY {column} ORDER BY {column}")).unwrap();
+        let rows = statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    let step = fx.p("step.sqlite");
+    let mut packs = 0;
+    for round in 0..40 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        let lines = if t["key"].as_str().is_some_and(|k| k.starts_with("gap:")) {
+            packs += 1;
+            // the first readings are over and the pack is not answered yet: the index of this moment has the gaps as left
+            let (code, built) = index(&["--db", &step]);
+            assert_eq!((code, built["status"].as_str(), built["coverage"]["units"].as_u64()), (Some(0), Some("INDEXED"), Some(5)), "{built}");
+            assert_eq!(counts(&step, "coverage_units", "status"), [("left_by_budget".to_string(), 3), ("quoted".to_string(), 2)]);
+            // the pack asks about the three unquoted units of the list; one of them is quoted, two are answered empty
+            let (p, doc) = (t["local_id_prefix"].as_str().unwrap(), t["key"].as_str().unwrap()[4..].rsplit_once('@').unwrap().0);
+            vec![json!({"kind": "observe", "local_id": format!("{p}o1"), "doc_id": doc, "exact_quote": "The first extra item.", "terms": ["topic"]})]
+        } else {
+            answer(&t)
+        };
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}))["status"], "COMMITTED", "{t}");
+    }
+    assert_eq!(packs, 1, "the three gaps of one report and one tier are one pack");
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    let live = own.call("audit_coverage", json!({}));
+    assert_eq!(own.call("audit_coverage", json!({"unit_status": "everything"}))["code"], "BAD_ARGUMENT");
+    drop(server);
+
+    // over the journal the tool answers as on the wire, and its totals are the report of the pass
+    let read = |args: &[&str]| {
+        let out = Command::new(BIN).args(["audit-read", "coverage", "--wal", &fx.p("run.wal")]).args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (code, table) = read(&[]);
+    assert_eq!((code, &table), (Some(0), &live));
+    assert_eq!((table["status"].as_str(), table["available"].as_bool(), table["units"].as_u64()), (Some("COVERAGE"), Some(true), Some(5)), "{table}");
+    assert_eq!(table["by_status"], json!({"empty": 2, "quoted": 3}), "{table}");
+    let summary = &table["summary"];
+    assert_eq!(
+        (&summary["units_read"], &summary["units_quoted"], &summary["gap_units"], &summary["gap_tasks"], &summary["gap_recorded"], &summary["complete"]),
+        (&json!(5), &json!(3), &json!(2), &json!(1), &json!(1), &json!(true)),
+        "{summary}"
+    );
+    assert_eq!(table["gap_pass"]["limit"], 2, "{table}");
+    let pack = table["packs"][0]["key"].as_str().expect("the pack").to_string();
+    assert_eq!(
+        (table["packs"].as_array().unwrap().len(), table["packs"][0]["outcome"].as_str(), table["packs"][0]["recorded"].as_u64()),
+        (1, Some("answered"), Some(1))
+    );
+    // the filters: the units answered empty name their pack; the other report has one quoted unit and no pack
+    let (_, empty) = read(&["--unit-status", "empty"]);
+    assert_eq!(empty["units"], 2, "{empty}");
+    assert!(empty["rows"].as_array().unwrap().iter().all(|r| r["status"] == "empty" && r["pack"] == pack.as_str() && r["quoted_by"] == json!([])), "{empty}");
+    let quoted = table["rows"].as_array().unwrap().iter().find(|r| r["pack"].is_null()).expect("the unit of the other report");
+    assert_eq!((quoted["status"].as_str(), quoted["quoted_by"].as_array().map(Vec::len)), (Some("quoted"), Some(1)), "{quoted}");
+    let (_, other) = read(&["--doc-id", quoted["doc_id"].as_str().unwrap()]);
+    assert_eq!((other["units"].as_u64(), other["packs"].as_array().map(Vec::len)), (Some(1), Some(0)), "{other}");
+    assert_eq!(read(&["--unit-status", "everything"]).0, Some(2), "an unknown status is a usage error");
+
+    // the index: brought up to date it has the table of now, the same as an index built at once; the totals are counts of its rows
+    let (code, updated) = index(&["--db", &step]);
+    assert_eq!((code, updated["mode"].as_str()), (Some(0), Some("updated")), "{updated}");
+    let at_once = fx.p("at_once.sqlite");
+    let (_, built) = index(&["--db", &at_once]);
+    assert_eq!((built["mode"].as_str(), &built["index_hash"]), (Some("built"), &updated["index_hash"]), "{built}");
+    assert_eq!(built["coverage"], json!({"units": 5, "packs": 1}));
+    assert_eq!(index(&["--db", &step, "--check"]).1["status"], "INDEX_MATCHES");
+    assert_eq!(counts(&step, "coverage_units", "status"), [("empty".to_string(), 2), ("quoted".to_string(), 3)]);
+    assert_eq!(counts(&step, "coverage_packs", "outcome"), [("answered".to_string(), 1)]);
+    let conn = rusqlite::Connection::open(&step).unwrap();
+    let asked: i64 =
+        conn.query_row("SELECT COUNT(*) FROM coverage_units u JOIN coverage_packs p ON p.key = u.pack WHERE u.status = 'empty'", [], |r| r.get(0)).unwrap();
+    assert_eq!(asked, 2, "each unit answered empty joins the pack that asked");
+    // a status changed in the database: the check names the table
+    conn.execute("UPDATE coverage_units SET status = 'quoted' WHERE status = 'empty'", []).unwrap();
+    drop(conn);
+    let (code, differs) = index(&["--db", &step, "--check"]);
+    assert_eq!((code, differs["status"].as_str(), differs["differences"].as_u64()), (Some(1), Some("INDEX_DIFFERS"), Some(2)), "{differs}");
+    assert_eq!(differs["first_differences"][0]["table"], "coverage_units");
+
+    // an index of the earlier format has no tables of the coverage: it is neither brought up to date nor compared, and is built again
+    let conn = rusqlite::Connection::open(&at_once).unwrap();
+    conn.execute("UPDATE meta SET value = 'yuce-index/1' WHERE key = 'format'", []).unwrap();
+    drop(conn);
+    let (code, refused) = index(&["--db", &at_once]);
+    assert_eq!((code, refused["status"].as_str()), (Some(1), Some("REFUSED")), "{refused}");
+    assert!(
+        refused["error"].as_str().unwrap().contains("earlier format yuce-index/1") && refused["error"].as_str().unwrap().contains("--rebuild"),
+        "{refused}"
+    );
+    let (code, checked) = index(&["--db", &at_once, "--check"]);
+    assert_eq!((code, checked["status"].as_str()), (Some(1), Some("INDEX_DIFFERS")), "{checked}");
+    assert!(checked["error"].as_str().unwrap().contains("earlier format"), "{checked}");
+    let (code, rebuilt) = index(&["--db", &at_once, "--rebuild"]);
+    assert_eq!((code, rebuilt["mode"].as_str(), &rebuilt["index_hash"]), (Some(0), Some("built"), &updated["index_hash"]), "{rebuilt}");
+
+    // a run without a gap pass: the units with what the first readings left of them, no packs, and no claim of a pass
+    let plain = Fixture::new("coverageplain");
+    drop(Server::start(&plain.args(true)));
+    let out = Command::new(BIN).args(["audit-read", "coverage", "--wal", &plain.p("run.wal")]).output().unwrap();
+    let none: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        (out.status.code(), none["available"].as_bool(), &none["gap_pass"], &none["by_status"]),
+        (Some(0), Some(true), &Value::Null, &json!({"unread": 2})),
+        "{none}"
+    );
+    assert_eq!((&none["summary"]["gap_pass"], none["packs"].as_array().map(Vec::len)), (&json!(false), Some(0)), "{none}");
 }

@@ -12,9 +12,11 @@ use crate::error::Code;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod coverage;
 mod requests;
 // the gap pass (SPEC_V02_GAP_PASS)
 pub(crate) mod gaps;
+pub use coverage::{by_status, coverage, Coverage, PACK_COLUMNS, UNIT_COLUMNS, UNIT_STATUSES};
 pub use gaps::{GapProfile, GapTier};
 pub use requests::REQUEST_TYPES;
 

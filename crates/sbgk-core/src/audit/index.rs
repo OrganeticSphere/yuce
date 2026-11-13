@@ -11,8 +11,12 @@ use crate::jcs::to_jcs;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-/// The format of an index.
-pub const FORMAT: &str = "yuce-index/1";
+/// The format of an index. `yuce-index/2` (0.2.1) adds the two tables of the coverage to the six of `yuce-index/1`; its
+/// `index_hash` covers them, so an index of the earlier format is built again, not updated.
+pub const FORMAT: &str = "yuce-index/2";
+
+/// The formats before this one: an index of one of them is replaced by a rebuild, and neither updated nor checked.
+pub const EARLIER_FORMATS: [&str; 1] = ["yuce-index/1"];
 
 /// One table: its name, its columns (the key first, `key` of them) and the SQL type of each.
 pub struct Table {
@@ -21,9 +25,15 @@ pub struct Table {
     pub key: usize,
 }
 
-/// The tables of the index, in the order `index_hash` reads them (SPEC_V02_STEP6_7 section 6.3). Every table but `status` carries
-/// the frame a row comes from; `status` is the state at the last frame indexed and is written again at every update.
-pub const TABLES: [Table; 6] = [
+/// The tables of the index, in the order `index_hash` reads them (SPEC_V02_STEP6_7 section 6.3). The first five carry the frame
+/// a row comes from. `status` and the two tables of the coverage are the state at the last frame indexed and are written again
+/// at every update: a record that stood may have fallen since, and a unit that was a gap may have been quoted or answered.
+///
+/// `coverage_units` has a row for every structural unit of every document (a list item, a paragraph, a table row: its bytes
+/// `start..end`) and what it came to (`directives::coverage::UNIT_STATUSES`), with the quotes that touch it and the pack of the
+/// gap pass that spans it; `coverage_packs` has a row for every pack whose task was closed. The totals of the gap pass are
+/// counts of these rows.
+pub const TABLES: [Table; 8] = [
     Table {
         name: "frames",
         columns: &[
@@ -79,6 +89,38 @@ pub const TABLES: [Table; 6] = [
         columns: &[("id", "TEXT"), ("kind", "TEXT"), ("grounded", "INTEGER"), ("answer_support", "INTEGER"), ("fallen_by", "TEXT")],
         key: 1,
     },
+    Table {
+        name: "coverage_units",
+        columns: &[
+            ("doc_id", "TEXT"),
+            ("start", "INTEGER"),
+            ("end", "INTEGER"),
+            ("section", "INTEGER"),
+            ("tier", "INTEGER"),
+            ("status", "TEXT"),
+            ("quoted_by", "TEXT"),
+            ("pack", "TEXT"),
+            ("second_pack", "TEXT"),
+        ],
+        key: 2,
+    },
+    Table {
+        name: "coverage_packs",
+        columns: &[
+            ("key", "TEXT"),
+            ("doc_id", "TEXT"),
+            ("start", "INTEGER"),
+            ("end", "INTEGER"),
+            ("second", "INTEGER"),
+            ("tier", "INTEGER"),
+            ("outcome", "TEXT"),
+            ("recorded", "INTEGER"),
+            ("closed_order", "INTEGER"),
+            ("agent", "TEXT"),
+            ("reason", "TEXT"),
+        ],
+        key: 1,
+    },
 ];
 
 /// The column of each table that names the frame a row comes from, for an update that adds the rows of new frames only.
@@ -101,6 +143,8 @@ pub struct IndexRows {
     pub tables: Vec<Vec<Vec<Value>>>,
     /// A writer held the journal while it was read: these are the rows of the frames complete at that moment.
     pub live: bool,
+    /// Why the journal gives no coverage, when it gives none: the two tables of the coverage are then empty.
+    pub coverage_unavailable: Option<String>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -136,10 +180,12 @@ pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
     }
     let mut counts = vec![0usize];
     let mut status_at: Option<Vec<Value>> = None;
+    let mut coverage_at = None;
     let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, _| {
         counts.push(state.record_count());
         if m == frames {
             status_at = Some(state.projections().0);
+            coverage_at = Some(super::directives::coverage(state));
         }
     })?;
     let frame_of = |i: usize| (0..counts.len() - 1).find(|&k| counts[k + 1] > i).unwrap_or(0);
@@ -198,7 +244,19 @@ pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
         // [id, kind, grounded, answer_support, fallen_by]
         tables[5].push(vec![row[0].clone(), row[1].clone(), json!(u8::from(row[2] == true)), json!(u8::from(row[3] == true)), json!(to_jcs(&row[4]))]);
     }
-    Ok(IndexRows { run_id: state.run_id().to_string(), frames, wal_head: scan.heads[frames - 1], tables, live: scan.live })
+    let coverage = coverage_at.expect("the prefix was replayed");
+    debug_assert!(TABLES[6].columns.iter().map(|c| c.0).eq(super::directives::UNIT_COLUMNS));
+    debug_assert!(TABLES[7].columns.iter().map(|c| c.0).eq(super::directives::PACK_COLUMNS));
+    tables[6] = coverage.units;
+    tables[7] = coverage.packs;
+    Ok(IndexRows {
+        run_id: state.run_id().to_string(),
+        frames,
+        wal_head: scan.heads[frames - 1],
+        tables,
+        live: scan.live,
+        coverage_unavailable: coverage.unavailable,
+    })
 }
 
 /// The key of a row: its first `key` values, as one JCS text that sorts the rows of a table the same way everywhere.
@@ -215,7 +273,7 @@ pub fn index_hash(tables: &[Vec<Vec<Value>>]) -> Hash {
         sorted.sort_by_key(|r| row_key(t, r));
         content.insert(t.name.to_string(), json!(sorted));
     }
-    sha256_parts(&[b"YUCE-INDEX/1\0", to_jcs(&Value::Object(content)).as_bytes()])
+    sha256_parts(&[b"YUCE-INDEX/2\0", to_jcs(&Value::Object(content)).as_bytes()])
 }
 
 #[cfg(test)]

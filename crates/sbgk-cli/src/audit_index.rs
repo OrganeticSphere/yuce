@@ -5,7 +5,7 @@
 use super::{fail, Args};
 use rusqlite::types::Value as Sql;
 use rusqlite::{params_from_iter, Connection, OpenFlags};
-use sbgk_core::audit::index::{self, IndexRows, FORMAT, TABLES};
+use sbgk_core::audit::index::{self, IndexRows, EARLIER_FORMATS, FORMAT, TABLES};
 use sbgk_core::hash::to_hex;
 use sbgk_core::jcs::to_jcs;
 use serde_json::{json, Value};
@@ -55,12 +55,24 @@ pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Whether the file at `db` is an index of a journal: a SQLite database whose `meta` names this format. Only such a file is replaced.
-fn is_index(db: &Path) -> bool {
+/// The format the file at `db` names, when it is a SQLite database with the `meta` table of an index.
+fn format_of(db: &Path) -> Option<String> {
     Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .ok()
         .and_then(|conn| conn.query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get::<_, String>(0)).ok())
-        .is_some_and(|f| f == FORMAT)
+}
+
+/// Whether the file at `db` is an index of a journal: a SQLite database whose `meta` names this format or an earlier one. Only such
+/// a file is replaced.
+fn is_index(db: &Path) -> bool {
+    format_of(db).is_some_and(|f| f == FORMAT || EARLIER_FORMATS.contains(&f.as_str()))
+}
+
+/// What is said of an index of an earlier format: its tables are not this format's, so it is neither updated nor compared.
+fn earlier_format(db: &Path) -> Option<String> {
+    format_of(db)
+        .filter(|f| EARLIER_FORMATS.contains(&f.as_str()))
+        .map(|f| format!("the index has the earlier format {f}, without the tables of the coverage: build it again with --rebuild"))
 }
 
 fn refuse(db: &Path, wal: &str, error: &str) -> ! {
@@ -91,9 +103,15 @@ fn insert(conn: &Connection, rows: &IndexRows, from: usize) {
             statement.execute(params_from_iter(row.iter().map(to_sql))).unwrap_or_else(|e| sql_error(e));
         }
     }
-    for (key, value) in
-        [("format", FORMAT.to_string()), ("run_id", rows.run_id.clone()), ("frames", rows.frames.to_string()), ("wal_head", to_hex(&rows.wal_head))]
-    {
+    // `coverage` says whether the journal gives the two tables of the coverage, or why it gives none
+    let coverage = rows.coverage_unavailable.clone().unwrap_or_else(|| "available".to_string());
+    for (key, value) in [
+        ("format", FORMAT.to_string()),
+        ("run_id", rows.run_id.clone()),
+        ("frames", rows.frames.to_string()),
+        ("wal_head", to_hex(&rows.wal_head)),
+        ("coverage", coverage),
+    ] {
         conn.execute("INSERT OR REPLACE INTO meta VALUES (?1, ?2)", [key, value.as_str()]).unwrap_or_else(|e| sql_error(e));
     }
 }
@@ -162,6 +180,10 @@ pub fn cmd_audit_index(a: &Args) {
     let journal_hash = to_hex(&index::index_hash(&rows.tables));
     let head_of = |n: usize| rows.tables[0].get(n.wrapping_sub(1)).map(|r| r[1].clone());
     if a.sw("check") {
+        if let Some(error) = earlier_format(&db) {
+            println!("{}", json!({"status": "INDEX_DIFFERS", "db": db.display().to_string(), "wal": wal, "error": error}));
+            std::process::exit(1);
+        }
         let conn = Connection::open_with_flags(&db, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap_or_else(|e| sql_error(e));
         let m = meta(&conn);
         let frames = m.get("frames").and_then(|f| f.parse::<usize>().ok()).unwrap_or(0);
@@ -207,6 +229,9 @@ pub fn cmd_audit_index(a: &Args) {
     if db.exists() && !a.sw("rebuild") {
         if !is_index(&db) {
             refuse(&db, &wal, "the file at --db is no index of a journal: it is neither updated nor replaced");
+        }
+        if let Some(error) = earlier_format(&db) {
+            refuse(&db, &wal, &error);
         }
         let conn = Connection::open(&db).unwrap_or_else(|e| sql_error(e));
         let m = meta(&conn);
@@ -255,7 +280,11 @@ pub fn cmd_audit_index(a: &Args) {
         std::fs::rename(&tmp, &db).unwrap_or_else(|e| fail(&format!("cannot put the index in place at {}: {e}", db.display())));
     }
     let mut out = json!({"status": "INDEXED", "mode": mode, "db": db.display().to_string(), "wal": wal, "frames": rows.frames,
-                         "frames_added": rows.frames - from, "records": rows.tables[1].len(), "index_hash": journal_hash});
+    "frames_added": rows.frames - from, "records": rows.tables[1].len(), "index_hash": journal_hash,
+    "coverage": match &rows.coverage_unavailable {
+        Some(reason) => json!({"unavailable": reason}),
+        None => json!({"units": rows.tables[6].len(), "packs": rows.tables[7].len()}),
+    }});
     if rows.live {
         out["live"] = super::audit_mcp::live_read(rows.frames, None);
     }

@@ -2698,6 +2698,19 @@ impl AuditStore for AuditState {
             .map(|b| (b.start, b.end))
             .collect()
     }
+    fn quoted_records(&self, doc_id: &str) -> Vec<(RecordId, usize, usize)> {
+        let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
+        // `quoted_spans`, each span with the record of its quote
+        self.core
+            .data
+            .records
+            .iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .filter_map(|r| self.core.data.evidence.get(&r.id).map(|b| (r.id, b)))
+            .filter(|(_, b)| b.version == doc.version_id && self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
+            .map(|(id, b)| (id, b.start, b.end))
+            .collect()
+    }
     fn closed_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
         let (Some(doc), Some(closed)) = (self.core.session.arena.doc(doc_id), self.core.data.withdrawn.get(doc_id)) else { return Vec::new() };
         closed.iter().flat_map(|text| find_all(&doc.bytes, text)).map(|o| (o.start, o.end)).collect()
