@@ -15,7 +15,9 @@ use crate::error::{Code, KResult, KernelError};
 use crate::hash::{from_hex, sha256, sha256_parts, to_hex, Hash, ZERO_HASH};
 use crate::jcs::to_jcs;
 use serde_json::{json, Value};
-use std::fs::{File, OpenOptions, TryLockError};
+#[cfg(not(windows))]
+use std::fs::TryLockError;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -55,6 +57,9 @@ pub(crate) struct AuditJournal {
 
 /// What a bounded read of the journal found: the payloads of its complete frames (genesis first), the chain head after each
 /// frame, the records root each `/3` frame names (empty for `/2`), the bytes read (a torn tail included) and their SHA-256.
+///
+/// A journal read while its writer held it is `live`: the read stops at the last frame complete at that moment, and the bytes
+/// of a frame the writer had not finished (`in_flight`) are not a torn tail and are left out of `bytes` and of the hash.
 #[derive(Debug)]
 pub(crate) struct JournalScan {
     pub format: FrameFormat,
@@ -64,6 +69,8 @@ pub(crate) struct JournalScan {
     pub bytes: u64,
     pub complete_bytes: u64,
     pub sha256: Hash,
+    pub live: bool,
+    pub in_flight: u64,
 }
 
 /// A hash as a `/3` journal spells it: 64 lowercase hex digits, nothing else (SPEC_V02_STEP2 section 1).
@@ -113,13 +120,118 @@ fn io_error(operation: &str, e: std::io::Error) -> KernelError {
     error(format!("audit WAL {operation}: {e}"))
 }
 
-fn lock(file: &File) -> KResult<()> {
-    match file.try_lock() {
-        Ok(()) => Ok(()),
-        Err(TryLockError::WouldBlock) => Err(error("audit WAL is in use by another writer")),
-        Err(TryLockError::Error(e)) => Err(io_error("lock", e)),
+/// Windows share modes and an error code (winnt.h, winerror.h): what another handle of the file may do, and a read refused by a
+/// lock.
+#[cfg(windows)]
+mod windows {
+    pub const FILE_SHARE_READ: u32 = 0x1;
+    pub const FILE_SHARE_DELETE: u32 = 0x4;
+    pub const ERROR_LOCK_VIOLATION: i32 = 33;
+}
+
+/// The Windows error of an open that another handle of the file does not allow (winerror.h).
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// How often and how long a writer asks again for a journal that is held: a reading tool asks for a moment whether a writer is
+/// there (`writer_present`), and a server that starts in that moment must not be told that another server runs.
+const HOLD_RETRIES: u32 = 5;
+const HOLD_WAIT: std::time::Duration = std::time::Duration::from_millis(40);
+
+fn in_use() -> KernelError {
+    error(if cfg!(windows) {
+        "audit WAL is in use by another writer, or by a program that has it open and shares it with no writer"
+    } else {
+        "audit WAL is in use by another writer"
+    })
+}
+
+/// The writer's handle of the journal at `path`, a new file with `create`: one writer holds a journal, and no reader waits for it.
+///
+/// On Windows the writer opens the file sharing it for reading only (and for deletion, as before): every other open that asks to
+/// write is refused by the system while this handle lives, and this open is refused while any other handle may write. That
+/// excludes a second server of this version and one of 0.2.0 or earlier alike, in either order: the earlier server opens the file
+/// to write before it locks it. The file is not locked, since a lock there (`File::try_lock`, LockFileEx over the whole file)
+/// is mandatory and stopped every read through another handle too, the reading tools included. Elsewhere the lock is advisory
+/// (flock): it excludes writers, the earlier ones too, and stops no reader, so it stays.
+fn hold(path: &Path, create: bool) -> KResult<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(create);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, windows::FILE_SHARE_READ | windows::FILE_SHARE_DELETE);
+    let mut asked = 0;
+    let file = loop {
+        match options.open(path) {
+            Ok(file) => break file,
+            Err(e) if shared_with_no_writer(&e) && asked < HOLD_RETRIES => {
+                asked += 1;
+                std::thread::sleep(HOLD_WAIT);
+            }
+            Err(e) if shared_with_no_writer(&e) => return Err(in_use()),
+            Err(e) => return Err(io_error(if create { "create" } else { "open" }, e)),
+        }
+    };
+    lock(&file, asked)?;
+    Ok(file)
+}
+
+/// Whether an open was refused because another handle of the file does not allow it (Windows only).
+fn shared_with_no_writer(e: &std::io::Error) -> bool {
+    cfg!(windows) && e.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+}
+
+/// The writer's advisory lock where the system has one that stops no reader; `asked` counts the retries already spent.
+#[cfg(not(windows))]
+fn lock(file: &File, mut asked: u32) -> KResult<()> {
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) if asked < HOLD_RETRIES => {
+                asked += 1;
+                std::thread::sleep(HOLD_WAIT);
+            }
+            Err(TryLockError::WouldBlock) => return Err(in_use()),
+            Err(TryLockError::Error(e)) => return Err(io_error("lock", e)),
+        }
     }
 }
+
+/// On Windows the share mode of the writer's handle is the exclusion (`hold`).
+#[cfg(windows)]
+fn lock(_file: &File, _asked: u32) -> KResult<()> {
+    Ok(())
+}
+
+/// Whether a writer holds the journal at `path` at this moment, asked without waiting and without writing: on Windows by an
+/// open for reading that shares the file with no writer, refused exactly while a handle that may write lives; elsewhere by a
+/// shared lock, refused exactly while the writer's exclusive lock is held. Either is given up at once. A file that cannot be
+/// opened has no writer here: the read that follows says why.
+pub(crate) fn writer_present(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, windows::FILE_SHARE_READ | windows::FILE_SHARE_DELETE);
+        matches!(options.open(path), Err(e) if shared_with_no_writer(&e))
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path).is_ok_and(|file| matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock)))
+    }
+}
+
+/// A read refused by a lock over the whole file, which a server of 0.2.0 or earlier holds on Windows: said in words, since the
+/// system's own message names neither the server nor what to do.
+fn read_error(e: std::io::Error) -> KernelError {
+    #[cfg(windows)]
+    if e.raw_os_error() == Some(windows::ERROR_LOCK_VIOLATION) {
+        return error(LOCKED_WHOLE);
+    }
+    io_error("read", e)
+}
+
+/// What a reader is told of a journal locked whole.
+pub const LOCKED_WHOLE: &str = "the journal is locked whole by a running server, as a server of 0.2.0 or earlier locks it on Windows: \
+                                it cannot be read while that server runs; stop it, or serve the journal with a later version";
 
 fn frame(seq: u64, previous: &Hash, payload: &Value) -> KResult<(Vec<u8>, Hash)> {
     let mut outer = json!({"format": FORMAT, "wal_op": if seq == 0 { "genesis" } else { "audit" },
@@ -186,8 +298,7 @@ impl AuditJournal {
     /// frame (the empty root); a `/2` genesis names none.
     pub(crate) fn create(path: &Path, genesis: &Value, format: FrameFormat, records_root: Option<&Hash>) -> KResult<Self> {
         let (bytes, hash) = encode(format, 0, &ZERO_HASH, genesis, records_root)?;
-        let file = OpenOptions::new().read(true).write(true).create_new(true).open(path).map_err(|e| io_error("create", e))?;
-        lock(&file)?;
+        let file = hold(path, true)?;
         let mut journal = Self {
             file,
             format,
@@ -210,8 +321,7 @@ impl AuditJournal {
     /// Validate the complete frames, returning what the scan found, payloads from genesis on.
     /// The file stays untouched until the caller validates semantic replay.
     pub(crate) fn open(path: &Path) -> KResult<(Self, JournalScan)> {
-        let mut file = OpenOptions::new().read(true).write(true).open(path).map_err(|e| io_error("open", e))?;
-        lock(&file)?;
+        let mut file = hold(path, false)?;
         let scan = Self::scan(&mut file)?;
         let journal = Self {
             file,
@@ -230,15 +340,29 @@ impl AuditJournal {
         Ok((journal, scan))
     }
 
-    /// The checks of `open` on a file opened for reading only and without the writer's lock: nothing can be cut or appended,
-    /// and a journal that a live server is writing reads as the frames complete at that moment, or not at all where the server's
-    /// lock blocks reading (Windows): check a stopped journal.
+    /// The checks of `open` on a file opened for reading only and without the writer's hold: nothing can be cut or appended.
+    ///
+    /// A journal that a server is writing reads as the frames complete at that moment (`live`). Bytes after the last complete
+    /// frame are a frame in flight while a writer holds the journal, and a torn tail when none does: the writer is asked for
+    /// before the read and, when such bytes were read with no writer before, once more after it, so the tail of a stopped journal
+    /// is always reported as torn. A writer that died between the two leaves a torn tail the next read reports.
     pub(crate) fn read(path: &Path) -> KResult<JournalScan> {
-        Self::scan(&mut File::open(path).map_err(|e| io_error("open", e))?)
+        let held = writer_present(path);
+        let mut bytes = Self::slurp(&mut File::open(path).map_err(|e| io_error("open", e))?)?;
+        let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        let live = held || (bytes.len() > complete && writer_present(path));
+        let in_flight = if live { bytes.len() - complete } else { 0 };
+        if live {
+            bytes.truncate(complete);
+        }
+        let mut scan = Self::check(&bytes)?;
+        scan.live = live;
+        scan.in_flight = in_flight as u64;
+        Ok(scan)
     }
 
-    /// The checks of `read` through the writer's own handle, whose lock excludes every other handle on Windows: the frames written
-    /// so far, for a live server's reading tools (SPEC_V02_STEP3). The cursor goes back where it was, and the writer appends on.
+    /// The checks of `read` through the writer's own handle: the frames written so far, for a live server's reading tools
+    /// (SPEC_V02_STEP3). The cursor goes back where it was, and the writer appends on.
     pub(crate) fn scan_own(&mut self) -> KResult<JournalScan> {
         let position = self.file.stream_position().map_err(|e| io_error("seek", e))?;
         self.file.seek(SeekFrom::Start(0)).map_err(|e| io_error("seek", e))?;
@@ -254,14 +378,24 @@ impl AuditJournal {
     /// Read at most `MAX_LOG_BYTES` (one byte more is a refusal, so a file that grows after the length check cannot slip
     /// past it) and validate every complete frame: canonical JSON, sequence, previous hash and frame hash.
     fn scan(file: &mut File) -> KResult<JournalScan> {
+        Self::check(&Self::slurp(file)?)
+    }
+
+    /// The bytes of the journal, at most `MAX_LOG_BYTES`.
+    fn slurp(file: &mut File) -> KResult<Vec<u8>> {
         if file.metadata().map_err(|e| io_error("metadata", e))?.len() > MAX_LOG_BYTES {
             return Err(error("audit WAL exceeds 1 GiB"));
         }
         let mut bytes = Vec::new();
-        file.take(MAX_LOG_BYTES + 1).read_to_end(&mut bytes).map_err(|e| io_error("read", e))?;
+        file.take(MAX_LOG_BYTES + 1).read_to_end(&mut bytes).map_err(read_error)?;
         if bytes.len() as u64 > MAX_LOG_BYTES {
             return Err(error("audit WAL exceeds 1 GiB"));
         }
+        Ok(bytes)
+    }
+
+    /// The checks of every complete frame among `bytes`.
+    fn check(bytes: &[u8]) -> KResult<JournalScan> {
         let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         if complete == 0 {
             return Err(error("audit WAL has no complete genesis frame"));
@@ -328,7 +462,9 @@ impl AuditJournal {
             records_roots,
             bytes: bytes.len() as u64,
             complete_bytes: complete as u64,
-            sha256: sha256(&bytes),
+            sha256: sha256(bytes),
+            live: false,
+            in_flight: 0,
         })
     }
 
@@ -535,8 +671,7 @@ mod tests {
         (path, bytes)
     }
 
-    // Windows locks exclude reads through a different handle too. Inspect via
-    // the owner and restore its cursor, so the test does not weaken the lock.
+    // Inspect via the owner and restore its cursor: what the writer itself sees of its file.
     fn snapshot(journal: &mut AuditJournal) -> Vec<u8> {
         let position = journal.file.stream_position().unwrap();
         journal.file.seek(SeekFrom::Start(0)).unwrap();
@@ -742,6 +877,59 @@ mod tests {
         recovered.finish_recovery().unwrap();
     }
 
+    #[test]
+    fn a_held_journal_is_read_to_its_last_complete_frame_and_a_frame_in_flight_is_no_torn_tail() {
+        let path = TempPath::new();
+        let mut writer = AuditJournal::create(&path.0, &json!({"genesis": true}), FrameFormat::V2, None).unwrap();
+        writer.append(&json!({"command": "first"}), None).unwrap();
+        // another handle reads while the writer holds the journal, and is told so
+        let held = AuditJournal::read(&path.0).unwrap();
+        assert_eq!((held.payloads.len(), held.live, held.in_flight), (2, true, 0));
+        assert_eq!(held.bytes, held.complete_bytes);
+        let complete = std::fs::read(&path.0).unwrap();
+        assert_eq!(held.sha256, sha256(&complete));
+        // half a frame, as a read in the middle of an append finds it: the frames before it, and no torn tail
+        writer.file.write_all(b"{\"format\":\"sbgk-session-log/2\",\"payl").unwrap();
+        let during = AuditJournal::read(&path.0).unwrap();
+        assert_eq!((during.payloads.len(), during.live, during.in_flight), (2, true, 36));
+        assert_eq!((during.bytes, during.complete_bytes, during.sha256), (complete.len() as u64, complete.len() as u64, sha256(&complete)));
+        assert_eq!(during.heads, held.heads);
+        // the same bytes with no writer are a torn tail, as before
+        drop(writer);
+        let stopped = AuditJournal::read(&path.0).unwrap();
+        assert_eq!((stopped.payloads.len(), stopped.live, stopped.in_flight), (2, false, 0));
+        assert_eq!(stopped.bytes - stopped.complete_bytes, 36);
+        assert!(!writer_present(&path.0));
+    }
+
+    /// A server of 0.2.0 or earlier opens the journal to read and write and locks the whole file (`File::try_lock`): the handle
+    /// this test holds is that one.
+    #[test]
+    fn a_writer_of_this_version_and_one_that_locks_the_whole_file_exclude_each_other_in_either_order() {
+        let (path, _) = committed();
+        let earlier = || OpenOptions::new().read(true).write(true).open(&path.0);
+        // the earlier server runs: this version does not open the journal to write
+        let old = earlier().unwrap();
+        old.try_lock().unwrap();
+        assert!(AuditJournal::open(&path.0).unwrap_err().message.contains("in use"));
+        assert!(writer_present(&path.0));
+        // and a reader is told why it cannot read, where that lock stops reading
+        #[cfg(windows)]
+        assert_eq!(AuditJournal::read(&path.0).unwrap_err().message, LOCKED_WHOLE);
+        #[cfg(not(windows))]
+        assert!(AuditJournal::read(&path.0).unwrap().live);
+        drop(old);
+        // this version runs: the earlier server cannot open the journal to write (Windows), or cannot lock it (elsewhere)
+        let (mut new, _) = AuditJournal::open(&path.0).unwrap();
+        new.finish_recovery().unwrap();
+        #[cfg(windows)]
+        assert_eq!(earlier().unwrap_err().raw_os_error(), Some(ERROR_SHARING_VIOLATION));
+        #[cfg(not(windows))]
+        assert!(matches!(earlier().unwrap().try_lock(), Err(TryLockError::WouldBlock)));
+        new.append(&json!({"command": "third"}), None).unwrap();
+        assert_eq!(AuditJournal::read(&path.0).unwrap().payloads.len(), 4);
+    }
+
     fn committed_v3() -> (TempPath, Vec<u8>) {
         let path = TempPath::new();
         let empty = crate::audit::trees::records_root(&[]);
@@ -756,7 +944,6 @@ mod tests {
     #[test]
     fn a_v3_journal_round_trips_its_bodies_records_roots_and_header_chain() {
         let (path, original) = committed_v3();
-        // read before opening: the writer's lock excludes other readers on Windows
         let line = String::from_utf8(original).unwrap().lines().nth(1).unwrap().to_string();
         let (mut journal, scan) = AuditJournal::open(&path.0).unwrap();
         assert_eq!(scan.format, FrameFormat::V3);

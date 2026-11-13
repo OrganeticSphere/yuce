@@ -151,6 +151,7 @@ pub fn cmd_audit_index(a: &Args) {
     if same_file(&db, Path::new(&wal)) {
         refuse(&db, &wal, "the index would be written over its own journal: give --db another path");
     }
+    super::audit_mcp::refuse_locked_whole(&wal);
     let rows = match index::rows(Path::new(&wal)) {
         Ok(rows) => rows,
         Err(e) => {
@@ -188,9 +189,12 @@ pub fn cmd_audit_index(a: &Args) {
             (0, true) => "INDEX_BEHIND",
             _ => "INDEX_DIFFERS",
         };
-        let out = json!({"status": status, "db": db.display().to_string(), "wal": wal, "frames_indexed": frames, "frames": rows.frames,
-                         "differences": count, "first_differences": shown, "index_hash": to_hex(&index::index_hash(&have)),
-                         "journal_index_hash": to_hex(&index::index_hash(&want.tables))});
+        let mut out = json!({"status": status, "db": db.display().to_string(), "wal": wal, "frames_indexed": frames, "frames": rows.frames,
+                             "differences": count, "first_differences": shown, "index_hash": to_hex(&index::index_hash(&have)),
+                             "journal_index_hash": to_hex(&index::index_hash(&want.tables))});
+        if rows.live {
+            out["live"] = super::audit_mcp::live_read(rows.frames, None);
+        }
         println!("{out}");
         if count > 0 {
             std::process::exit(1);
@@ -250,9 +254,10 @@ pub fn cmd_audit_index(a: &Args) {
         drop(conn);
         std::fs::rename(&tmp, &db).unwrap_or_else(|e| fail(&format!("cannot put the index in place at {}: {e}", db.display())));
     }
-    println!(
-        "{}",
-        json!({"status": "INDEXED", "mode": mode, "db": db.display().to_string(), "wal": wal, "frames": rows.frames,
-               "frames_added": rows.frames - from, "records": rows.tables[1].len(), "index_hash": journal_hash})
-    );
+    let mut out = json!({"status": "INDEXED", "mode": mode, "db": db.display().to_string(), "wal": wal, "frames": rows.frames,
+                         "frames_added": rows.frames - from, "records": rows.tables[1].len(), "index_hash": journal_hash});
+    if rows.live {
+        out["live"] = super::audit_mcp::live_read(rows.frames, None);
+    }
+    println!("{out}");
 }

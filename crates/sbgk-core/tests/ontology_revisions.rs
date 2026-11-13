@@ -497,11 +497,14 @@ fn disabled_reviews_keep_historical_mapping_shape_and_windows_owner_lock() {
     let before = f.s.circle_telemetry();
     assert_eq!(f.s.audit_root(), root);
     assert_eq!(before["complete"], true);
+    // one writer: another handle reads the journal (0.2.1; the lock stopped that with os error 33) and, on Windows, cannot be
+    // opened to write
+    assert!(!std::fs::read(&f.path).unwrap().is_empty());
     #[cfg(windows)]
     {
-        let err = std::fs::read(&f.path).unwrap_err();
-        assert_eq!(err.raw_os_error(), Some(33));
-        eprintln!("WAL read blocked by this AuditState process pid={}", std::process::id());
+        let err = std::fs::OpenOptions::new().append(true).open(&f.path).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(32));
+        eprintln!("WAL writing held by this AuditState process pid={}", std::process::id());
     }
     f.s.map_term("builder", &f.observe, "engine", &f.concept).unwrap();
     assert!(f.s.mapping_authors_of(&f.concept).is_none());

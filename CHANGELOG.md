@@ -33,6 +33,15 @@
 * **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
   format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
   specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.
+* **The journal of a running server is read by other processes, on Windows too.** The server locked the whole file, and on Windows
+  that lock stops every read through another handle: `audit-verify`, `audit-read`, `audit-index` and `audit-proof` failed beside a
+  live server (os error 33). On Windows the server now holds its journal by opening it shared for reading only and takes no lock;
+  elsewhere the advisory lock stays. One writer still, on every system: a second server is refused, and so is a server of 0.2.0 or
+  earlier beside one of this version, in either order. A reading command reads up to the last complete entry of that moment and
+  says so (`live`, with `frames_read`): an entry in flight is no torn tail, while the end of a stopped journal that is no complete
+  entry is `TORN_TAIL` as before. Beside a server of 0.2.0 or earlier, whose lock still stops reading on Windows, a reading command
+  says so in words (exit 2). `audit-index` and `audit-proof` take all they use from one read of the journal. The format of the
+  journal, the rules of the kernel and the replay are unchanged.
 
 ## 0.2.0 (2026-11-12)
 

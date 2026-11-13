@@ -183,7 +183,8 @@ fn add_quote(s: &AuditState, id: &str, evidence: &Hash, version: &Hash, start: u
 /// A quittance of `record` (its full id or a unique prefix of at least 8 hex digits) at the seal of frame `seal`, the journal's last
 /// seal when `None`, under `checkpoint`, the text of the signed checkpoint of that seal (SPEC_V02_STEP5 section 5). The journal is
 /// checked whole first. Refused for a record written after the seal, for a record or ground that does not stand at it, and for a
-/// self-contained quote that cannot be handed out. The quittance is checked by `check` before it is returned.
+/// self-contained quote that cannot be handed out. The quittance is checked by `check` before it is returned. The journal is read
+/// once: a live server that appends meanwhile changes nothing of what the quittance is cut from.
 pub fn build(path: &Path, record: &str, seal: Option<usize>, checkpoint: &str, verifier_key: Option<&str>, opts: ProofOptions) -> KResult<Value> {
     let scan = AuditJournal::read(path)?;
     if scan.format != FrameFormat::V3 {
@@ -200,11 +201,11 @@ pub fn build(path: &Path, record: &str, seal: Option<usize>, checkpoint: &str, v
     if size != n + 1 {
         return Err(refuse("checkpoint", format!("the checkpoint names {size} frames; the seal of frame {n} needs the one of {} frames", n + 1)));
     }
-    sign::check_against_journal(path, &origin, size, &root)?;
+    sign::check_against_scan(&scan, &origin, size, &root)?;
     let mut counts = vec![0usize];
     let mut leaves: Vec<Vec<Hash>> = Vec::new();
     let mut captured = None;
-    AuditState::verify_states(path, &mut |m, state, _| {
+    AuditState::verify_scan(&scan, &mut |m, state, _| {
         if m > n + 1 {
             return;
         }
@@ -259,7 +260,24 @@ pub fn build(path: &Path, record: &str, seal: Option<usize>, checkpoint: &str, v
 
 /// The seal frames of the journal at `path`, in order: where its checkpoints are.
 pub fn seals_of(path: &Path) -> KResult<Vec<usize>> {
-    Ok(AuditJournal::read(path)?.payloads.iter().enumerate().filter(|(_, p)| is_seal(p)).map(|(k, _)| k).collect())
+    Ok(seals_read(path)?.seals)
+}
+
+/// What one read of a journal found of its seals.
+pub struct SealsRead {
+    /// The seal frames, in order.
+    pub seals: Vec<usize>,
+    /// The complete frames read, the genesis included.
+    pub frames: usize,
+    /// A writer held the journal while it was read: more frames, and more seals, may have followed.
+    pub live: bool,
+}
+
+/// The seals of the journal at `path` with how much of it was read, and whether a writer held it the while.
+pub fn seals_read(path: &Path) -> KResult<SealsRead> {
+    let scan = AuditJournal::read(path)?;
+    let seals = scan.payloads.iter().enumerate().filter(|(_, p)| is_seal(p)).map(|(k, _)| k).collect();
+    Ok(SealsRead { seals, frames: scan.payloads.len(), live: scan.live })
 }
 
 /// The bytes of a quittance file: its JCS and one line end.

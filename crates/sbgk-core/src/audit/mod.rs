@@ -21,6 +21,7 @@ pub mod index;
 pub(crate) mod mem;
 pub mod onto;
 pub(crate) mod persistence;
+pub use persistence::LOCKED_WHOLE;
 pub mod proof;
 pub mod read;
 pub mod records;

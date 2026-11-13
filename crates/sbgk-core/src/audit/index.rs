@@ -99,6 +99,8 @@ pub struct IndexRows {
     /// The hash of the last frame indexed.
     pub wal_head: Hash,
     pub tables: Vec<Vec<Vec<Value>>>,
+    /// A writer held the journal while it was read: these are the rows of the frames complete at that moment.
+    pub live: bool,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -113,7 +115,8 @@ pub fn rows(path: &Path) -> KResult<IndexRows> {
 /// The rows of the index of the first `upto` frames of the journal at `path` (all of them when `None`), the status that of the state
 /// after them: what an index built on that prefix holds (Codex review of 11abf6ed, S6-03: an index behind its journal is compared with
 /// the prefix it names, not with the journal's later state). The journal is checked whole first, and a journal that ends in bytes
-/// that are no complete frame is refused (S6-04), as `audit-verify` refuses it.
+/// that are no complete frame is refused (S6-04), as `audit-verify` refuses it. The journal is read once: the frames and the
+/// states replayed are those of one read, also where a live server appends meanwhile.
 pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
     let scan = AuditJournal::read(path)?;
     if scan.bytes != scan.complete_bytes {
@@ -133,7 +136,7 @@ pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
     }
     let mut counts = vec![0usize];
     let mut status_at: Option<Vec<Value>> = None;
-    let (state, _) = AuditState::verify_states(path, &mut |m, state, _| {
+    let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, _| {
         counts.push(state.record_count());
         if m == frames {
             status_at = Some(state.projections().0);
@@ -195,7 +198,7 @@ pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
         // [id, kind, grounded, answer_support, fallen_by]
         tables[5].push(vec![row[0].clone(), row[1].clone(), json!(u8::from(row[2] == true)), json!(u8::from(row[3] == true)), json!(to_jcs(&row[4]))]);
     }
-    Ok(IndexRows { run_id: state.run_id().to_string(), frames, wal_head: scan.heads[frames - 1], tables })
+    Ok(IndexRows { run_id: state.run_id().to_string(), frames, wal_head: scan.heads[frames - 1], tables, live: scan.live })
 }
 
 /// The key of a row: its first `key` values, as one JCS text that sorts the rows of a table the same way everywhere.
