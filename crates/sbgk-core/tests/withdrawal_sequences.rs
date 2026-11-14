@@ -5,6 +5,7 @@
 use sbgk_core::audit::onto::AuditOntology;
 use sbgk_core::audit::state::AuditState;
 use sbgk_core::audit::{RecordId, Scope};
+use sbgk_core::error::KResult;
 use sbgk_core::hash::sha256;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -137,6 +138,27 @@ fn quote(s: &mut AuditState, m: &mut Model, rng: &mut Rng, step: usize) {
     }
 }
 
+/// A preview of a withdrawal (0.2.2), taken just before it: the journal and the state are as they were.
+/// Its refusal comes as JSON.
+fn previewed(s: &AuditState, preview: impl Fn(&AuditState) -> Result<(AuditState, u64), Value>, at: &str) -> Result<(AuditState, u64), Value> {
+    let before = (s.engine_root(), s.audit_root(), s.wal_head(), s.entries());
+    let out = preview(s);
+    assert_eq!((s.engine_root(), s.audit_root(), s.wal_head(), s.entries()), before, "{at}: a preview writes nothing");
+    out
+}
+
+/// The withdrawal is what its preview showed: the same refusal, or the same count and the same state after it, to the roots.
+fn is_the_preview(preview: Result<(AuditState, u64), Value>, answer: &KResult<u64>, s: &AuditState, at: &str) {
+    match (preview, answer) {
+        (Ok((after, n)), Ok(m)) => {
+            assert_eq!(n, *m, "{at}: the count of quotes that went");
+            assert_eq!((after.engine_root(), after.audit_root()), (s.engine_root(), s.audit_root()), "{at}: the state after the withdrawal");
+        }
+        (Err(p), Err(e)) => assert_eq!(p, e.to_json(), "{at}: the refusal"),
+        (p, e) => panic!("{at}: the preview {:?}, the withdrawal {:?}", p.map(|(_, n)| n), e.as_ref().map_err(|e| e.to_json())),
+    }
+}
+
 fn run(seed: u64) {
     static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = format!(
@@ -165,7 +187,9 @@ fn run(seed: u64) {
                 let known = m.closed.get(doc).is_some_and(|c| c.contains(text.as_bytes()));
                 let places = every(&m.docs[doc], text.as_bytes());
                 let going = m.quotes.iter().filter(|q| m.stands(q) && q.doc == doc && places.iter().any(|o| o.0 < q.span.1 && q.span.0 < o.1)).count();
+                let preview = previewed(&s, |s| s.preview_withdraw_text("owner", doc, &text).map_err(|e| e.to_json()), &format!("seed {seed} step {step}"));
                 let answer = s.withdraw_text("owner", doc, &text);
+                is_the_preview(preview, &answer, &s, &format!("seed {seed} step {step}"));
                 if known {
                     assert!(answer.is_err(), "already closed");
                 } else {
@@ -181,7 +205,10 @@ fn run(seed: u64) {
                 let q = &m.quotes[live[rng.below(live.len())]];
                 let (id, doc) = (q.id, q.doc);
                 let text = q.version[q.span.0..q.span.1].to_vec();
-                s.revoke_observation("owner", &id).unwrap();
+                let preview = previewed(&s, |s| s.preview_revoke_observation("owner", &id).map_err(|e| e.to_json()), &format!("seed {seed} step {step}"));
+                let answer = s.revoke_observation("owner", &id);
+                is_the_preview(preview, &answer, &s, &format!("seed {seed} step {step}"));
+                answer.unwrap();
                 m.closed.entry(doc).or_default().insert(text);
             }
             _ => {

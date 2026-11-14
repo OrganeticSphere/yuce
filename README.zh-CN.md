@@ -63,7 +63,7 @@ sbgk audit-serve --docs ./contracts --run-id contracts-1 --wal contracts.wal \
 ```
 
 - 日志保存在 `my-docs/.yuce/run.wal`，扫描会跳过这个隐藏目录。再次启动时继续同一次运行。
-- 智能体得到阅读工具和所有者的只读工具。撤回、封存和关闭默认不开放，可用 `--owner-tools all` 开启。
+- 智能体得到阅读工具和所有者的只读工具，其中 `audit_withdraw_preview` 不写入日志，只显示一次撤回会让哪些内容失去依据。撤回、封存和关闭默认不开放，可用 `--owner-tools all` 开启。
 - 过长的工具结果分段返回，用 `audit_more` 读取其余部分。每段最多 16000 个字符，按字符而不是字节计算，中文一段可达 48 KB。如果客户端保留的工具结果更短，请调低上限，例如 `--max-result-chars 8000`。
 - 中文和日文的问题词之间没有空格，请用 `--about` 写明文档中使用的主题词。
 

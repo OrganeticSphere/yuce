@@ -48,8 +48,8 @@ use std::time::{Duration, Instant};
 
 const PROTOCOL: &str = "2025-06-18";
 /// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, and stay open after the
-/// run is closed.
-const READ_TOOLS: [&str; 5] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage"];
+/// run is closed (a preview of a withdrawal then answers with the refusal the withdrawal would get).
+const READ_TOOLS: [&str; 6] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview"];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
 /// Longest `max_wait_ms` an `audit_acquire` can ask for.
@@ -98,6 +98,7 @@ impl Role {
                 "audit_diff",
                 "audit_fallen",
                 "audit_coverage",
+                "audit_withdraw_preview",
                 "audit_revoke",
                 "audit_withdraw_text",
                 "audit_seal",
@@ -531,6 +532,15 @@ fn tool_defs() -> Vec<Value> {
             ),
         ),
         t(
+            "audit_withdraw_preview",
+            "What a withdrawal would make fall, without writing it: the report audit_fallen would give from the point before it, for audit_revoke (give record) or audit_withdraw_text (give doc_id and exact_quote). Nothing is written; a refusal is the one the withdrawal would get, and a command written later can change the answer.",
+            schema(
+                json!({"record": s("id of an observe record, as for audit_revoke"), "doc_id": s("document id, as for audit_withdraw_text"),
+                        "exact_quote": s("the text, byte for byte"), "limit": {"type": "integer"}}),
+                &[],
+            ),
+        ),
+        t(
             "audit_revoke",
             "Withdraw an observation (its source no longer holds): its text closes in that document, every stored quote overlapping it goes with it, new ones are refused, and the answers resting on them are reopened.",
             schema(json!({"record": s("full id of an observe record")}), &["record"]),
@@ -871,6 +881,7 @@ impl AuditServer {
                     Some(_) => bad_arg(format!("'since' is a point of the journal: an integer from 1 to {now}")),
                 }
             }
+            "audit_withdraw_preview" => withdraw_preview(&g.state, &who.id, args),
             "audit_revoke" => match record_arg(&g.state, args) {
                 Ok(r) => {
                     let before = withdrawal_point(&g.state);
@@ -1037,6 +1048,45 @@ fn withdrawal_answer(state: &AuditState, mut out: Value, (since, before): (usize
     out["fell"] = report["rows_fallen"].clone();
     out["quotes_gone"] = report["quotes_gone"].clone();
     out["report"] = json!(format!("audit_fallen with since={since}"));
+    out
+}
+
+/// `audit_withdraw_preview` (0.2.2): the withdrawal `audit_revoke` (`record`) or `audit_withdraw_text` (`doc_id`, `exact_quote`)
+/// would write, staged and never written, and the report `audit_fallen` would give from the point before it, had it been written
+/// now, with the counts its answer would give; a refusal is the withdrawal's own.
+fn withdraw_preview(state: &AuditState, actor: &str, args: &Value) -> Value {
+    // a field sent as null is a field not given: clients send the optional ones so (Argon's review of the preview, 14.11.2026)
+    let given = |key: &str| args.get(key).filter(|v| !v.is_null());
+    let staged = match (given("record"), given("doc_id"), given("exact_quote")) {
+        (Some(_), None, None) => match record_arg(state, args) {
+            Ok(r) => state.preview_revoke_observation(actor, &r),
+            Err(e) => return e,
+        },
+        (None, Some(doc), Some(text)) => match (doc.as_str(), text.as_str()) {
+            (Some(doc), Some(text)) => state.preview_withdraw_text(actor, doc, text),
+            _ => return bad_arg("'doc_id' and 'exact_quote' are strings"),
+        },
+        _ => return bad_arg("give 'record', or 'doc_id' and 'exact_quote'"),
+    };
+    let (after, also) = match staged {
+        Ok(staged) => staged,
+        Err(e) => return json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+    };
+    // the point a written withdrawal would answer: the state now, which the preview did not change
+    let (since, before) = withdrawal_point(state);
+    let mut out = read::fallen(&after, since + 1, Some(&before), limit_arg(args));
+    out["status"] = json!("PREVIEW");
+    out["written"] = json!(false);
+    out["fell"] = out["rows_fallen"].clone();
+    out["also_revoked"] = json!(also);
+    if let Some(fields) = out.as_object_mut() {
+        // no frame was written: the preview has no point of its own, and the journal proves nothing of it yet
+        fields.remove("at");
+        fields.remove("provable");
+    }
+    out["meaning"] = json!(
+        "what this withdrawal would make fall if it were written now: once it is written, audit_fallen with this since gives this report; nothing is written yet, and a command written before it can change it"
+    );
     out
 }
 

@@ -2001,62 +2001,15 @@ impl AuditState {
     }
 
     fn commit(&mut self, actor: &str, id: &str, command: &Value) -> KResult<Outcome> {
-        identifier(actor, "actor")?;
-        identifier(id, "submission_id")?;
-        if self.is_v3() {
-            kernel_id(actor, id, command)?;
-            // nothing is written that a `/3` journal refuses on replay (SPEC_V02_STEP2 section 1)
-            if !super::persistence::safe_integers(command) {
-                return Err(bad("command", "a number of a 0.2 journal is an integer from 0 to 2^53-1"));
-            }
-        }
+        self.check_command(actor, id, command)?;
         let hash = request_hash(actor, command);
-        if let Some(receipt) = self.core.data.receipts.get(&(actor.into(), id.into())) {
-            return if receipt.request_hash == hash {
-                Ok(receipt.outcome.clone())
-            } else {
-                Err(bad("submission_id", "the same id was already used for different content"))
-            };
+        if let Some(answer) = self.receipt(actor, id, &hash) {
+            return answer;
         }
-        if self.journal.is_none() {
-            return Err(bad("wal_path", "audit mutations require a durable v2 journal").expected(json!({"wal_path":"required"})));
-        }
-        // the close is the journal's last frame: a retry above still has its receipt, nothing new is written (GAP-15 of the
-        // independent verifier)
-        if self.is_v3() && self.core.data.closed {
-            return Err(bad("kind", "the run is closed: nothing more is written to its journal"));
-        }
-        // staged on one fork; the state is replaced only once the journal holds the command (01.11.2026 measurement: a fork to stage
-        // on, forked again inside, cost a whole copy of the state per command)
-        let (next_core, outcome) = self.core.stage(actor, id, command)?;
-        let next = Self {
-            core: next_core,
-            journal: None,
-            telemetry_frames: Vec::new(),
-            links_off: false,
-            genesis: self.genesis.clone(),
-            pending_base: None,
-            frames: Vec::new(),
-            sealed_at: 0,
-            seal_pending: false,
-            seal_every: None,
-            seals: Vec::new(),
-            signer: None,
-            sign_failures: Vec::new(),
-        };
-        // the storage invariant of the control profiles, judged by what the staged command did and not by its shape, so no
-        // composition carries a link past it: a relation record of the swarm, a link operation of the builder, or either inside a
-        // batch (Codex reviews of 8023910, SCOPE-01, and of 3ee34e9, SCOPE-03: a submit inside a batch stored a relation)
-        if self.links_off && next.core.data.links.keys().any(|link| !self.core.data.links.contains_key(link)) {
-            return Err(bad("kind", "links are off in this run (build scope concepts or none): a command that creates a link is not stored")
-                .expected(json!({"links": "off"})));
-        }
+        let (next, outcome) = self.staged(actor, id, command)?;
         let payload = json!({"actor":actor,"submission_id":id,"request_hash":to_hex(&hash),"command":command,"outcome":outcome.value(),
             "engine_root":to_hex(&next.engine_root()),"audit_root":to_hex(&next.audit_root())});
-        // the frame is the body and the header in one object: one level over the body (SPEC_V02_STEP2 section 11)
-        if self.is_v3() && 1 + super::persistence::json_depth(&payload) > super::persistence::MAX_FRAME_DEPTH {
-            return Err(bad("command", "a frame of a 0.2 journal nests at most 64 levels"));
-        }
+        self.check_depth(&payload)?;
         let records_root = self.is_v3().then(|| next.records_root_since(self.core.data.records.len()));
         self.journal.as_mut().expect("checked journal").append(&payload, records_root.as_ref())?;
         self.core = next.core;
@@ -2076,16 +2029,138 @@ impl AuditState {
         Ok(outcome)
     }
 
+    /// The checks of a command's actor, id and numbers, before anything else of `commit`.
+    fn check_command(&self, actor: &str, id: &str, command: &Value) -> KResult<()> {
+        identifier(actor, "actor")?;
+        identifier(id, "submission_id")?;
+        if self.is_v3() {
+            kernel_id(actor, id, command)?;
+            // nothing is written that a `/3` journal refuses on replay (SPEC_V02_STEP2 section 1)
+            if !super::persistence::safe_integers(command) {
+                return Err(bad("command", "a number of a 0.2 journal is an integer from 0 to 2^53-1"));
+            }
+        }
+        Ok(())
+    }
+
+    /// What `commit` answers from the receipt of an id already used: the same outcome for the same request, nothing staged or
+    /// written; a refusal for other content.
+    fn receipt(&self, actor: &str, id: &str, hash: &Hash) -> Option<KResult<Outcome>> {
+        self.core.data.receipts.get(&(actor.into(), id.into())).map(|receipt| {
+            if receipt.request_hash == *hash {
+                Ok(receipt.outcome.clone())
+            } else {
+                Err(bad("submission_id", "the same id was already used for different content"))
+            }
+        })
+    }
+
+    /// The frame is the body and the header in one object: one level over the body (SPEC_V02_STEP2 section 11).
+    fn check_depth(&self, payload: &Value) -> KResult<()> {
+        if self.is_v3() && 1 + super::persistence::json_depth(payload) > super::persistence::MAX_FRAME_DEPTH {
+            return Err(bad("command", "a frame of a 0.2 journal nests at most 64 levels"));
+        }
+        Ok(())
+    }
+
+    /// A state of `core` without a journal: for the reading projections only, never written.
+    fn detached(&self, core: Core) -> Self {
+        Self {
+            core,
+            journal: None,
+            telemetry_frames: Vec::new(),
+            links_off: false,
+            genesis: self.genesis.clone(),
+            pending_base: None,
+            frames: Vec::new(),
+            sealed_at: 0,
+            seal_pending: false,
+            seal_every: None,
+            seals: Vec::new(),
+            signer: None,
+            sign_failures: Vec::new(),
+        }
+    }
+
+    /// The state after a new command, staged on a copy of this one and not written, with the command's outcome: what `commit`
+    /// writes, and what a preview shows. A refusal here is the refusal `commit` gives.
+    fn staged(&self, actor: &str, id: &str, command: &Value) -> KResult<(Self, Outcome)> {
+        if self.journal.is_none() {
+            return Err(bad("wal_path", "audit mutations require a durable v2 journal").expected(json!({"wal_path":"required"})));
+        }
+        // the close is the journal's last frame: a retry still has its receipt in `commit`, nothing new is written (GAP-15 of the
+        // independent verifier)
+        if self.is_v3() && self.core.data.closed {
+            return Err(bad("kind", "the run is closed: nothing more is written to its journal"));
+        }
+        // staged on one fork; the state is replaced only once the journal holds the command (01.11.2026 measurement: a fork to stage
+        // on, forked again inside, cost a whole copy of the state per command)
+        let (next_core, outcome) = self.core.stage(actor, id, command)?;
+        let next = self.detached(next_core);
+        // the storage invariant of the control profiles, judged by what the staged command did and not by its shape, so no
+        // composition carries a link past it: a relation record of the swarm, a link operation of the builder, or either inside a
+        // batch (Codex reviews of 8023910, SCOPE-01, and of 3ee34e9, SCOPE-03: a submit inside a batch stored a relation)
+        if self.links_off && next.core.data.links.keys().any(|link| !self.core.data.links.contains_key(link)) {
+            return Err(bad("kind", "links are off in this run (build scope concepts or none): a command that creates a link is not stored")
+                .expected(json!({"links": "off"})));
+        }
+        Ok((next, outcome))
+    }
+
+    /// The id an in-process command gets: a fresh invocation, never an RPC retry token.
+    fn auto_id(&self, actor: &str, command: &Value) -> String {
+        let sequence = self.journal.as_ref().map_or(0, AuditJournal::sequence);
+        format!("auto_{sequence}_{}", to_hex(&request_hash(actor, command)))
+    }
+
     fn value_command(&mut self, actor: &str, command: Value) -> KResult<Value> {
         // This in-process method is a fresh invocation, not an RPC retry token. In particular A -> B -> A document
         // updates must not reuse the first A's historical receipt. Remote retry semantics use explicit submission ids.
-        let sequence = self.journal.as_ref().map_or(0, AuditJournal::sequence);
-        let id = format!("auto_{sequence}_{}", to_hex(&request_hash(actor, &command)));
+        let id = self.auto_id(actor, &command);
         match self.commit(actor, &id, &command)? {
             Outcome::Value(v) => Ok(v),
             Outcome::Error(e) => Err(e),
             Outcome::Records(_) => Err(bad("command", "unexpected records outcome")),
         }
+    }
+
+    /// What `value_command` would do with `command` now, by the steps of `commit` under the id it would take, and never written:
+    /// the state after it (without a journal: for the reading projections only) and the command's value, or the refusal it would
+    /// give. The automatic seal `commit` may write after the frame is left out: a seal changes no record.
+    fn preview_value(&self, actor: &str, command: &Value) -> KResult<(Self, Value)> {
+        let id = self.auto_id(actor, command);
+        self.check_command(actor, &id, command)?;
+        let hash = request_hash(actor, command);
+        let (next, outcome) = match self.receipt(actor, &id, &hash) {
+            // `commit` answers from the receipt: nothing is staged, and the state stays as it is
+            Some(answer) => (self.detached(self.core.fork()?), answer?),
+            None => {
+                let (next, outcome) = self.staged(actor, &id, command)?;
+                // the frame's depth as `commit` checks it: its roots are hex strings, of one level whatever they hold
+                self.check_depth(&json!({"actor":actor,"submission_id":id,"request_hash":to_hex(&hash),"command":command,
+                    "outcome":outcome.value(),"engine_root":"","audit_root":""}))?;
+                (next, outcome)
+            }
+        };
+        match outcome {
+            Outcome::Value(v) => Ok((next, v)),
+            Outcome::Error(e) => Err(e),
+            Outcome::Records(_) => Err(bad("command", "unexpected records outcome")),
+        }
+    }
+
+    /// What `withdraw_text` with these arguments would do now, written nowhere: the state after it, for the reading projections
+    /// (`read::fallen` from the point before it shows what would fall), and the count of the stored quotes that would go with it;
+    /// a refusal is the one `withdraw_text` would give. A command written after the preview can change what a withdrawal does.
+    pub fn preview_withdraw_text(&self, actor: &str, doc_id: &str, text: &str) -> KResult<(AuditState, u64)> {
+        let (next, value) = self.preview_value(actor, &json!({"kind":"revoke_text","doc_id":doc_id,"exact_quote":text}))?;
+        Ok((next, value["also_revoked"].as_u64().unwrap_or(0)))
+    }
+
+    /// `preview_withdraw_text` for `revoke_observation`: what withdrawing the quote of an observation would do now, written nowhere.
+    pub fn preview_revoke_observation(&self, actor: &str, record: &RecordId) -> KResult<(AuditState, u64)> {
+        let (next, value) = self.preview_value(actor, &json!({"kind":"revoke","record":to_hex(&record.0)}))?;
+        Ok((next, value["also_revoked"].as_u64().unwrap_or(0)))
     }
 
     pub fn submit_records_id(&mut self, id: &str, actor: &str, directive: &str, scope: &Scope, lines: &[Value]) -> SubmitReport {
