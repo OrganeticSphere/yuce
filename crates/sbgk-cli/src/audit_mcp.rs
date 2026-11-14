@@ -651,6 +651,12 @@ impl AuditServer {
             };
             return if who.role == Role::Swarm { for_swarm(out) } else { out };
         }
+        // the preview writes nothing, so it answers here: before the tail below, which writes what the dispatcher keeps pending,
+        // and before the long polls are woken. What is pending waits for the next call that coordinates or writes (Codex review
+        // of e7af1bfc, WPRE-01: an agent's failure was written during a preview that answered written: false)
+        if name == "audit_withdraw_preview" {
+            return withdraw_preview(&g.state, &who.id, args);
+        }
         let mut out = match name {
             "audit_acquire" => {
                 let (back, out) = self.acquire(g, who, args);
@@ -881,7 +887,6 @@ impl AuditServer {
                     Some(_) => bad_arg(format!("'since' is a point of the journal: an integer from 1 to {now}")),
                 }
             }
-            "audit_withdraw_preview" => withdraw_preview(&g.state, &who.id, args),
             "audit_revoke" => match record_arg(&g.state, args) {
                 Ok(r) => {
                     let before = withdrawal_point(&g.state);
