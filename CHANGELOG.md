@@ -10,11 +10,9 @@
   `none` closes them). The kernel's rules, the journal and every answer are those of `audit-serve`; `audit-serve` is unchanged.
   The question's topic words come from its words of four letters or more. A question written without spaces between words, in
   Chinese or Japanese, gives none, and the start asks for `--about`.
-* **A long tool answer comes in parts in `yuce mcp`.** In a probe on 48 project notes, a summary's task was 70 to 85 KB, and Claude
-  Code passed only its first 2 KB to the model, which could not answer. An answer longer than `--max-result-chars` (default
-  16,000) now comes in parts: the first names a handle, the number of parts and the task's id, and `audit_more` gives the others.
-  Checked with Claude Code as the client, with parts of 2,000 characters: it read every part, including a summary in four, and
-  ran the audit to its end.
+* **A long tool answer comes in parts in `yuce mcp`,** for MCP clients that cap the size of one tool result. An answer longer
+  than `--max-result-chars` (default 16,000 characters) comes in parts: the first names a handle, the number of parts and the
+  task's id, and `audit_more` gives the others.
 * **A preview of a withdrawal: what would fall, without writing it.** `audit_withdraw_preview` takes the arguments of
   `audit_revoke` (`record`) or of `audit_withdraw_text` (`doc_id`, `exact_quote`) and answers with the report `audit_fallen`
   would give from the point before the withdrawal, as if it had been written now: the records that would fall, the quotes that
