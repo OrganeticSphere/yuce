@@ -25,6 +25,8 @@ mod bridge;
 mod docs_input;
 #[path = "mcp.rs"] // explicit: `src/bin/yuce.rs` loads this file as a module
 mod mcp;
+#[path = "one_command.rs"]
+mod one_command;
 
 // ------------------------------------------------------------------ allocation accounting
 
@@ -191,6 +193,7 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "serve" => &["ack", "targets", "wal-path"],
         "mcp-serve" => &["allow-remote", "listen", "max-connections", "max-message-bytes", "targets", "token", "wal-path"],
         "mcp-bridge" => &["agent-id", "allow-shutdown", "allow-tools", "connect", "connect-timeout-ms", "tier", "token"],
+        "mcp" => &["about", "ask", "docs", "max-result-chars", "owner-tools", "questions", "run-id", "select", "wal"],
         "audit-serve" => AUDIT_SERVE_FLAGS,
         "audit-verify" => &["anchored-at", "at-end", "checkpoint", "expect", "key", "trusted-keys", "wal"],
         "keygen" => &["name", "out"],
@@ -987,6 +990,10 @@ const HELP: &str = "usage: sbgk (or yuce) <command> [arguments]
 A deterministic evidence control kernel for AI agent teams.
 
 Audit server for a team of agents:
+  mcp           one agent on its own folder, as one MCP server over stdio for a client's configuration: --docs <folder>
+                --ask <question> [--about <term,term>] (or --questions <file>); the journal in <folder>/.yuce/run.wal, resumed
+                when started again; the agent's tools and the owner's reading tools (--owner-tools all|none); a long answer
+                comes in parts (--max-result-chars, default 16000) that audit_more gives
   audit-serve   the shared audit server (newline-delimited JSON-RPC over TCP): --manifest --repo --select --run-id, or
                 --docs <folder> [--select <list>] --run-id for your own UTF-8 text files, and --wal --subjects --questions
                 --listen; the measured v0.1 profile for a team of three or more, --profile solo for one agent, --profile custom
@@ -1091,6 +1098,10 @@ pub fn main() {
             bridge::cmd_mcp_bridge(&a);
             return;
         }
+        "mcp" => {
+            one_command::cmd_mcp(&a);
+            return;
+        }
         "audit-serve" => {
             audit_mcp::cmd_audit_serve(&a);
             return;
@@ -1193,6 +1204,7 @@ mod flag_tests {
             "serve",
             "mcp-serve",
             "mcp-bridge",
+            "mcp",
             "audit-serve",
             "audit-verify",
             "audit-read",
@@ -1218,8 +1230,14 @@ mod flag_tests {
             "view",
         ];
         let all: Vec<&str> = commands.iter().flat_map(|c| known_flags(c).unwrap()).collect();
-        let sources =
-            [include_str!("main.rs"), include_str!("audit_mcp.rs"), include_str!("audit_index.rs"), include_str!("bridge.rs"), include_str!("mcp.rs")];
+        let sources = [
+            include_str!("main.rs"),
+            include_str!("audit_mcp.rs"),
+            include_str!("audit_index.rs"),
+            include_str!("bridge.rs"),
+            include_str!("mcp.rs"),
+            include_str!("one_command.rs"),
+        ];
         for flag in sources.iter().flat_map(|s| flags_read(s)) {
             assert!(all.contains(&flag.as_str()), "--{flag} is read by the code but no command lists it");
         }
@@ -1242,7 +1260,9 @@ mod flag_tests {
         let main = include_str!("main.rs");
         let audit = include_str!("audit_mcp.rs");
         let index = include_str!("audit_index.rs");
+        let one = include_str!("one_command.rs");
         for (command, src, function) in [
+            ("mcp", one, "cmd_mcp"),
             ("audit-serve", audit, "graph_quality_args"),
             ("audit-serve", audit, "create_run"),
             ("audit-serve", audit, "with_profile"),
@@ -1268,7 +1288,7 @@ mod flag_tests {
             ("audit-proof", audit, "cmd_audit_proof"),
             ("audit-proof-verify", audit, "cmd_audit_proof_verify"),
             ("audit-index", index, "cmd_audit_index"),
-            ("audit-serve", audit, "cmd_audit_serve"),
+            ("audit-serve", audit, "start_audit_server"),
         ] {
             let known = known_flags(command).unwrap();
             for flag in flags_read(body(src, function)) {
