@@ -45,4 +45,4 @@ Read this before you trust a PASS.
 * In a real browser it gave the reports of Node.js, byte for byte (see `yuce-verify/README.md`).
 * It passed both journals of the control runs of 0.2 ([BENCHMARKS.md](../BENCHMARKS.md)).
 
-License: Apache-2.0, as the rest of this repository.
+License: Apache-2.0, as the rest of this repository (see [LICENSE](../LICENSE) and [NOTICE](../NOTICE)).

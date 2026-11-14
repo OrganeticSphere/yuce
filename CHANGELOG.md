@@ -20,6 +20,8 @@
   staged before it is written, so a refusal is the withdrawal's own. A command written after the preview can change what the
   withdrawal does. The tool is the owner's, it is open in `yuce mcp` with the reading tools, and the Python client has
   `preview_withdrawal`. The kernel's rules and the journal format do not change.
+* **NOTICE and the README name the product names.** YuCe and Organetic Sphere are product names and trademarks of Aset Uisin;
+  the license is Apache-2.0 as before, and its Section 6 already covers the names.
 
 ## 0.2.1 (2026-11-14)
 

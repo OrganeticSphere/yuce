@@ -30,3 +30,8 @@ The Rust crates the binaries are built from, and the Python packages the runner'
 optional LangGraph and Temporal baselines install, are listed with their licenses
 in THIRD_PARTY_LICENSES.md. They are not part of this repository's source; their
 own license terms apply to them.
+
+-------------------------------------------------------------------------------
+Trademarks
+-------------------------------------------------------------------------------
+YuCe and Organetic Sphere are product names and trademarks of Aset Uisin.
