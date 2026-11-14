@@ -201,7 +201,29 @@ pip install organetic-yuce
 
 ### One agent on your own folder
 
-A folder of UTF-8 text files, one question, one agent (Claude Code, Cursor or any MCP client):
+A folder of UTF-8 text files, one question, one agent. Add one entry to your MCP client's configuration (Claude Code's
+`.mcp.json`, Claude Desktop, Cursor or any client that starts servers over stdio), with the path of your folder:
+
+```json
+{"mcpServers": {"yuce": {"command": "yuce", "args": ["mcp", "--docs", "/path/to/my-docs",
+                                                     "--ask", "What do these documents say about refunds?"]}}}
+```
+
+The client starts the server itself; there is nothing else to run and no token to copy. Then ask your agent to do the audit
+as the server's reading agent. What happens:
+
+* **The run.** The first start reads the folder and keeps the journal in `my-docs/.yuce/run.wal`, a hidden folder the scan leaves
+  out. Every later start resumes the same run, with the documents and the question it started with.
+* **The tools.** Your agent gets the reading agent's tools (`audit_acquire`, `audit_submit`, ...) and your reading tools as the
+  owner: `audit_status`, `audit_active_claims`, `audit_record`, `audit_fallen`, `audit_coverage`. Withdrawing text, sealing and
+  closing stay closed to the model unless you start the server with `--owner-tools all`.
+* **Long answers.** A long answer comes in parts, because MCP clients cap one tool result: a summary's task can be 70 KB or more.
+  The first part names a handle, and `audit_more` gives the rest.
+* **The topic.** The topic words come from the question. Give them yourself with `--about "refund,return window"`, which a
+  question in Chinese or Japanese needs: it has no spaces to find words by. For several questions, use
+  `--questions questions.json`.
+
+To run the server yourself, with a socket that more agents can join:
 
 ```bash
 cat > questions.json <<'EOF'

@@ -55,6 +55,18 @@ sbgk audit-serve --docs ./contracts --run-id contracts-1 --wal contracts.wal \
 
 隐藏文件（如 `.env`）、服务目录和链接会被跳过；读取和跳过的文件会列在 stderr 中。PDF 和 Word 需要先转换成文本。
 
+**一个智能体，一行配置。** 在 MCP 客户端的配置中加入一项即可，例如 Claude Code 的 `.mcp.json`、Claude Desktop 或 Cursor。客户端会自行启动服务器，不需要另外运行任何程序，也不需要复制令牌：
+
+```json
+{"mcpServers": {"yuce": {"command": "yuce", "args": ["mcp", "--docs", "/path/to/my-docs",
+                                                     "--ask", "这些文档关于退款说了什么？", "--about", "退款,退货"]}}}
+```
+
+- 日志保存在 `my-docs/.yuce/run.wal`，扫描会跳过这个隐藏目录。再次启动时继续同一次运行。
+- 智能体得到阅读工具和所有者的只读工具。撤回、封存和关闭默认不开放，可用 `--owner-tools all` 开启。
+- 过长的工具结果分段返回，用 `audit_more` 读取其余部分。
+- 中文和日文的问题词之间没有空格，请用 `--about` 写明文档中使用的主题词。
+
 **注意：** 日志会保存所读取文档的完整文本，拿到日志的人也就拿到了这些文本。内核与核验均可完全在本地运行，不调用外部模型；但请只把日志交给有权查看这些文档的人。
 
 ## 它不做什么

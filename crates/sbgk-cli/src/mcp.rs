@@ -528,6 +528,11 @@ pub(crate) trait LineServer: Send + Sync + 'static {
     fn handle(&self, conn: &mut Self::Conn, line: &str) -> (Option<Value>, bool);
 }
 
+/// Serve one client over this process's stdin and stdout (`sbgk mcp`).
+pub(crate) fn serve_stdio<S: LineServer>(server: &S) {
+    serve_stream(server, std::io::stdin().lock(), std::io::stdout().lock());
+}
+
 fn serve_stream<S: LineServer>(server: &S, input: impl BufRead, out: impl Write) {
     serve_stream_with_admission(server, input, out, |_, _| true);
 }

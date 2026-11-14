@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+* **`yuce mcp`: one agent on its own folder from one line of an MCP client's configuration.** Before, one agent needed three steps:
+  start `audit-serve --profile solo`, read a token from the subjects file, and add a bridge entry with that token.
+  `yuce mcp --docs <folder> --ask <question>` is one MCP server over stdio that the client starts itself. It starts or resumes the
+  run `audit-serve --profile solo` would, with the journal in `<folder>/.yuce/run.wal`. It keeps the run's two tokens to itself
+  and answers as both subjects: the reading agent's four tools, and the owner's reading tools (`--owner-tools all` opens the rest,
+  `none` closes them). The kernel's rules, the journal and every answer are those of `audit-serve`; `audit-serve` is unchanged.
+  The question's topic words come from its words of four letters or more. A question written without spaces between words, in
+  Chinese or Japanese, gives none, and the start asks for `--about`.
+* **A long tool answer comes in parts in `yuce mcp`.** In a probe on 48 project notes, a summary's task was 70 to 85 KB, and Claude
+  Code passed only its first 2 KB to the model, which could not answer. An answer longer than `--max-result-chars` (default
+  16,000) now comes in parts: the first names a handle, the number of parts and the task's id, and `audit_more` gives the others.
+  Checked with Claude Code as the client, with parts of 2,000 characters: it read every part, including a summary in four, and
+  ran the audit to its end.
+
 ## 0.2.1 (2026-11-14)
 
 * **Signatures are checked strictly, and a weak verifier key is refused.** A checkpoint's signature is now checked with Ed25519's

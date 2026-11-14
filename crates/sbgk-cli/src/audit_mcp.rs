@@ -327,7 +327,7 @@ impl StallGuard {
     }
 }
 
-struct AuditServer {
+pub(crate) struct AuditServer {
     run: Mutex<Run>,
     /// Signalled after every call that can free or create work (long polling of `audit_acquire`).
     changed: Condvar,
@@ -2174,7 +2174,31 @@ fn solo_subjects(wal: &str) -> String {
 const ABOUT_UNMATCHED_NOTE: &str =
     "no document of the run holds any term of these questions' about: their answers would leave out what the documents call otherwise; give terms the documents use";
 
+/// The tools of the reading agent and of the owner, for `sbgk mcp`, which answers as both.
+pub(crate) fn agent_tool_names() -> &'static [&'static str] {
+    Role::Swarm.tools()
+}
+
+pub(crate) fn owner_tool_names() -> &'static [&'static str] {
+    Role::Owner.tools()
+}
+
+/// A started audit server, before its transport: `audit-serve` gives it a socket (or stdio with tokens), `sbgk mcp` its own stdio.
+pub(crate) struct AuditStart {
+    pub(crate) server: Arc<AuditServer>,
+    pub(crate) listener: Option<std::net::TcpListener>,
+    pub(crate) max_connections: usize,
+    pub(crate) hello: Value,
+}
+
 pub fn cmd_audit_serve(a: &Args) {
+    let start = start_audit_server(a);
+    let note = json!({"status": "ready", "audit": start.hello});
+    mcp::run_bound(start.server, start.listener, start.max_connections, Some(note), json!({"audit": start.hello}));
+}
+
+/// Everything `audit-serve` does before it serves: the flags checked, the run created or resumed, its journal kept.
+pub(crate) fn start_audit_server(a: &Args) -> AuditStart {
     let profiled_default_scope = a.get("build-scope").is_none();
     let mut profiled = with_profile(a);
     // a run resumed from the settings file it started with: the flags that started it are the journal's now, not read again
@@ -2579,9 +2603,8 @@ pub fn cmd_audit_serve(a: &Args) {
         hello["torn_tail_files"] = json!(earlier);
     }
     let server = Arc::new(AuditServer { run: Mutex::new(run), changed: Condvar::new(), subjects, max_message_bytes, started: Instant::now() });
-    let note = json!({"status": "ready", "audit": hello});
     keep_new_journal();
-    mcp::run_bound(server, listener, max_connections, Some(note), json!({"audit": hello}));
+    AuditStart { server, listener, max_connections, hello }
 }
 
 /// A build scope without the graph builder: `none`, and `hints` (no build phase; a reading task gets one more
