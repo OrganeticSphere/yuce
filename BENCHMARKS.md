@@ -291,8 +291,8 @@ withdraws, so 2B was not graded again.
   minutes, $0.55 and $0.56; no call failed. With the stopped run ($0.10), $2.35 of the $6 cap.
 * **The source of the files.** The manifest of these runs names one commit of the upstream repository for all five files, at paths
   that commit does not hold. The bytes are the upstream bytes and both sides read them under the same names, but the journals keep
-  that wrong source in the identity of each document, and they are kept as they are. The manifest is to be corrected before the
-  release.
+  that wrong source in the identity of each document, and they are kept as they are. The manifest was corrected in 0.2.1, after
+  these runs: it names this repository and the commit of it that holds the five files, with their paths from its root.
 
 ### How far these numbers go
 
