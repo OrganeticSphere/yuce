@@ -8,8 +8,7 @@
 //! journal and every answer are those of `audit-serve`.
 //!
 //! A tool answer longer than `--max-result-chars` comes in parts: the first names a handle and the number of parts, and
-//! `audit_more` gives the others. In the probe of 14.11.2026 a summary's directive was 70 to 85 KB, more than Claude Code takes
-//! in one tool result: it kept the first 2 KB and the reader could not answer.
+//! `audit_more` gives the others: MCP clients cap the size of one tool result, and a task can be larger.
 
 use super::audit_mcp::{self, AuditServer};
 use super::mcp::{self, LineServer};
