@@ -282,15 +282,20 @@ fn repair_claims(fallen: &[Fallen]) -> usize {
     (2 * named_rows(fallen).len() + 2).min(SUMMARY_CLAIMS)
 }
 
-/// What a withdrawal takes, said to every repair after one (0.2.1, step A9). In the control run 1 of 0.2 the repair after the second
-/// withdrawal, of one changelog line, wrote that "the 2026-07-28 stateless revision removing the initialize handshake was withdrawn"
-/// and that the state after 2026-07-28 was not confirmed: the model read the withdrawal of one line as the withdrawal, and the
-/// refutation, of the whole revision, and the answer lost a conclusion a standing page still supported. The kernel checks form, not
+/// What a withdrawal takes, said in the head of every repair of an answer some of whose rows still stand (`fallen_repair`, in all
+/// three of its branches; 0.2.1, step A9). A question whose every answer row fell is answered anew by a fresh summary, which shows no
+/// withdrawn text and does not carry it. In the control run 1 of 0.2 the repair after the second withdrawal, of one changelog line,
+/// wrote that "the 2026-07-28 stateless revision removing the initialize handshake was withdrawn" and that the state after 2026-07-28
+/// was not confirmed: the model read the withdrawal of one line as the withdrawal, and the refutation, of the whole revision, and the
+/// answer lost a conclusion a standing page still supported. A gap in the records shown stays sayable in the done text, as a gap
+/// (Codex's review of 9b049979, A9-SCOPE-01: the first wording forbade "no longer confirmed" there too). The kernel checks form, not
 /// meaning, so the task says it outright. Task text only: not in the journal, no rule changes.
 const WITHDRAWAL_SCOPE: &str = "A withdrawal takes away only the quoted bytes it names, not the document they come from, its revision, or what other \
-                                quotes say: every quote shown in this task stands. It says nothing about whether what those bytes stated is \
-                                true: do not write that a document, a revision or a change was withdrawn, reverted or is no longer confirmed \
-                                unless a quote shown here says so.";
+                                quotes say: every quote shown in this task stands. Do not infer from the withdrawal alone that the document, \
+                                its revision or the change it reported was withdrawn, reverted or refuted: write such an event only where a \
+                                quote shown here states it. Where the records shown no longer establish a point of this question, write no \
+                                claim for it and name that gap in the done text, as a gap in the records, not as a withdrawal or refutation \
+                                of the document or its revision.";
 
 /// The head of a repair. A fallen row is named by id with the quotes that stand: its text may state what was withdrawn (run K016:
 /// the row said what the withdrawn sentence said, and the header it named stood in no other quote), so the kernel does not hand it

@@ -22,12 +22,15 @@ const TWIN_TEXT: &str = "The streamable transport removed protocol-level session
 const FILLERS: usize = 110;
 /// The window's budget of records in these tests: the claims by the question do not all fit.
 const RECORDS: usize = 150;
-/// What every repair after a withdrawal is told the withdrawal took (0.2.1, step A9: the control run 1 of 0.2 read the withdrawal of
-/// one changelog line as the withdrawal, and the refutation, of the whole revision).
+/// What a repair of an answer some of whose rows still stand is told the withdrawal took (0.2.1, step A9: the control run 1 of 0.2
+/// read the withdrawal of one changelog line as the withdrawal, and the refutation, of the whole revision); a gap in the records
+/// stays sayable in the done text (Codex's review of 9b049979, A9-SCOPE-01).
 const SCOPE: &str = "A withdrawal takes away only the quoted bytes it names, not the document they come from, its revision, or what other \
-                     quotes say: every quote shown in this task stands. It says nothing about whether what those bytes stated is \
-                     true: do not write that a document, a revision or a change was withdrawn, reverted or is no longer confirmed \
-                     unless a quote shown here says so.";
+                     quotes say: every quote shown in this task stands. Do not infer from the withdrawal alone that the document, \
+                     its revision or the change it reported was withdrawn, reverted or refuted: write such an event only where a \
+                     quote shown here states it. Where the records shown no longer establish a point of this question, write no \
+                     claim for it and name that gap in the done text, as a gap in the records, not as a withdrawal or refutation \
+                     of the document or its revision.";
 
 struct Wal(PathBuf);
 impl Drop for Wal {
@@ -225,6 +228,34 @@ fn a_live_twin_past_the_window_by_the_question_comes_in_through_the_live_support
     let view = d.accepted_outcomes(&s);
     let got: BTreeSet<&str> = view["RQ1"]["answer_ids"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert_eq!(got, [a.kept.as_str(), again.as_str()].into_iter().collect(), "{view}");
+}
+
+#[test]
+fn a_lost_last_ground_may_be_named_as_a_gap_in_the_done_text() {
+    // Codex's review of 9b049979 (A9-SCOPE-01): with no quote of the fallen row standing and no live support, the repair may still
+    // say that the records shown no longer establish the point, in its done text, without a claim and without a quote that says so
+    let mut a = withdrawn(0);
+    a.s.withdraw_text("owner", "page", TWIN_QUOTE).unwrap();
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    assert_eq!(t["kind"], "SUMMARIZE", "{t}");
+    let p = t["prompt"].as_str().unwrap();
+    assert!(p.contains(SCOPE) && !p.contains(TWIN_QUOTE) && !p.contains("LIVE SUPPORT (kernel"), "{p}");
+    let mut d = done(&t, &[]);
+    d["text"] = json!("The removal of protocol-level sessions is no longer established by the records shown; this does not establish a reversal.");
+    let r = a.d.submit(&mut a.s, t["task_id"].as_str().unwrap(), "repair", &[d], 101);
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+}
+
+#[test]
+fn when_every_answer_row_falls_the_question_is_answered_anew_without_the_repair_head() {
+    // the boundary of the sentence: a fresh summary shows no withdrawn text, and is no repair (Codex's review of 9b049979, question 2)
+    let mut a = withdrawn(0);
+    a.s.withdraw_text("owner", "log", "Topic C holds.").unwrap();
+    let t = a.d.acquire(&a.s, "repair", true, 100);
+    assert_eq!(t["kind"], "SUMMARIZE", "{t}");
+    assert!(t["retained_answer_ids"].as_array().is_none_or(Vec::is_empty), "{t}");
+    let p = t["prompt"].as_str().unwrap();
+    assert!(!p.contains("INCREMENTAL REPAIR:") && !p.contains(SCOPE), "{p}");
 }
 
 #[test]

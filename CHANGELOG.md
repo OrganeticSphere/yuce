@@ -45,12 +45,13 @@
   row out is refused before it is stored. Journals already written replay as they are.
 * **A repair after a withdrawal is told what the withdrawal took.** In control run 1 of 0.2 the repair after the second withdrawal,
   of one changelog line, wrote that the whole revision it belonged to was withdrawn and its state no longer confirmed, and the answer
-  lost a conclusion a standing page still supported (BENCHMARKS.md). Every repair after a withdrawal now says that a withdrawal takes
-  away only the quoted bytes it names, not their document, its revision or what other quotes say; that every quote shown stands; that
-  it says nothing about whether those bytes stated the truth; and that a document, a revision or a change is not to be called
-  withdrawn, reverted or no longer confirmed unless a quote shown says so. The kernel still checks form, not meaning: the
-  task says it, and no run with a model has measured it. The text of a task is not in the journal: no rule changes, and journals
-  replay as before.
+  lost a conclusion a standing page still supported (BENCHMARKS.md). The repair of an answer some of whose rows still stand now says
+  that a withdrawal takes away only the quoted bytes it names, not their document, its revision or what other quotes say; that every
+  quote shown stands; that the withdrawal alone is no ground to write that the document, its revision or the change it reported was
+  withdrawn, reverted or refuted, which only a quote shown may state; and that a point the records shown no longer establish gets no
+  claim and is named in the done text as a gap in the records. A question whose every answer row fell is answered anew, as before,
+  and that task shows no withdrawn text. The kernel still checks form, not meaning: the task says it, and no run with a model has
+  measured it. The text of a task is not in the journal: no rule changes, and journals replay as before.
 * **A question about what changed takes the claims that say something was removed or renamed.** For such a question the kernel
   took a claim of stance `reported` only by words such as "replaced", "superseded" or "no longer". On the A2A corpus the readers of
   the changelog wrote "was removed" and "was renamed" under that stance, and in two of four runs one claim on the changelog

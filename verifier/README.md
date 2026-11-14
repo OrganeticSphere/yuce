@@ -2,9 +2,9 @@
 
 This folder holds `yuce-verify`, a verifier of YuCe journals in the format `sbgk-session-log/3` (YuCe 0.2): a standalone
 implementation in TypeScript, written from the open specification in `spec/` and the journals in `inputs/`. It shares no code and no
-dependencies with the kernel: it has no runtime dependencies at all, and TypeScript and esbuild only build it. It checks levels J0
-and J1: the file is a well-formed journal, its frames chain, every seal names the right prefix of the journal, and, given a seal or
-a head kept elsewhere, the journal matches them.
+dependencies with the kernel: it has no third-party runtime dependencies (Node.js or a browser runs it), and TypeScript and esbuild
+only build it. It checks levels J0 and J1: the file is a well-formed journal, its frames chain, every seal names the right prefix of
+the journal, and, given a seal or a head kept elsewhere, the journal matches them.
 
 | Folder | What it holds |
 |---|---|
@@ -38,7 +38,7 @@ Read this before you trust a PASS.
 
 ## How it was checked
 
-* 390 tests (`npm test` in `yuce-verify/`), run against the built file.
+* 391 tests (`npm test` in `yuce-verify/`), run against the built file.
 * The same journals went through the kernel and through this verifier, and every difference between them was explained. The
   questions raised while it was written were answered from the kernel before release: appendix A of the specification and its
   amendments.
