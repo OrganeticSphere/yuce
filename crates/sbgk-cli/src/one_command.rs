@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The owner's tools that only read the run.
-const OWNER_READ: &[&str] = &["audit_status", "audit_record", "audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage"];
+const OWNER_READ: &[&str] =
+    &["audit_status", "audit_record", "audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview"];
 const MORE: &str = "audit_more";
 const DEFAULT_MAX_RESULT_CHARS: usize = 16_000;
 /// The fields of a paged answer's first header, in the order they are dropped when the header would take more than half a part:
@@ -35,8 +36,8 @@ const INSTRUCTIONS: &str = "YuCe audit of the documents of one folder. As its re
 prompt says, and send its JSON lines with audit_submit. On REPAIR_REQUIRED send only the lines after the accepted ones; on WAIT call audit_acquire \
 again; on COMPLETE the questions of the run are answered; on DONE stop. A long answer comes in parts: its first part names a handle and the number \
 of parts, and audit_more with that handle gives each other part; read every part before you act. The owner's reading tools show what stands \
-(audit_active_claims, audit_record), what fell and why (audit_fallen), what each part of the documents came to (audit_coverage), and the run's \
-status (audit_status).";
+(audit_active_claims, audit_record), what fell and why (audit_fallen), what each part of the documents came to (audit_coverage), what a \
+withdrawal would make fall, without writing it (audit_withdraw_preview), and the run's status (audit_status).";
 
 /// Words that name no topic: left out of the terms taken from a question.
 const STOP_WORDS: &[&str] = &[

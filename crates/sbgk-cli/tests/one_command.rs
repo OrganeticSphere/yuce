@@ -95,6 +95,7 @@ fn one_command_starts_a_run_on_a_folder_and_answers_as_the_agent_and_the_owner()
             "audit_diff",
             "audit_fallen",
             "audit_coverage",
+            "audit_withdraw_preview",
             "audit_more"
         ]
     );
@@ -115,9 +116,17 @@ fn one_command_starts_a_run_on_a_folder_and_answers_as_the_agent_and_the_owner()
 fn the_owners_writing_tools_are_closed_unless_the_command_opens_them() {
     let f = Folder::new("owner");
     let withdraw = call("audit_withdraw_text", json!({"doc_id": "policy.md", "exact_quote": "30 days"}));
-    let (answers, _, _) = f.session(&["--docs", &f.docs(), "--ask", "What is the refund window?"], std::slice::from_ref(&withdraw));
+    let preview = call("audit_withdraw_preview", json!({"doc_id": "policy.md", "exact_quote": "30 days"}));
+    let (answers, _, _) = f.session(&["--docs", &f.docs(), "--ask", "What is the refund window?"], &[withdraw.clone(), preview.clone()]);
     assert!(!tool_names(&answers).contains(&"audit_withdraw_text".to_string()));
     assert_eq!(answers[2]["error"]["code"], -32003, "{}", answers[2]);
+    // the preview writes nothing, so it is open with the reading tools
+    let wal = f.0.join("docs/.yuce/run.wal");
+    let bytes = std::fs::read(&wal).unwrap();
+    assert_eq!((structured(&answers[3])["status"].clone(), structured(&answers[3])["written"].clone()), (json!("PREVIEW"), json!(false)), "{}", answers[3]);
+    let (answers, _, _) = f.session(&["--docs", &f.docs()], std::slice::from_ref(&preview));
+    assert_eq!(structured(&answers[2])["status"], "PREVIEW");
+    assert_eq!(std::fs::read(&wal).unwrap(), bytes, "a preview writes nothing");
     // a token the client sends chooses nothing: the tool's name decides the subject
     let forged = json!({"method": "tools/call", "params": {"name": "audit_withdraw_text", "auth_token": "x",
                         "arguments": {"doc_id": "policy.md", "exact_quote": "30 days", "auth_token": "y"}}});

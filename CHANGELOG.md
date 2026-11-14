@@ -15,6 +15,13 @@
   16,000) now comes in parts: the first names a handle, the number of parts and the task's id, and `audit_more` gives the others.
   Checked with Claude Code as the client, with parts of 2,000 characters: it read every part, including a summary in four, and
   ran the audit to its end.
+* **A preview of a withdrawal: what would fall, without writing it.** `audit_withdraw_preview` takes the arguments of
+  `audit_revoke` (`record`) or of `audit_withdraw_text` (`doc_id`, `exact_quote`) and answers with the report `audit_fallen`
+  would give from the point before the withdrawal, as if it had been written now: the records that would fall, the quotes that
+  would go, and the questions to answer again. Nothing is written to the journal. The withdrawal is staged the way a real one is
+  staged before it is written, so a refusal is the withdrawal's own. A command written after the preview can change what the
+  withdrawal does. The tool is the owner's, it is open in `yuce mcp` with the reading tools, and the Python client has
+  `preview_withdrawal`. The kernel's rules and the journal format do not change.
 
 ## 0.2.1 (2026-11-14)
 

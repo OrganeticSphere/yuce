@@ -127,7 +127,8 @@ The environment for agent teams is the audit server, `sbgk audit-serve`:
   required grounds include one of those quotes loses its support at once; since all entries of `based_on` are required,
   one withdrawn quote is enough. Records grounded independently of it stay available, and history is not rewritten. The report of
   what fell (`audit_fallen`, or `sbgk audit-read fallen` over the journal) names each record that lost a ground, the quotes that went
-  (by their bytes, without their text), the quotes under it that still stand, and claims on other sources that say much the same. A claim in an answer also
+  (by their bytes, without their text), the quotes under it that still stand, and claims on other sources that say much the same.
+  The same report comes before a withdrawal, with nothing written: `audit_withdraw_preview` shows what it would make fall. A claim in an answer also
   carries a time label for its reader: `CURRENT_UNCERTAIN` (a claim that rested on an earlier and a later report lost the
   later quote; the kernel opens a task on that report and warns the next summary) or `LATEST_KNOWN` (no later state is known
   to the kernel, which is not proof that the state is current). With the
@@ -215,8 +216,9 @@ as the server's reading agent. What happens:
 * **The run.** The first start reads the folder and keeps the journal in `my-docs/.yuce/run.wal`, a hidden folder the scan leaves
   out. Every later start resumes the same run, with the documents and the question it started with.
 * **The tools.** Your agent gets the reading agent's tools (`audit_acquire`, `audit_submit`, ...) and your reading tools as the
-  owner: `audit_status`, `audit_active_claims`, `audit_record`, `audit_fallen`, `audit_coverage`. Withdrawing text, sealing and
-  closing stay closed to the model unless you start the server with `--owner-tools all`.
+  owner: `audit_status`, `audit_active_claims`, `audit_record`, `audit_fallen`, `audit_coverage`, and `audit_withdraw_preview`,
+  which shows what a withdrawal would make fall without writing it. Withdrawing text, sealing and closing stay closed to the
+  model unless you start the server with `--owner-tools all`.
 * **Long answers.** A long answer comes in parts, because MCP clients cap one tool result: a summary's task can be 70 KB or more.
   The first part names a handle, and `audit_more` gives the rest. A part holds at most 16,000 characters, counted as characters,
   not bytes: in Chinese or Japanese that is up to 48 KB. If your client keeps less of a tool result, lower the limit, for
@@ -365,7 +367,7 @@ The owner joins the same way with the owner's token and its tools:
 The bridge adds the token to every message, so the token stays in the bridge's environment and out of the model's prompt.
 It refuses `shutdown` unless started with `--allow-shutdown`, so a worker cannot stop the shared server. The agent calls `audit_acquire`, does what the directive asks, and sends its JSON lines with
 `audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_dependents`, `audit_active_claims`, `audit_diff`,
-`audit_fallen`, `audit_coverage`, `audit_revoke`, `audit_withdraw_text`, `audit_seal` and `audit_close`.
+`audit_fallen`, `audit_coverage`, `audit_withdraw_preview`, `audit_revoke`, `audit_withdraw_text`, `audit_seal` and `audit_close`.
 
 More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core/src/audit/README.md).
 

@@ -233,7 +233,7 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 15, "nine tools of 0.1, the four reading tools of 0.2, and audit_seal and the coverage of 0.2.1");
+    assert_eq!(own.tools().len(), 16, "nine tools of 0.1, the four reading tools of 0.2, audit_seal and the coverage of 0.2.1, the preview of 0.2.2");
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims
@@ -1235,6 +1235,66 @@ fn the_reading_tools_answer_alike_on_the_wire_and_over_the_journal() {
     let out = Command::new(BIN).args(["audit-read", "status", "--wal", &edited.display().to_string()]).output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stdout));
     assert_eq!(Command::new(BIN).args(["audit-read", "everything", "--wal", &wal]).output().unwrap().status.code(), Some(2));
+}
+
+/// The preview of a withdrawal (0.2.2): before the withdrawal, the report its own `since` gives after it, and not a byte written;
+/// by the record or by the text; a refusal is the withdrawal's own.
+#[test]
+fn a_preview_shows_what_a_withdrawal_would_make_fall_and_writes_nothing() {
+    let fx = Fixture::new("preview");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    assert!(own.tools().iter().any(|t| t == "audit_withdraw_preview"));
+    assert!(!w1.tools().iter().any(|t| t == "audit_withdraw_preview"), "the preview is the owner's");
+    let t = w1.call("audit_acquire", json!({}));
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+    assert_eq!(r["status"], "COMMITTED", "{r}");
+    let records: Vec<Value> = r["accepted_locals"].as_object().unwrap().values().map(|id| own.call("audit_record", json!({"record": id}))).collect();
+    let observe = records.iter().find(|x| x["kind"] == "observe").expect("an observe").clone();
+    let claim = records.iter().find(|x| x["kind"] == "claim").expect("a claim").clone();
+    let by_text_args = json!({"doc_id": observe["doc_id"], "exact_quote": observe["quote"]});
+    let wal = fx.p("run.wal");
+    let bytes = std::fs::read(&wal).unwrap();
+    let by_text = own.call("audit_withdraw_preview", by_text_args.clone());
+    let by_record = own.call("audit_withdraw_preview", json!({"record": observe["short"]}));
+    assert_eq!(std::fs::read(&wal).unwrap(), bytes, "a preview writes nothing");
+    assert_eq!(
+        (by_text["status"].as_str(), by_text["written"].as_bool(), by_text["fell"].as_u64(), by_text["quotes_gone"].as_u64()),
+        (Some("PREVIEW"), Some(false), Some(1), Some(1)),
+        "{by_text}"
+    );
+    assert_eq!(by_text["rows"][0]["id"], claim["id"], "{by_text}");
+    assert!(by_text.get("at").is_none() && by_text.get("provable").is_none(), "no frame, no proof yet: {by_text}");
+    assert!(!by_text.to_string().contains(observe["quote"].as_str().unwrap()), "the text to withdraw stays out of the report: {by_text}");
+    // by the record, the same records fall; the gone quote is then `named`, as audit_revoke names it, and by the text it is not
+    let fallen = |v: &Value| v["rows"].as_array().unwrap().iter().map(|r| (r["id"].clone(), r["fallen_by"].clone())).collect::<Vec<_>>();
+    assert_eq!((fallen(&by_record), by_record["fell"].clone()), (fallen(&by_text), by_text["fell"].clone()), "{by_record}");
+    assert_eq!((by_record["rows"][0]["gone"][0]["named"].clone(), by_text["rows"][0]["gone"][0]["named"].clone()), (json!(true), json!(false)));
+    assert_eq!(own.call("audit_status", json!({}))["projections"]["fallen"], 0, "nothing fell yet");
+    assert_eq!(own.call("audit_withdraw_preview", json!({}))["code"], "BAD_ARGUMENT");
+    let both = json!({"record": observe["id"], "doc_id": observe["doc_id"], "exact_quote": observe["quote"]});
+    assert_eq!(own.call("audit_withdraw_preview", both)["code"], "BAD_ARGUMENT");
+    // a field sent as null is a field not given; a field of the other form beside a record, or a text that is not a string, is
+    // refused (Argon's review of the preview)
+    let with_null = own.call("audit_withdraw_preview", json!({"record": null, "doc_id": observe["doc_id"], "exact_quote": observe["quote"]}));
+    assert_eq!(with_null["rows"], by_text["rows"], "{with_null}");
+    assert_eq!(own.call("audit_withdraw_preview", json!({"record": observe["id"], "doc_id": 7}))["code"], "BAD_ARGUMENT");
+    assert_eq!(own.call("audit_withdraw_preview", json!({"doc_id": observe["doc_id"], "exact_quote": 7}))["code"], "BAD_ARGUMENT");
+
+    // the withdrawal is what the preview showed
+    let withdrawn = own.call("audit_withdraw_text", by_text_args.clone());
+    assert_eq!(withdrawn["status"], "REVOKED", "{withdrawn}");
+    for key in ["since", "fell", "quotes_gone", "also_revoked"] {
+        assert_eq!(withdrawn[key], by_text[key], "{key}: {withdrawn}");
+    }
+    let report = own.call("audit_fallen", json!({"since": withdrawn["since"]}));
+    for key in ["since", "rows_fallen", "by_kind", "quotes_gone", "questions_to_answer_again", "rows", "truncated", "other_not_standing"] {
+        assert_eq!(report[key], by_text[key], "{key}: {report}");
+    }
+    // the same withdrawal again is refused, and so is its preview, with the same words
+    let refused = own.call("audit_withdraw_text", by_text_args.clone());
+    assert_eq!(refused["code"], "REFUSED", "{refused}");
+    assert_eq!(own.call("audit_withdraw_preview", by_text_args), refused);
 }
 
 /// Signed checkpoints on the wire (SPEC_V02_STEP4): a server with a signing key signs the seal it writes when the run is closed,

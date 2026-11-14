@@ -226,6 +226,12 @@ class Client:
         """Withdraw text of a document, quoted or not: stored quotes overlapping it go with it, and new ones are refused."""
         return self.call("audit_withdraw_text", doc_id=doc_id, exact_quote=exact_quote)
 
+    def preview_withdrawal(self, record: str | None = None, *, doc_id: str | None = None, exact_quote: str | None = None,
+                           limit: int | None = None) -> dict:
+        """What a withdrawal would make fall, without writing it: give `record` (as for `revoke`) or `doc_id` and `exact_quote`
+        (as for `withdraw_text`). The answer is the report `fallen(since)` would give had it been written now; nothing is written."""
+        return self.call("audit_withdraw_preview", **_given(record=record, doc_id=doc_id, exact_quote=exact_quote, limit=limit))
+
     def seal(self) -> dict:
         """Seal the journal now, for example before a withdrawal, so that a quittance can later show what stood at this point.
         A server with a signing key signs it. A seal right after another is not written again (`ALREADY_SEALED`)."""

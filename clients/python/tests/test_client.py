@@ -207,7 +207,11 @@ class RealServer(unittest.TestCase):
         sealed = owner.seal()
         self.assertEqual(sealed["status"], "SEALED")
         self.assertEqual((owner.seal()["status"], owner.seal()["log_size"]), ("ALREADY_SEALED", sealed["log_size"]))
+        preview = owner.preview_withdrawal(quote)
+        self.assertEqual((preview["status"], preview["written"], preview["fell"], preview["quotes_gone"]), ("PREVIEW", False, 1, 1))
+        self.assertTrue(owner.record(claim)["grounded"], "a preview writes nothing")
         revoked = owner.revoke(quote)
+        self.assertEqual((revoked["since"], revoked["fell"]), (preview["since"], preview["fell"]))
         self.assertEqual((revoked["also_revoked"], revoked["fell"], revoked["quotes_gone"]), (0, 1, 1))
         self.assertFalse(owner.record(claim)["grounded"])
         claim_id, quote_id = owner.record(claim)["id"], owner.record(quote)["id"]
@@ -249,7 +253,7 @@ class RealServer(unittest.TestCase):
         self.assertEqual({t for t in served if t in {"audit_" + n for n in ("acquire", "submit", "renew", "release", "next_card", "submit_ops",
                                                                             "builder_failure", "status", "links", "link_status", "concept_status",
                                                                             "record", "revoke", "withdraw_text", "seal", "terminal_receipt", "close",
-                                                                            "dependents", "active_claims", "diff", "fallen")}} - named, set())
+                                                                            "dependents", "active_claims", "diff", "fallen", "withdraw_preview")}} - named, set())
 
 
 if __name__ == "__main__":
