@@ -209,8 +209,8 @@ pass the answers of both runs, of the K run of 0.1.7 and of T and L of run 2; ea
   `audit-read fallen` names exactly the claims whose grounded flag it turned off, and none of the withdrawn text. Each of the 93 and
   91 rows of the last answers gets a quittance that checks without the journal, 7.2 to 24.2 KB (median 11.0 and 10.4); none of the
   6 fallen claims tried in each run gets one. The index (8.1 and 5.6 MB) is equal to its journal, and the independent verifier
-  `yuce-verify` (levels J0 and J1), written in a clean room from the specification of the format and not published yet, passes both
-  journals.
+  `yuce-verify` (levels J0 and J1), a standalone implementation from the specification of the format that shares no code with the
+  kernel and was not published yet, passes both journals.
 * **The gap pass (run 1).** It used all 12 of its packs: 94 units in 15 calls, 111 records added (61 quotes, 38 claims, 12
   questions), and 33 units with no quote. The packs went to the documents in order, so all 12 went to the first two, the
   authorization and lifecycle pages of 2025-03-26; the other 20 got none. At this budget the run shows the pass at work, not what it

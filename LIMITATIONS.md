@@ -74,14 +74,15 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   stand is closed with them. The text an agent writes is another matter: a later answer can repeat withdrawn content in other
   words, and how often it does is measured, not prevented. A note that a claim lost its later quote speaks for that claim: another record may
   still show the later state.
-* **`audit-proof --out` does not refuse the journal's own path (0.2.0).** Pointed at the journal, it writes the quittance over it,
-  and the run is lost. Keep the default (`<run.wal>.proofs/`) or name another file; 0.2.1 is to refuse the journal's path, as
-  `audit-index` already does for its database.
-* **An answer's list of records can name a record twice (0.2.0).** After a repair in several attempts, the done record of an
-  answer and the list the kernel keeps for it (`answer_ids`) can name a record twice: once as the model named a record of an earlier
-  attempt of the same task and once as the kernel added it as a row the answer keeps. The answer is the same set of records, and its
-  text shows each once; count distinct ids. A count over such an answer's grounds, as `grounds_standing` in the report of what fell,
-  can come out too high. To be fixed in 0.2.1.
+* **`audit-proof --out` of 0.2.0 does not refuse the journal's own path.** Pointed at the journal, it writes the quittance over
+  it, and the run is lost. 0.2.1 refuses it, as `audit-index` does for its database; with 0.2.0 keep the default
+  (`<run.wal>.proofs/`) or name another file.
+* **In a journal of 0.2.0 an answer's list of records can name a record twice.** After a repair in several attempts, the done
+  record of an answer and the list the kernel keeps for it (`answer_ids`) could name a record twice: once as the model named a record
+  of an earlier attempt of the same task and once as the kernel added it as a row the answer keeps. The answer is the same set of
+  records, and its text shows each once. 0.2.1 keeps each record once; a journal of 0.2.0 replays as it was written, so in such a
+  journal count distinct ids. A count over such an answer's grounds, as `grounds_standing` in the report of what fell, can come out
+  too high.
 * **What the reading tools can prove.** The projections are complete as to the kernel's rule: every `based_on` and relation end
   the records declare. They are not complete as to the world: a dependency an agent did not declare is in no projection, so
   `dependents` and the report of what fell cannot show it. From the journal the report proves what stands, what fell and which

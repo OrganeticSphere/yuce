@@ -63,9 +63,10 @@
   its size, so what it takes can put other claims out at its edge: on the first control run of 0.2, 2 of its claims go out and 3
   come in, and the second's does not change. The change was measured by replay only, not by a run with a model. No rule of the
   journal changes, and journals replay as before.
-* **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** written in a clean room from the specification of the
-  format and no line of the kernel's code. It checks levels J0 and J1 under Node.js and in a browser; the folder holds the
-  specification in English, its control vectors and its test journals. The verifier passed both control runs of 0.2.
+* **`verifier/`: `yuce-verify`, an independent verifier of 0.2 journals,** a standalone implementation in TypeScript from the open
+  specification of the format, sharing no code and no dependencies with the kernel. It checks levels J0 and J1 under Node.js and in
+  a browser; the folder holds the specification in English, its control vectors and its test journals. The verifier passed both
+  control runs of 0.2.
 * **The journal of a running server is read by other processes, on Windows too.** The server locked the whole file, and on Windows
   that lock stops every read through another handle: `audit-verify`, `audit-read`, `audit-index` and `audit-proof` failed beside a
   live server (os error 33). On Windows the server now holds its journal by opening it shared for reading only and takes no lock;

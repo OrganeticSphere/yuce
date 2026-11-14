@@ -1,9 +1,10 @@
 # An independent verifier of YuCe journals
 
-This folder holds `yuce-verify`, a verifier of YuCe journals in the format `sbgk-session-log/3` (YuCe 0.2) that shares no code with
-the kernel. It was written in a clean room: its author worked from the specification in `spec/` and the journals in `inputs/`, with no
-access to the kernel's code, its tests or the project's notes. It checks levels J0 and J1: the file is a well-formed journal, its
-frames chain, every seal names the right prefix of the journal, and, given a seal or a head kept elsewhere, the journal matches them.
+This folder holds `yuce-verify`, a verifier of YuCe journals in the format `sbgk-session-log/3` (YuCe 0.2): a standalone
+implementation in TypeScript, written from the open specification in `spec/` and the journals in `inputs/`. It shares no code and no
+dependencies with the kernel: it has no runtime dependencies at all, and TypeScript and esbuild only build it. It checks levels J0
+and J1: the file is a well-formed journal, its frames chain, every seal names the right prefix of the journal, and, given a seal or
+a head kept elsewhere, the journal matches them.
 
 | Folder | What it holds |
 |---|---|
@@ -39,7 +40,8 @@ Read this before you trust a PASS.
 
 * 390 tests (`npm test` in `yuce-verify/`), run against the built file.
 * The same journals went through the kernel and through this verifier, and every difference between them was explained. The
-  questions the clean room raised were answered from the kernel before release: appendix A of the specification and its amendments.
+  questions raised while it was written were answered from the kernel before release: appendix A of the specification and its
+  amendments.
 * In a real browser it gave the reports of Node.js, byte for byte (see `yuce-verify/README.md`).
 * It passed both journals of the control runs of 0.2 ([BENCHMARKS.md](../BENCHMARKS.md)).
 
