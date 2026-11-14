@@ -105,6 +105,11 @@ against 13 and 12), and on 0.2 with four makers 9 or 10 of 13, against 12 for 0.
 as replaced (Haiku) and once an outdated one as current (DeepSeek, series 2). See [BENCHMARKS.md](BENCHMARKS.md) and
 [LIMITATIONS.md](LIMITATIONS.md).
 
+**The gap pass on a second corpus.** On the A2A specification, two runs with the gap pass and two without, the side with it stated
+more ended facts as current, by the pre-registered rule. The journals show that the kernel's choice of claims for the question of
+what changed left out claims on the changelog worded "removed" or "renamed"; this comparison does not separate that defect from the
+pass. 0.2.1 fixes the rule, and no run with a model has measured it yet.
+
 ## What the kernel does
 
 The environment for agent teams is the audit server, `sbgk audit-serve`:
