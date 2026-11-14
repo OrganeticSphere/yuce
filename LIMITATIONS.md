@@ -159,6 +159,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * One process, one writer. There is no compaction of the journal, no rotation of tokens and no format migration in 0.1.
 * The connection limit is shared: connections that send nothing hold a place until the 5 s admission timeout, and there is no
   limit per address. This matters with `--allow-remote`.
+* `yuce mcp` cuts a long tool answer into parts of at most `--max-result-chars` characters (16,000 by default). It counts
+  characters, not bytes, so a part in Chinese or Japanese can reach 48 KB. The parts live in the server's memory, for the newest
+  8 answers only: a client fetches them with `audit_more` in the same session.
 
 ## Off by default, experimental
 

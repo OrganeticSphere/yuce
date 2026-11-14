@@ -218,7 +218,9 @@ as the server's reading agent. What happens:
   owner: `audit_status`, `audit_active_claims`, `audit_record`, `audit_fallen`, `audit_coverage`. Withdrawing text, sealing and
   closing stay closed to the model unless you start the server with `--owner-tools all`.
 * **Long answers.** A long answer comes in parts, because MCP clients cap one tool result: a summary's task can be 70 KB or more.
-  The first part names a handle, and `audit_more` gives the rest.
+  The first part names a handle, and `audit_more` gives the rest. A part holds at most 16,000 characters, counted as characters,
+  not bytes: in Chinese or Japanese that is up to 48 KB. If your client keeps less of a tool result, lower the limit, for
+  example `--max-result-chars 8000`.
 * **The topic.** The topic words come from the question. Give them yourself with `--about "refund,return window"`, which a
   question in Chinese or Japanese needs: it has no spaces to find words by. For several questions, use
   `--questions questions.json`.
