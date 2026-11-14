@@ -2097,3 +2097,35 @@ fn the_coverage_table_is_read_on_the_wire_over_the_journal_and_from_the_index() 
     );
     assert_eq!((&none["summary"]["gap_pass"], none["packs"].as_array().map(Vec::len)), (&json!(false), Some(0)), "{none}");
 }
+
+/// The preview writes nothing even while the dispatcher keeps an entry pending (Codex review of e7af1bfc, WPRE-01): an agent's
+/// lease expired and its failure waits to be written, its long poll waits, and the owner's preview leaves the journal's bytes as
+/// they are; the pending failure is then written by the next call that coordinates, the long poll's own.
+#[test]
+fn a_preview_leaves_the_dispatchers_pending_entries_to_the_calls_that_write() {
+    let fx = Fixture::new("previewpending");
+    let mut args = fx.args(true);
+    args.extend(["--ttl-ms", "400", "--agent-attempts", "4"].iter().map(|s| s.to_string()));
+    let server = Server::start(&args);
+    let (mut worker, mut owner) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    let task = worker.call("audit_acquire", json!({"max_wait_ms": 0}));
+    assert_eq!(task["status"], "DIRECTIVE", "{task}");
+    let doc = task["key"].as_str().unwrap()[4..].split('#').next().unwrap().to_string();
+    let quote = section(task["prompt"].as_str().unwrap()).lines().find(|l| l.contains("Topic")).unwrap().to_string();
+    // the lease expires unanswered; the agent's next acquire finds it, keeps the failure pending and waits
+    std::thread::sleep(Duration::from_millis(450));
+    let waiting = std::thread::spawn(move || worker.call("audit_acquire", json!({"max_wait_ms": 3000})));
+    std::thread::sleep(Duration::from_millis(80));
+    let wal = fx.p("run.wal");
+    let before = std::fs::read(&wal).unwrap();
+    let started = Instant::now();
+    let preview = owner.call("audit_withdraw_preview", json!({"doc_id": doc, "exact_quote": quote}));
+    let (elapsed, still_waiting) = (started.elapsed(), !waiting.is_finished());
+    assert_eq!((preview["status"].as_str(), preview["written"].as_bool()), (Some("PREVIEW"), Some(false)), "{preview}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "a preview writes nothing, not even what the dispatcher keeps pending");
+    assert!(still_waiting && elapsed < Duration::from_millis(500), "observed while the long poll still waits");
+    let waited = waiting.join().unwrap();
+    assert_eq!(waited["status"], "DIRECTIVE", "{waited}");
+    let added = String::from_utf8_lossy(&std::fs::read(&wal).unwrap()[before.len()..]).to_string();
+    assert!(added.contains("audit:agent-failures"), "the pending failure is written by the next call that coordinates: {added}");
+}
