@@ -166,6 +166,7 @@ fn a_long_answer_comes_in_parts_and_the_parts_rebuild_it() {
     calls.extend(more);
     let (answers, _, _) = f.session(&["--docs", &f.docs(), "--max-result-chars", "1000"], &calls);
     let first_text = answers[2]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(first_text.chars().count() <= 1000, "the first part, its header included, fits the limit");
     let (header, body) = first_text.split_once('\n').unwrap();
     let header: Value = serde_json::from_str(header).unwrap();
     let mut whole = body.to_string();
@@ -194,4 +195,86 @@ fn a_run_cannot_start_without_its_question() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--about"));
     assert!(!f.0.join("docs/.yuce/run.wal").exists(), "a refused start leaves no journal");
+}
+
+#[test]
+fn the_asked_question_replaces_no_file_beside_the_journal() {
+    // Codex's review of e13e2802, OCMCP-01: with --wal, a questions.json beside the journal was overwritten
+    let f = Folder::new("sibling");
+    let theirs = f.0.join("questions.json");
+    let original = b"[{\"id\":\"owner-question\",\"text\":\"Keep this file\",\"about\":[\"refund\"]}]\n";
+    std::fs::write(&theirs, original).unwrap();
+    let wal = f.0.join("custom.wal").display().to_string();
+    let (answers, notes, out) =
+        f.session(&["--docs", &f.docs(), "--wal", &wal, "--ask", "What is the refund window?"], &[call("audit_acquire", json!({"max_wait_ms": 0}))]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(std::fs::read(&theirs).unwrap(), original);
+    let question = notes.iter().find(|n| n["status"] == "question").unwrap();
+    assert_eq!(question["text"], "What is the refund window?");
+    assert!(question.get("file").is_none(), "the question goes to the run without a file");
+    // the run took the asked question, not the file beside its journal
+    assert!(structured(&answers[2])["prompt"].as_str().unwrap().contains("What is the refund window?"));
+    // and the default journal folder holds no question file either
+    let g = Folder::new("nofile");
+    let (_, _, out) = g.session(&["--docs", &g.docs(), "--ask", "What is the refund window?"], &[]);
+    assert!(out.status.success());
+    assert!(!g.0.join("docs/.yuce/questions.json").exists());
+}
+
+#[test]
+fn metadata_that_is_not_an_object_is_refused_and_the_session_goes_on() {
+    // Codex's review of e13e2802, OCMCP-02: a _meta that was not an object ended the process
+    let f = Folder::new("meta");
+    let mut calls = Vec::new();
+    for meta in [json!([]), json!("text"), json!(42), json!(false)] {
+        calls.push(json!({"method": "tools/call", "params": {"name": "audit_status", "arguments": {}, "_meta": meta}}));
+    }
+    calls.push(json!({"method": "tools/call", "params": {"name": "audit_status", "arguments": {}, "_meta": null}}));
+    calls.push(json!({"method": "tools/call", "params": {"name": "audit_status", "arguments": {}, "_meta": {"trace": "kept", "auth_token": "x"}}}));
+    calls.push(json!({"method": "ping"}));
+    let (answers, _, out) = f.session(&["--docs", &f.docs(), "--ask", "What is the refund window?"], &calls);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    for a in &answers[2..6] {
+        assert_eq!(a["error"]["code"], -32602, "{a}");
+    }
+    assert!(structured(&answers[6])["completion"].is_object(), "a null _meta is no _meta: {}", answers[6]);
+    assert!(structured(&answers[7])["completion"].is_object(), "{}", answers[7]);
+    assert_eq!(answers[8]["result"], json!({}));
+}
+
+#[test]
+fn every_part_fits_the_limit_even_with_a_long_document_name() {
+    // Codex's review of e13e2802, OCMCP-03: the task's key (it holds the document's name) made the first part 1099 of 1000
+    let f = Folder::new("longkey");
+    let mut deep = f.0.join("docs");
+    for _ in 0..8 {
+        deep.push("a".repeat(55));
+    }
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(deep.join("refund.md"), POLICY).unwrap();
+    std::fs::remove_file(f.0.join("docs/policy.md")).unwrap();
+    let flags = ["--docs", &f.docs(), "--ask", "What is the refund window?", "--max-result-chars", "1000"];
+    let (first, _, out) = f.session(&flags, &[call("audit_acquire", json!({"max_wait_ms": 0}))]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = first[2]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.chars().count() <= 1000, "{} characters", text.chars().count());
+    let header: Value = serde_json::from_str(text.split_once('\n').unwrap().0).unwrap();
+    let parts = header["parts"].as_u64().unwrap() as usize;
+    // the long key did not fit beside half a part and was left out of the header; the task's id and status stay
+    assert!(header["about"].get("key").is_none());
+    assert_eq!(header["about"]["status"], "DIRECTIVE");
+    let mut calls = vec![call("audit_acquire", json!({"max_wait_ms": 0}))];
+    calls.extend((2..=parts).map(|n| call("audit_more", json!({"handle": header["answer_in_parts"], "part": n}))));
+    let (answers, _, _) = f.session(&["--docs", &f.docs(), "--max-result-chars", "1000"], &calls);
+    let header: Value = serde_json::from_str(answers[2]["result"]["content"][0]["text"].as_str().unwrap().split_once('\n').unwrap().0).unwrap();
+    assert_eq!(header["parts"].as_u64().unwrap() as usize, parts);
+    let mut whole = String::new();
+    for a in &answers[2..] {
+        let t = a["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(t.chars().count() <= 1000, "{} characters", t.chars().count());
+        whole.push_str(t.split_once('\n').unwrap().1);
+    }
+    let directive: Value = serde_json::from_str(&whole).expect("the parts put together are the whole answer");
+    assert_eq!(directive["task_id"], header["about"]["task_id"]);
+    assert!(directive["key"].as_str().unwrap().contains(&"a".repeat(55)), "the whole answer still holds the key");
 }
