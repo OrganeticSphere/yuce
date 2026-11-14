@@ -122,6 +122,8 @@ cargo test --workspace --release
 
 Apache License 2.0。Copyright 2026 Aset Uisin, OrganeticSphere (organetic.ai)。
 
+YuCe™ 与 Organetic Sphere™ 是 Aset Uisin 的产品名称与商标。如 Apache 许可证 2.0 版第 6 条所述，除为说明作品来源以及复制 `NOTICE` 文件内容所必需的合理且惯常使用外，本许可证不授予使用这些名称的权利。
+
 ---
 
 *本文由作者在 AI 协助下撰写和翻译；如有出入，以英文 README 为准。*

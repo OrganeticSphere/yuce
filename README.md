@@ -423,3 +423,7 @@ The benchmark answers were graded by other models, named with each comparison in
 Copyright 2026 Aset Uisin, OrganeticSphere (organetic.ai). Licensed under the [Apache License, Version 2.0](LICENSE); see
 [NOTICE](NOTICE). The corpus in `benchmarks/corpora/mcp-spec-2026-07-28/` keeps its upstream license files. Third-party
 software and its licenses: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+YuCe™ and Organetic Sphere™ are product names and trademarks of Aset Uisin. As stated in Section 6 of the Apache License,
+Version 2.0, the license does not grant permission to use these names, except as required for reasonable and customary use in
+describing the origin of the work and reproducing the content of the `NOTICE` file.
