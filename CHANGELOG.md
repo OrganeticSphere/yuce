@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 (2026-11-14)
 
 * **Signatures are checked strictly, and a weak verifier key is refused.** A checkpoint's signature is now checked with Ed25519's
   strict check, and a verifier key of small order is refused when it is read (`audit-verify --checkpoint`, `--trusted-keys`,
@@ -43,6 +43,19 @@
   it, a local name of the task first, and refuses a name the answer may not cite before the done record is stored. A row the
   kernel keeps goes into the answer under a prefix of its id that no local name takes, and a done line that would leave such a
   row out is refused before it is stored. Journals already written replay as they are.
+* **A second corpus for the gap pass: the A2A specification** of v0.2.5, v0.3.0 and v1.0.1, with the changelog of v1.0.1 and the
+  summary of v1 (`benchmarks/corpora/a2a-spec-v1.0.1`), its oracle of 14 facts that ended by v1.0.1 and 2 that still hold, and its
+  pre-registration (`benchmarks/PREREGISTRATION_0.2.1_A2A.md`). Two runs with the pass and two without, graded blind: by the
+  pre-registered rule the side with the pass did worse. The journals show a defect in the claims the kernel chose for a question
+  about what changed, fixed below; the comparison does not separate the defect from the pass, and no run with a model has measured
+  the fix (BENCHMARKS.md). The gap pass stays an option, off by default.
+* **The A2A corpus names a commit that holds its files.** The kernel writes a source's repository, commit and path into the
+  identity of each document. The manifest of `benchmarks/corpora/a2a-spec-v1.0.1` named the upstream commit of v1.0.1 with the paths
+  of its folder, and that commit holds none of the five files at those paths: the three specifications share one upstream path, at
+  three tags. It now names `OrganeticSphere/yuce` and the commit of it that holds the five files, with their paths from the
+  repository's root; each entry still names the tag, commit and path of `a2aproject/A2A` its bytes come from, unchanged. A run of
+  the corpus takes the repository's root as `--repo`, and in a clone of this repository the corpus test checks that the commit holds
+  every file. The journals of the four A2A runs of 0.2.1 keep the old source as they were written.
 * **A repair after a withdrawal is told what the withdrawal took.** In control run 1 of 0.2 the repair after the second withdrawal,
   of one changelog line, wrote that the whole revision it belonged to was withdrawn and its state no longer confirmed, and the answer
   lost a conclusion a standing page still supported (BENCHMARKS.md). The repair of an answer some of whose rows still stand now says

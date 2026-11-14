@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "sbgk-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "rusqlite",
  "sbgk-core",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "sbgk-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ed25519-dalek",
  "getrandom",

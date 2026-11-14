@@ -1,32 +1,36 @@
 {
  "schema": "r2r.tobi_corpus_metadata_manifest.v1",
  "source": {
-  "origin_recorded": "https://github.com/a2aproject/A2A.git",
-  "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
-  "repository": "a2aproject/A2A",
-  "tag": "v1.0.1",
-  "license_files": {
-   "LICENSE": "v1.0.1 (3303592588e388e62e0f69f701af531d2f4e3991)"
-  },
-  "releases": {
-   "v0.2.5": {
-    "commit": "22b52705a169123aa06cdf28261e12150ee5777f",
-    "date": "2025-06-30"
+  "origin_recorded": "https://github.com/OrganeticSphere/yuce.git",
+  "commit": "7669148f484220b56dfb4b5daaa46b08f8a78e4f",
+  "repository": "OrganeticSphere/yuce",
+  "note": "the five files at their paths in this repository; each entry's upstream names the tag, commit and path of a2aproject/A2A its bytes come from, unchanged",
+  "upstream": {
+   "origin_recorded": "https://github.com/a2aproject/A2A.git",
+   "repository": "a2aproject/A2A",
+   "tag": "v1.0.1",
+   "license_files": {
+    "LICENSE": "v1.0.1 (3303592588e388e62e0f69f701af531d2f4e3991)"
    },
-   "v0.3.0": {
-    "commit": "8d57eba286de756176892518a8fc39b0ac2ccefb",
-    "date": "2025-07-31"
-   },
-   "v1.0.1": {
-    "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
-    "date": "2026-05-28"
+   "releases": {
+    "v0.2.5": {
+     "commit": "22b52705a169123aa06cdf28261e12150ee5777f",
+     "date": "2025-06-30"
+    },
+    "v0.3.0": {
+     "commit": "8d57eba286de756176892518a8fc39b0ac2ccefb",
+     "date": "2025-07-31"
+    },
+    "v1.0.1": {
+     "commit": "3303592588e388e62e0f69f701af531d2f4e3991",
+     "date": "2026-05-28"
+    }
    }
-  },
-  "note": "the files of v0.2.5 and v0.3.0 come from their own tags; every entry names its tag, commit and upstream path"
+  }
  },
  "entries": [
   {
-   "path": "v0.2.5/docs/specification.md",
+   "path": "benchmarks/corpora/a2a-spec-v1.0.1/v0.2.5/docs/specification.md",
    "extension": ".md",
    "corpus_role": "markdown_document_candidate",
    "size_bytes": 91975,
@@ -45,7 +49,7 @@
    }
   },
   {
-   "path": "v0.3.0/docs/specification.md",
+   "path": "benchmarks/corpora/a2a-spec-v1.0.1/v0.3.0/docs/specification.md",
    "extension": ".md",
    "corpus_role": "markdown_document_candidate",
    "size_bytes": 85298,
@@ -64,7 +68,7 @@
    }
   },
   {
-   "path": "v1.0.1/CHANGELOG.md",
+   "path": "benchmarks/corpora/a2a-spec-v1.0.1/v1.0.1/CHANGELOG.md",
    "extension": ".md",
    "corpus_role": "markdown_document_candidate",
    "size_bytes": 19268,
@@ -83,7 +87,7 @@
    }
   },
   {
-   "path": "v1.0.1/docs/whats-new-v1.md",
+   "path": "benchmarks/corpora/a2a-spec-v1.0.1/v1.0.1/docs/whats-new-v1.md",
    "extension": ".md",
    "corpus_role": "markdown_document_candidate",
    "size_bytes": 28692,
@@ -102,7 +106,7 @@
    }
   },
   {
-   "path": "v1.0.1/docs/specification.md",
+   "path": "benchmarks/corpora/a2a-spec-v1.0.1/v1.0.1/docs/specification.md",
    "extension": ".md",
    "corpus_role": "markdown_document_candidate",
    "size_bytes": 155498,

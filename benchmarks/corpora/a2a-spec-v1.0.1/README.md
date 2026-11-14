@@ -13,8 +13,13 @@ corpus for the gap pass of 0.2, beside the MCP specification corpus.
 
 - Every file holds the bytes of its release unchanged. `manifest.json` names, for each one, its tag, commit, upstream path, size,
   SHA-256 and git blob id; the git blob ids were checked against the ones GitHub names when the corpus was built.
-- A file's corpus path is its release and its upstream path, since the three specifications have one upstream path. The manifest's
-  source commit is that of v1.0.1: the kernel's document ids come from it and from the corpus path.
+- A file's path in this folder is its release and its upstream path, since the three specifications have one upstream path, and
+  no upstream commit holds all five. The kernel's document ids come from the manifest's source repository, commit and path, so the
+  manifest names this repository (`OrganeticSphere/yuce`), the commit of it that holds the five files, and their paths from the
+  repository's root; each entry's `upstream` names the tag, commit and path of `a2aproject/A2A` its bytes come from. A run of this
+  corpus takes the repository's root as `--repo`.
+- The four runs of 0.2.1 (BENCHMARKS.md) were made before that, under the commit of v1.0.1 and the paths in this folder: their
+  journals keep that source as it was.
 - `reports.txt` gives the files in release order, and `document_order.json` gives the kernel's document ids in that order.
 - The specification is licensed under the Apache License 2.0 (`LICENSE`, from v1.0.1). Its copyright stays with its authors, the A2A
   project; this repository only pins its bytes for a benchmark.
@@ -28,5 +33,6 @@ corpus for the gap pass of 0.2, beside the MCP specification corpus.
 
 `benchmarks/test_a2a_corpus.py` checks:
 - the bytes of every file against the manifest;
+- in a clone of this repository, that the pinned commit holds every file at its path;
 - the document order against the kernel's document ids;
 - every quote of the oracle, verbatim.
