@@ -23,11 +23,12 @@ use std::sync::{Arc, Mutex};
 const OWNER_READ: &[&str] = &["audit_status", "audit_record", "audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage"];
 const MORE: &str = "audit_more";
 const DEFAULT_MAX_RESULT_CHARS: usize = 16_000;
-/// Room for the header a part carries.
-const HEADER_ROOM: usize = 600;
+/// The fields of a paged answer's first header, in the order they are dropped when the header would take more than half a part:
+/// the whole answer, put together from the parts, still holds them all. `key` goes first: it grows with the document names.
+const ABOUT_FIELDS: &[&str] = &["status", "task_id", "kind", "max_lines", "local_id_prefix", "key"];
 /// Answers in parts kept for `audit_more`: the newest ones.
 const KEPT_PAGED: usize = 8;
-const UNKNOWN_TOOL: i64 = -32602;
+const INVALID_PARAMS: i64 = -32602;
 const FORBIDDEN: i64 = -32003;
 
 const INSTRUCTIONS: &str = "YuCe audit of the documents of one folder. As its reading agent: call audit_acquire, do exactly what the directive's \
@@ -91,6 +92,8 @@ pub fn cmd_mcp(a: &Args) {
     let mut kv: HashMap<String, String> = HashMap::new();
     kv.insert("profile".into(), "solo".into());
     kv.insert("wal".into(), wal.display().to_string());
+    // the question of --ask goes to the run as JSON: no file is written, so no file beside the journal is replaced
+    let mut asked: Option<Value> = None;
     if resuming {
         // the journal holds the documents and the questions the run started with
         let given: Vec<&str> = ["docs", "select", "run-id", "questions", "ask", "about"].into_iter().filter(|f| a.get(f).is_some()).collect();
@@ -109,29 +112,27 @@ pub fn cmd_mcp(a: &Args) {
         }
         let folder = Path::new(docs).canonicalize().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
         kv.insert("run-id".into(), a.get("run-id").map(str::to_string).or(folder).unwrap_or_else(|| "yuce".into()));
-        let questions = match (a.get("questions"), a.get("ask")) {
+        match (a.get("questions"), a.get("ask")) {
             (Some(_), Some(_)) => fail("give --questions <file> or --ask <question>, not both"),
-            (Some(file), None) => file.to_string(),
+            (Some(file), None) => {
+                kv.insert("questions".into(), file.to_string());
+            }
             (None, Some(ask)) => {
-                let about = match a.get("about") {
+                let about: Vec<String> = match a.get("about") {
                     Some(list) => list.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
                     None => terms_of(ask),
                 };
                 if about.is_empty() {
                     fail("--ask: give --about <term,term>: the words the documents use for the topic");
                 }
-                let path = dir.join("questions.json");
-                let text = format!("{:#}\n", json!([{"id": "q1", "text": ask, "about": about}]));
-                std::fs::write(&path, text).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", path.display())));
-                eprintln!("{}", json!({"status": "question", "file": path.display().to_string(), "about": about}));
-                path.display().to_string()
+                eprintln!("{}", json!({"status": "question", "id": "q1", "text": ask, "about": about}));
+                asked = Some(json!([{"id": "q1", "text": ask, "about": about}]));
             }
             (None, None) => fail("give the run its question: --ask <question> (and --about <term,term>), or --questions <file>"),
-        };
-        kv.insert("questions".into(), questions);
+        }
     }
     let args = Args { pos: Vec::new(), kv, sw: HashSet::new(), from_settings: HashSet::new() };
-    let start = audit_mcp::start_audit_server(&args);
+    let start = audit_mcp::start_audit_server(&args, asked);
     let subjects_file = format!("{}.subjects.json", wal.display());
     let (agent, owner) = tokens(&subjects_file);
     eprintln!("{}", json!({"status": "ready", "transport": "stdio", "audit": start.hello, "owner_tools": owner_tools, "max_result_chars": max_chars}));
@@ -202,6 +203,11 @@ impl OneCommand {
         if let Some(args) = params.get_mut("arguments").and_then(Value::as_object_mut) {
             args.remove("auth_token");
         }
+        // MCP's _meta is an object; any other value is refused here, before the token goes in, and the session goes on
+        match params.get("_meta") {
+            None | Some(Value::Null) | Some(Value::Object(_)) => {}
+            Some(_) => return mcp::rpc_error(id, INVALID_PARAMS, "params._meta must be an object".into()),
+        }
         params["_meta"]["auth_token"] = json!(token);
         let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
         let (answer, _) = LineServer::handle(&*self.inner, &mut None, &line);
@@ -233,7 +239,7 @@ impl OneCommand {
         } else if audit_mcp::owner_tool_names().contains(&name.as_str()) {
             return mcp::rpc_error(id, FORBIDDEN, format!("the owner's tool {name} is not open here: start the server with --owner-tools all"));
         } else {
-            return mcp::rpc_error(id, UNKNOWN_TOOL, format!("unknown tool '{name}'"));
+            return mcp::rpc_error(id, INVALID_PARAMS, format!("unknown tool '{name}'"));
         };
         let mut answer = self.forward(id, token, "tools/call", params);
         self.page(&mut answer);
@@ -241,30 +247,40 @@ impl OneCommand {
     }
 
     /// A tool answer whose text is longer than `max_chars` is replaced by its first part; the parts are kept for `audit_more`.
+    /// Every part, its header included, is at most `max_chars` characters.
     fn page(&self, answer: &mut Value) {
         let Some(text) = answer["result"]["content"][0]["text"].as_str() else { return };
-        if text.chars().count() <= self.max_chars {
+        let length = text.chars().count();
+        if length <= self.max_chars {
             return;
         }
-        let parts = split(text, self.max_chars - HEADER_ROOM);
         let mut about = json!({});
-        for key in ["status", "task_id", "kind", "key", "local_id_prefix", "max_lines"] {
-            if let Some(v) = answer["result"]["structuredContent"].get(key) {
-                about[key] = v.clone();
+        for key in ABOUT_FIELDS {
+            if let Some(v) = answer["result"]["structuredContent"].get(*key) {
+                about[*key] = v.clone();
             }
         }
-        let is_error = answer["result"]["isError"].clone();
-        let handle = {
-            let mut paged = self.paged.lock().unwrap_or_else(|e| e.into_inner());
-            paged.next += 1;
-            let handle = format!("r{}", paged.next);
-            paged.kept.push_back((handle.clone(), parts.clone()));
-            while paged.kept.len() > KEPT_PAGED {
-                paged.kept.pop_front();
+        let mut paged = self.paged.lock().unwrap_or_else(|e| e.into_inner());
+        paged.next += 1;
+        let handle = format!("r{}", paged.next);
+        // the longest header a part of this answer can carry: the first part's, with part numbers as wide as the number of
+        // characters (no answer has more parts than that), plus its line break
+        let widest = 10usize.pow(length.ilog10() + 1) - 1;
+        let room = |about: &Value| part_header(&handle, widest - 1, widest, Some(about)).chars().count() + 1;
+        while room(&about) > self.max_chars / 2 {
+            let Some(field) = ABOUT_FIELDS.iter().rev().find(|f| about.get(**f).is_some()) else { break };
+            if let Some(fields) = about.as_object_mut() {
+                fields.remove(*field);
             }
-            handle
-        };
-        let first = part_text(&handle, 1, parts.len(), Some(about), &parts[0]);
+        }
+        let parts = split(text, self.max_chars.saturating_sub(room(&about)).max(1));
+        let first = part_text(&handle, 1, parts.len(), Some(&about), &parts[0]);
+        paged.kept.push_back((handle, parts));
+        while paged.kept.len() > KEPT_PAGED {
+            paged.kept.pop_front();
+        }
+        drop(paged);
+        let is_error = answer["result"]["isError"].clone();
         answer["result"] = json!({"content": [{"type": "text", "text": first}], "isError": is_error});
     }
 
@@ -284,8 +300,8 @@ impl OneCommand {
     }
 }
 
-/// One part of an answer: a header line, then the text.
-fn part_text(handle: &str, part: usize, parts: usize, about: Option<Value>, text: &str) -> String {
+/// The header line of one part of an answer.
+fn part_header(handle: &str, part: usize, parts: usize, about: Option<&Value>) -> String {
     let mut header = json!({"answer_in_parts": handle, "part": part, "parts": parts});
     if part < parts {
         header["next"] = json!(format!("call {MORE} with {{\"handle\": \"{handle}\", \"part\": {}}}", part + 1));
@@ -293,9 +309,14 @@ fn part_text(handle: &str, part: usize, parts: usize, about: Option<Value>, text
         header["next"] = json!("this is the last part");
     }
     if let Some(about) = about {
-        header["about"] = about;
+        header["about"] = about.clone();
     }
-    format!("{header}\n{text}")
+    header.to_string()
+}
+
+/// One part of an answer: a header line, then the text.
+fn part_text(handle: &str, part: usize, parts: usize, about: Option<&Value>, text: &str) -> String {
+    format!("{}\n{text}", part_header(handle, part, parts, about))
 }
 
 /// `text` cut into pieces of at most `size` characters, on character boundaries.

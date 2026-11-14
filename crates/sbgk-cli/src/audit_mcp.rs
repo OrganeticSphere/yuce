@@ -2192,13 +2192,14 @@ pub(crate) struct AuditStart {
 }
 
 pub fn cmd_audit_serve(a: &Args) {
-    let start = start_audit_server(a);
+    let start = start_audit_server(a, None);
     let note = json!({"status": "ready", "audit": start.hello});
     mcp::run_bound(start.server, start.listener, start.max_connections, Some(note), json!({"audit": start.hello}));
 }
 
 /// Everything `audit-serve` does before it serves: the flags checked, the run created or resumed, its journal kept.
-pub(crate) fn start_audit_server(a: &Args) -> AuditStart {
+/// `questions`: the questions of a new run given as JSON instead of a `--questions` file (`sbgk mcp --ask` writes no file).
+pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditStart {
     let profiled_default_scope = a.get("build-scope").is_none();
     let mut profiled = with_profile(a);
     // a run resumed from the settings file it started with: the flags that started it are the journal's now, not read again
@@ -2361,7 +2362,7 @@ pub(crate) fn start_audit_server(a: &Args) -> AuditStart {
         None
     };
     // a new run names its questions in its genesis; a resumed run takes them from there, and --questions, if given, must agree
-    let questions_file = a.get("questions").map(|p| read_json(p, "--questions"));
+    let questions_file = questions.or_else(|| a.get("questions").map(|p| read_json(p, "--questions")));
     if let Some(file) = &questions_file {
         parse_questions(file).unwrap_or_else(|e| fail(&format!("--questions: {e}")));
     }
