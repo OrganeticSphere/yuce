@@ -1,6 +1,6 @@
 # yuce-verify (delivery 1.1 with amendments 1 and 2: levels J0, J1)
 
-An independent verifier of YuCe journals in the format `sbgk-session-log/3`. It was written in a clean room from the text of the specification alone, with no line of the kernel's code. [`../spec/`](../spec/) holds that specification (`SPEC_INDEPENDENT_VERIFIER/4`: version 3 with its amendments 1 and 2, in an English translation of the original), and [`../inputs/`](../inputs/) the test journals with the results expected of them.
+An independent verifier of YuCe journals in the format `sbgk-session-log/3`: a standalone implementation of the specification, sharing no code and no dependencies with the kernel. [`../spec/`](../spec/) holds that specification (`SPEC_INDEPENDENT_VERIFIER/4`: version 3 with its amendments 1 and 2, in an English translation of the original), and [`../inputs/`](../inputs/) the test journals with the results expected of them.
 
 It answers one question: **is this file a well-formed YuCe journal, and does it match a seal or a head I was given separately?**
 
