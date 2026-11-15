@@ -23,6 +23,7 @@ pub mod onto;
 pub(crate) mod persistence;
 pub use persistence::LOCKED_WHOLE;
 pub mod proof;
+pub mod prov;
 pub mod read;
 pub mod records;
 pub mod s0;

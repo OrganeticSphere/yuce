@@ -32,8 +32,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   lists). More than one entry can be lost this way. A receipt older than the lost entries still matches: only the latest one
   shows that nothing is missing.
 * A journal is read while its server runs, and what is read is that moment's. The server is the journal's one writer on every
-  system; `audit-verify`, `audit-read`, `audit-index` and `audit-proof` read up to the last complete entry of that moment and say
-  so (`live`), and an entry the server has not finished is no torn tail then. The journal may have grown since: only a stopped
+  system; `audit-verify`, `audit-read`, `audit-index`, `audit-prov` and `audit-proof` read up to the last complete entry of that
+  moment and say so (`live`), and an entry the server has not finished is no torn tail then. The journal may have grown since: only a stopped
   journal has an end to check, and `--at-end` on a live one holds for that moment alone. On Windows any program that holds the
   journal open for writing counts as its writer: no server starts on it, and a torn tail is taken for an entry in flight. Beside
   a server of 0.2.0 or earlier, which locks the whole file, a reading command on Windows stops with exit 2 and says so.
@@ -88,6 +88,11 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   `dependents` and the report of what fell cannot show it. From the journal the report proves what stands, what fell and which
   quote went. Its twins are found by comparing words, a heuristic that misses a claim worded otherwise and can name one that only
   sounds alike; what it says to reread is advice.
+* **What the PROV-O export says.** `audit-prov` is a reading of the journal by the kernel's rules, complete as the projections are:
+  only the dependencies the records declare. It has no times, because the journal holds none; frames are ordered by their
+  number. It leaves out the graph builder's links and concepts, the server's own checkpoints and the texts of the directives. In
+  it a record is never invalidated, only a period in which it stood: a record stands again when its document is put back to the
+  bytes it quotes. Like the journal, it holds the text of every quote, withdrawn ones too.
 * **The live support of a repair is found by words too.** It can miss a claim worded otherwise and bring one that only sounds
   alike; the repair is told so and answers from the quotes. It holds at most 12 claims, 4 per fallen row: when many rows fall,
   the later rows in id order may get none, and a claim too large for what the kept rows leave of the window is left out. A

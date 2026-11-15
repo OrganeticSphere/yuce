@@ -30,6 +30,9 @@ kernel itself finds its bytes in the section the agent was leased.
   read. The gap pass (`--gap-pass`, off by default) can hand the parts no quote covers back to the agents as narrow tasks; it hands
   them out in the order of the documents' ids, and no run has shown it to improve the answers (BENCHMARKS.md, LIMITATIONS.md).
 * **An index beside the journal.** `sbgk audit-index` builds a SQLite file any tool reads, rebuilt from the journal at any time.
+* **Provenance in the W3C standard.** `sbgk audit-prov` writes the journal as W3C PROV-O, one JSON-LD file any RDF tool reads,
+  rebuilt from the journal at any time: who wrote each record, on which bytes of which document version it stands, what it rests
+  on, and when it stood and stopped standing. The same journal gives the same bytes. A sample: [examples/prov-export](examples/prov-export).
 
 The full list is in [CHANGELOG.md](CHANGELOG.md).
 

@@ -1527,6 +1527,72 @@ fn one_agent_starts_on_its_own_folder_without_a_subjects_file() {
     assert!(again["status"].is_string() && again["status"] != "error", "the same token after the resume: {again}");
 }
 
+/// The PROV-O export of a journal (0.2.2): the file names the hash of its own content, a second export gives the same bytes, the
+/// claims it says stand are those the reading tool says stand, `--upto` exports the first frames, and a path that names the journal
+/// is refused with the journal untouched.
+#[test]
+fn the_prov_export_of_a_journal_is_the_same_file_every_time_and_stands_what_the_reading_tools_stand() {
+    let fx = Fixture::new("prov");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let prov = |args: &[&str]| {
+        let out = Command::new(BIN).arg("audit-prov").args(["--wal", &wal]).args(args).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let (first, second) = (fx.p("first.prov.jsonld"), fx.p("second.prov.jsonld"));
+    let (code, made) = prov(&["--out", &first]);
+    assert_eq!((code, made["status"].as_str(), made["format"].as_str()), (Some(0), Some("EXPORTED"), Some("yuce-prov/1")), "{made}");
+    assert_eq!(prov(&["--out", &second]).1["content_hash"], made["content_hash"]);
+    let text = std::fs::read(&first).unwrap();
+    assert_eq!(text, std::fs::read(&second).unwrap(), "the same journal, the same bytes");
+    let document: Value = serde_json::from_slice(&text).unwrap();
+    let named = sbgk_core::audit::prov::content_hash_of(&document).map(|h| sbgk_core::hash::to_hex(&h));
+    assert_eq!(named.as_deref(), made["content_hash"].as_str(), "the file names the hash of its content");
+    let frames = std::fs::read_to_string(&wal).unwrap().lines().count();
+    assert_eq!(made["frames"].as_u64(), Some(frames as u64));
+    // the claims with a period of standing that did not end are the claims the reading tool says stand
+    let graph = document["@graph"].as_array().unwrap();
+    let claims: std::collections::BTreeSet<&str> = graph.iter().filter(|n| n["yuce:kind"] == "claim").filter_map(|n| n["@id"].as_str()).collect();
+    let mut standing: Vec<String> = graph
+        .iter()
+        .filter(|n| n["@type"].as_array().unwrap().iter().any(|t| t == "yuce:Standing") && n.get("prov:wasInvalidatedBy").is_none())
+        .filter_map(|n| n["prov:specializationOf"].as_str().filter(|r| claims.contains(r)))
+        .map(|r| r.rsplit(':').next().unwrap().to_string())
+        .collect();
+    standing.sort();
+    let read = Command::new(BIN).args(["audit-read", "active-claims", "--wal", &wal, "--limit", "100000"]).output().unwrap();
+    let read: Value = serde_json::from_slice(&read.stdout).unwrap();
+    let mut active: Vec<String> =
+        read["groups"].as_array().unwrap().iter().flat_map(|g| g["ids"].as_array().unwrap().iter().map(|i| i.as_str().unwrap().to_string())).collect();
+    active.sort();
+    assert!(!standing.is_empty());
+    assert_eq!(standing, active, "the claims that stand");
+    // the first frames
+    let (code, part) = prov(&["--out", &fx.p("part.prov.jsonld"), "--upto", &(frames / 2).to_string()]);
+    assert_eq!((code, part["frames"].as_u64()), (Some(0), Some((frames / 2) as u64)), "{part}");
+    assert_eq!(prov(&["--out", &fx.p("none.prov.jsonld"), "--upto", &(frames + 1).to_string()]).0, Some(1));
+    // never over the journal
+    let before = std::fs::read(&wal).unwrap();
+    let (code, refused) = prov(&["--out", &wal]);
+    assert_eq!((code, refused["status"].as_str()), (Some(1), Some("REFUSED")), "{refused}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before);
+}
+
 /// The index beside a journal (SPEC_V02_STEP6_7 section 6.5): built on a prefix and brought up to the whole journal it equals one
 /// built at once; a row changed in the database is named by the check; what stands answers as the reading tool does; a journal
 /// cut below the index is refused.
@@ -1893,6 +1959,9 @@ fn every_reading_command_reads_the_journal_of_a_running_server_and_a_second_serv
     assert_eq!(indexed["live"]["frames_read"].as_u64(), Some(end), "{indexed}");
     let (code, checked, stderr) = reading(&fx, &["audit-index", "--db", &db, "--check"]);
     assert_eq!((code, checked["status"].as_str()), (Some(0), Some("INDEX_MATCHES")), "{checked} {stderr}");
+    let (code, exported, stderr) = reading(&fx, &["audit-prov", "--out", &fx.p("live.prov.jsonld")]);
+    assert_eq!((code, exported["status"].as_str(), exported["frames"].as_u64()), (Some(0), Some("EXPORTED"), Some(end)), "{exported} {stderr}");
+    assert_eq!(exported["live"]["frames_read"].as_u64(), Some(end), "{exported}");
     let proof = fx.p("live.proof.json");
     let (code, cut, stderr) = reading(&fx, &["audit-proof", "--record", &claim, "--out", &proof]);
     assert_eq!((code, cut["status"].as_str(), cut["live"]["frames_read"].as_u64()), (Some(0), Some("PROOF"), Some(end)), "{cut} {stderr}");
