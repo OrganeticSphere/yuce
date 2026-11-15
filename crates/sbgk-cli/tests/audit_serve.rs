@@ -2129,3 +2129,51 @@ fn a_preview_leaves_the_dispatchers_pending_entries_to_the_calls_that_write() {
     let added = String::from_utf8_lossy(&std::fs::read(&wal).unwrap()[before.len()..]).to_string();
     assert!(added.contains("audit:agent-failures"), "the pending failure is written by the next call that coordinates: {added}");
 }
+
+/// The other reading tools write nothing either, not even what the dispatcher keeps pending (Codex review of cf04d481, READ-01):
+/// while an agent's failure waits to be written and its long poll waits, the owner's reads leave the journal's bytes as they are.
+/// `audit_status` without `telemetry` coordinates: it moves the run on and writes the pending failure.
+#[test]
+fn the_reading_tools_leave_the_dispatchers_pending_entries_to_the_calls_that_coordinate() {
+    let fx = Fixture::new("readpending");
+    let mut args = fx.args(true);
+    args.extend(["--ttl-ms", "400", "--agent-attempts", "4"].iter().map(|s| s.to_string()));
+    let server = Server::start(&args);
+    let (mut worker, mut owner) = (Client::connect(server.port, W1), Client::connect(server.port, OWN));
+    let task = worker.call("audit_acquire", json!({"max_wait_ms": 0}));
+    assert_eq!(task["status"], "DIRECTIVE", "{task}");
+    let doc = task["key"].as_str().unwrap()[4..].split('#').next().unwrap().to_string();
+    // the lease expires unanswered; the agent's next acquire finds it, keeps the failure pending and waits
+    std::thread::sleep(Duration::from_millis(450));
+    let waiting = std::thread::spawn(move || worker.call("audit_acquire", json!({"max_wait_ms": 3000})));
+    std::thread::sleep(Duration::from_millis(80));
+    let wal = fx.p("run.wal");
+    let before = std::fs::read(&wal).unwrap();
+    let started = Instant::now();
+    let reads = [
+        ("audit_status", json!({"telemetry": true})),
+        ("audit_links", json!({})),
+        ("audit_dependents", json!({"doc_id": doc})),
+        ("audit_active_claims", json!({})),
+        ("audit_coverage", json!({})),
+        ("audit_diff", json!({"from": 1})),
+        ("audit_fallen", json!({"since": 1})),
+    ];
+    for (tool, call) in reads {
+        let answer = owner.call(tool, call);
+        assert!(answer.get("code").is_none(), "{tool}: {answer}");
+        assert_eq!(std::fs::read(&wal).unwrap(), before, "{tool} writes nothing, not even what the dispatcher keeps pending");
+    }
+    // a refused read writes nothing either
+    let unknown = owner.call("audit_record", json!({"record": "nothing"}));
+    assert_eq!(unknown["code"], "BAD_ARGUMENT", "{unknown}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "audit_record writes nothing, not even what the dispatcher keeps pending");
+    // the status coordinates: it writes what is pending
+    let status = owner.call("audit_status", json!({}));
+    let (elapsed, still_waiting) = (started.elapsed(), !waiting.is_finished());
+    assert!(still_waiting && elapsed < Duration::from_millis(1500), "observed while the long poll still waits");
+    let added = String::from_utf8_lossy(&std::fs::read(&wal).unwrap()[before.len()..]).to_string();
+    assert!(added.contains("audit:agent-failures"), "audit_status writes the pending failure: {status} {added}");
+    let waited = waiting.join().unwrap();
+    assert_eq!(waited["status"], "DIRECTIVE", "{waited}");
+}

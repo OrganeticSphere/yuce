@@ -47,8 +47,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const PROTOCOL: &str = "2025-06-18";
-/// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, and stay open after the
-/// run is closed (a preview of a withdrawal then answers with the refusal the withdrawal would get).
+/// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, not even what the
+/// dispatcher keeps pending (see `reads_only`), and stay open after the run is closed (a preview of a withdrawal then answers with
+/// the refusal the withdrawal would get).
 const READ_TOOLS: [&str; 6] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview"];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
@@ -471,7 +472,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         t(
             "audit_status",
-            "Counters and roots; ontology=true also exports opt-in lifecycle history (owner only).",
+            "Counters and roots. It also moves the run on, so it can write the server's own entries (a circle's step, the attestation at the end, an agent's failure); telemetry=true is a snapshot that writes nothing. ontology=true also exports opt-in lifecycle history (owner only).",
             schema(json!({"ontology":{"type":"boolean"},"telemetry":{"type":"boolean"}}), &[]),
         ),
         t(
@@ -798,7 +799,7 @@ impl AuditServer {
             },
             "audit_status" => {
                 let r = &mut *g;
-                let telemetry = args.get("telemetry").and_then(Value::as_bool) == Some(true);
+                let telemetry = telemetry(args);
                 if telemetry { /* snapshot only: no dispatch or phase transition */
                 } else if r.pool.is_none() {
                     r.builder.prepare_pairs(&r.state, r.dispatch.reading_done(&r.state));
@@ -959,21 +960,24 @@ impl AuditServer {
             other => json!({"status": "error", "code": "UNKNOWN_TOOL", "message": format!("unknown tool '{other}'")}),
         };
         // a key given up when a failed lease expired (inside a dispatcher call without the store) is written now (Codex review
-        // d7d9a49, D06: otherwise a restart issued it again)
+        // d7d9a49, D06: otherwise a restart issued it again). A reading tool writes nothing, not even that: what is pending waits
+        // for the next call that coordinates or writes (Codex review of cf04d481, READ-01)
         {
             let r = &mut *g;
-            if let Err(e) = r.dispatch.persist_version_closures(&mut r.state) {
-                out = json!({"status":"error","code":"CHANGE_CLOSURE_NOT_DURABLE","error":e.to_json(),"prior_reply":out});
-            }
-            for e in r.dispatch.persist_unresolved(&mut r.state) {
-                if r.dispatch.cfg.agent_attempts.is_some() {
-                    out = json!({"status":"error","code":"AGENT_FAILURE_CHECKPOINT_REFUSED","error":e,"prior_reply":out});
-                    continue;
+            if !reads_only(name, args) {
+                if let Err(e) = r.dispatch.persist_version_closures(&mut r.state) {
+                    out = json!({"status":"error","code":"CHANGE_CLOSURE_NOT_DURABLE","error":e.to_json(),"prior_reply":out});
                 }
-                eprintln!("{}", json!({"status": "warning", "message": "an unresolved key could not be written yet", "error": e}));
-            }
-            if let Err(error) = r.dispatch.persist_members(&mut r.state) {
-                out = json!({"status":"error","code":"RING_CHECKPOINT_REFUSED","error":error,"prior_reply":out});
+                for e in r.dispatch.persist_unresolved(&mut r.state) {
+                    if r.dispatch.cfg.agent_attempts.is_some() {
+                        out = json!({"status":"error","code":"AGENT_FAILURE_CHECKPOINT_REFUSED","error":e,"prior_reply":out});
+                        continue;
+                    }
+                    eprintln!("{}", json!({"status": "warning", "message": "an unresolved key could not be written yet", "error": e}));
+                }
+                if let Err(error) = r.dispatch.persist_members(&mut r.state) {
+                    out = json!({"status":"error","code":"RING_CHECKPOINT_REFUSED","error":error,"prior_reply":out});
+                }
             }
             for (seal, error) in &r.state.sign_failures()[r.sign_failures_told..] {
                 eprintln!("{}", json!({"status": "warning", "message": SIGN_FAILURE_NOTE, "seal": seal, "error": error}));
@@ -993,6 +997,19 @@ impl AuditServer {
             out
         }
     }
+}
+
+/// `audit_status` with `telemetry`: a snapshot, with no dispatch and no step of the run.
+fn telemetry(args: &Value) -> bool {
+    args.get("telemetry").and_then(Value::as_bool) == Some(true)
+}
+
+/// The tools that only read: the reading tools of 0.2, `audit_record`, `audit_links`, and `audit_status` with `telemetry`. They
+/// take no dispatcher step and write nothing, not even what the dispatcher keeps pending: an agent's failure found while its long
+/// poll waits is written by the next call that coordinates or writes (Codex review of cf04d481, READ-01). `audit_status` without
+/// `telemetry` coordinates: it moves the run on (a circle's step, the attestation at the end) and writes what is pending.
+fn reads_only(name: &str, args: &Value) -> bool {
+    READ_TOOLS.contains(&name) || matches!(name, "audit_record" | "audit_links") || (name == "audit_status" && telemetry(args))
 }
 
 /// `record`: a full 64-hex id or a short `@id` of exactly one record.

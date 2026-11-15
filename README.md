@@ -368,6 +368,8 @@ The bridge adds the token to every message, so the token stays in the bridge's e
 It refuses `shutdown` unless started with `--allow-shutdown`, so a worker cannot stop the shared server. The agent calls `audit_acquire`, does what the directive asks, and sends its JSON lines with
 `audit_submit`. The owner's token gives `audit_status`, `audit_record`, `audit_dependents`, `audit_active_claims`, `audit_diff`,
 `audit_fallen`, `audit_coverage`, `audit_withdraw_preview`, `audit_revoke`, `audit_withdraw_text`, `audit_seal` and `audit_close`.
+The reading tools write nothing. `audit_status` also moves the run on, so it can write the server's own entries; with
+`telemetry` it is a snapshot that writes nothing.
 
 More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core/src/audit/README.md).
 
