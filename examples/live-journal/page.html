@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>YuCe Live</title>
+<style>
+/* layout: the journal strip and player on top, the map quotes -> claims -> answers, what fell and coverage; details and frames on the side */
+:root{--bg:#f6f5fb;--panel:#fff;--panel2:#f0eef8;--ink:#17142a;--muted:#5d5a72;--line:#dcd8ea;--jade:#0e8a5f;--jade-bg:#e2f5ed;--gold:#a8770a;--gold-bg:#fbf0d2;--red:#b3352a;--red-bg:#fbe7e4;--uv:#5a3fd6;--uv-bg:#ebe7fd;--mark:#ffe58a;--on-uv:#fff;--shadow:0 8px 30px rgba(23,20,42,.16);--tb:0px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c0a13;--panel:#15121f;--panel2:#1c1829;--ink:#ece9f7;--muted:#a39eb8;--line:#2c2742;--jade:#4fd1a1;--jade-bg:#11332a;--gold:#e6b94a;--gold-bg:#372b0f;--red:#f08a7a;--red-bg:#3a1a17;--uv:#a995ff;--uv-bg:#251e48;--mark:#6b5a12;--on-uv:#0c0a13;--shadow:0 8px 30px rgba(0,0,0,.55);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0c0a13;--panel:#15121f;--panel2:#1c1829;--ink:#ece9f7;--muted:#a39eb8;--line:#2c2742;--jade:#4fd1a1;--jade-bg:#11332a;--gold:#e6b94a;--gold-bg:#372b0f;--red:#f08a7a;--red-bg:#3a1a17;--uv:#a995ff;--uv-bg:#251e48;--mark:#6b5a12;--on-uv:#0c0a13;--shadow:0 8px 30px rgba(0,0,0,.55);color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--uv);outline-offset:2px}
+code{font:13px/1.4 ui-monospace,Consolas,monospace;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+h1{font-size:18px;margin:0}
+h2{font-size:15px;margin:0 0 10px;text-wrap:balance}
+h2 small{font-weight:400;color:var(--muted);font-size:13px;margin-left:6px}
+h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 8px}
+p{margin:0 0 8px}
+.fine{font-size:13px;color:var(--muted);margin:8px 0 0}
+.top{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding:10px max(16px,env(safe-area-inset-left,0px)) 10px max(16px,env(safe-area-inset-right,0px));background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline}
+.sub{color:var(--muted);font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12.5px;border:1px solid var(--line);background:var(--panel);color:var(--muted);min-height:28px}
+.chip.ok{background:var(--jade-bg);color:var(--jade);border-color:transparent;font-weight:600}
+.wrap{max-width:1320px;margin:0 auto;padding:14px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));display:grid;gap:14px}
+section,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.banner{border:1px solid var(--gold);background:var(--gold-bg);border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:14px;max-width:90ch}
+.read .lead{font-size:16px;margin:0 0 10px;max-width:72ch}
+.legend{list-style:none;margin:0;padding:0;display:grid;gap:8px 16px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));font-size:13px;color:var(--muted)}
+.legend li{display:flex;gap:8px;align-items:center}
+.legend b{color:var(--ink);font-weight:600}
+.sw{flex:none;width:26px;height:18px;border-radius:5px;border:1px solid var(--line);border-left:4px solid var(--jade);background:var(--panel)}
+.sw.fell{border:1px dashed var(--red);background:var(--red-bg)}
+.sw.wd{border:1px dashed var(--gold);background:var(--gold-bg)}
+.sw.nv{border:1px dashed var(--muted);background:var(--panel2)}
+.sw.seal{width:16px;height:16px;border-radius:50%;border:3px solid var(--gold);margin:0 5px}
+.strip{overflow-x:auto;padding:6px 2px 10px;scrollbar-width:thin}
+.rail{position:relative;display:flex;gap:5px;align-items:center;width:max-content;min-width:100%;padding:4px 6px}
+.wire{position:absolute;left:0;width:0;top:50%;height:0;border-top:2px solid var(--gold)}
+.slip{position:relative;z-index:1;flex:1 0 13px;max-width:40px;height:40px;padding:0;border-radius:5px;border:1px solid var(--jade);background:var(--jade-bg)}
+.slip.k-open,.slip.k-task,.slip.k-entry,.slip.k-genesis{height:22px;border-color:var(--muted);background:var(--panel2)}
+.slip.k-seal{flex:0 0 16px;height:16px;border-radius:50%;border:3px solid var(--gold);background:var(--panel)}
+.slip.k-withdraw{border-color:var(--gold);background:var(--gold)}
+.slip.k-version{border-color:var(--gold);background:var(--gold-bg)}
+.slip.k-fall{border-color:var(--red);background:var(--red-bg)}
+.slip.k-close{height:22px;border-color:var(--ink);background:var(--panel2)}
+.slip.seg{height:12px;max-width:none;border-radius:6px;border-color:var(--line);background:var(--panel2)}
+.slip.future{opacity:.35;border-style:dashed;background:transparent}
+.slip.cur{box-shadow:0 0 0 3px var(--uv)}
+.transport{margin-top:10px}
+.scrub{display:flex;gap:10px;align-items:center}
+.scrub input{flex:1;min-width:0;accent-color:var(--uv);height:28px}
+.scrub output{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted);white-space:nowrap}
+.btns{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.b{min-height:36px;min-width:40px;padding:4px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+.b.pri{background:var(--uv);border-color:var(--uv);color:var(--on-uv);font-weight:600}
+.b[aria-pressed=true]{background:var(--uv-bg);border-color:var(--uv)}
+.caption{margin:0 0 8px;padding:8px 12px;border-left:4px solid var(--uv);background:var(--uv-bg);border-radius:0 8px 8px 0;font-size:15px}
+.counters{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
+.ct{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.ct b{display:block;font-size:24px;line-height:1.1;font-variant-numeric:tabular-nums}
+.ct span{font-size:12.5px;color:var(--muted)}
+.ct.j b{color:var(--jade)}.ct.r b{color:var(--red)}.ct.g b{color:var(--gold)}
+.cols{display:grid;gap:14px;min-width:0}
+.mainc{display:grid;gap:14px;min-width:0}
+aside{display:grid;gap:14px;align-content:start;min-width:0}
+.view{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 10px;font-size:13px;color:var(--muted)}
+.view .b{min-height:30px;padding:2px 10px;font-size:13px}
+.map{position:relative}
+#threads{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
+#threads path{fill:none;stroke:var(--jade);stroke-width:1.6;opacity:.55}
+#threads path.fellp{stroke:var(--red);stroke-dasharray:5 4;opacity:.9}
+#threads path.idle{stroke:var(--muted);stroke-dasharray:2 4;opacity:.6}
+#threads path.hot{stroke:var(--uv);stroke-width:2.6;opacity:1}
+#threads path.dim{opacity:.12}
+.mapcols{position:relative;z-index:1;display:grid;gap:14px}
+.col{min-width:0}
+.docb{margin:0 0 10px}
+.dname{font-weight:600;font-size:13px;margin:0 0 6px}
+.dname span{font-weight:400;color:var(--muted)}
+.none{font-size:13px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:6px 10px;margin:0 0 8px}
+.node{display:block;width:100%;text-align:left;border:1px solid var(--line);border-left:4px solid var(--jade);border-radius:8px;background:var(--panel);padding:7px 10px;margin:0 0 8px}
+.node .t{display:block}
+.node .sub,.node .st{display:block;font-size:12px;color:var(--muted)}
+.node .st{font-weight:600;color:var(--jade)}
+.node mark,.ctx mark{background:var(--mark);color:inherit;padding:0 2px;border-radius:2px}
+.node.fell{border:1px dashed var(--red);background:var(--red-bg)}
+.node.fell .t,.node.wd .t{font-style:italic;color:var(--muted)}
+.hist .node.fell .t,.hist .node.wd .t{font-style:normal;text-decoration:line-through}
+.node.nv{border:1px dashed var(--muted);background:var(--panel2)}
+.node.nv .st{color:var(--muted)}
+.badge{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:0 6px;border-radius:4px;margin-left:6px;vertical-align:1px;text-decoration:none}
+.badge.lost{background:var(--red);color:var(--panel)}
+.badge.gone{background:var(--gold);color:var(--panel)}
+.node.fell .st{color:var(--red)}
+.node.wd{border:1px dashed var(--gold);background:var(--gold-bg)}
+.node.wd .st{color:var(--gold)}
+.node.hot{border-color:var(--uv);border-left-color:var(--uv)}
+.node.sel{outline:2px solid var(--uv);outline-offset:1px}
+.node.dim{opacity:.35}
+.node.born{animation:born .7s}
+@keyframes born{from{background:var(--jade-bg);transform:scale(.96)}}
+.wave .node.fell.nf{animation:fall .8s both;animation-delay:calc(var(--lvl) * .6s)}
+.wave .node.wd.nf{animation:wdk .8s both}
+@keyframes fall{0%{background:var(--panel);border-color:var(--jade);transform:none}45%{background:var(--red);transform:translateY(3px)}}
+@keyframes wdk{0%{background:var(--panel)}45%{background:var(--gold)}}
+.qslot{margin:0 0 10px}
+.qid{font-size:13px;margin:0 0 6px}
+.qid b{margin-right:4px}
+.qid span{font-weight:600;font-size:12px;color:var(--gold);margin-left:6px}
+.more{font-size:13px;color:var(--muted);margin:0 0 8px}
+.steps{display:grid;gap:12px}
+.grp{display:grid;gap:8px}
+.step{border-left:4px solid var(--red);background:var(--red-bg);border-radius:0 8px 8px 0;padding:8px 12px;font-size:14px}
+.step.s0{border-left-color:var(--gold);background:var(--gold-bg)}
+.step.again{border-left-color:var(--jade);background:var(--jade-bg)}
+.step b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.lnk{border:0;background:none;padding:0 2px;color:var(--uv);text-decoration:underline;min-height:24px}
+.cov .dname{margin-top:10px}
+.cells{display:flex;flex-wrap:wrap;gap:3px}
+.u{width:16px;height:16px;border-radius:3px;border:1px dashed var(--line)}
+.u.uq{background:var(--jade);border:1px solid var(--jade)}
+.u.ue{border:2px solid var(--jade)}
+.u.up{border:1px solid var(--muted);background:repeating-linear-gradient(45deg,var(--muted) 0 2px,transparent 2px 6px)}
+.u.ub{border:1px solid var(--muted);background:var(--panel2)}
+.u.uw{border:1px solid var(--gold);background:repeating-linear-gradient(90deg,var(--gold) 0 3px,transparent 3px 6px)}
+.cnt{font-size:12.5px;color:var(--muted);margin:4px 0 0}
+.cleg{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin-top:12px}
+.cleg span{display:inline-flex;gap:6px;align-items:center}
+.cleg .u{width:14px;height:14px}
+.detail{position:relative}
+.detail .x{position:absolute;top:8px;right:8px}
+.detail .kind{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.detail .big{font-size:16px;margin:2px 0 8px;padding-right:44px}
+.ctx{font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2);margin:0 0 8px}
+.kv{font-size:13px;color:var(--muted);margin:0 0 8px}
+.box{border-radius:8px;padding:8px 10px;font-size:14px;margin:0 0 8px}
+.box.fell{background:var(--red-bg);border:1px dashed var(--red)}
+.box.wd{background:var(--gold-bg);border:1px dashed var(--gold)}
+.dl{margin:0 0 8px;font-size:14px}
+.dl b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.cmd{display:flex;gap:6px;align-items:center;margin:0 0 6px}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap}
+.cmd .b{min-height:30px;padding:2px 8px;font-size:12.5px}
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.filters .b{min-height:30px;padding:2px 10px;font-size:13px}
+.evs{max-height:360px;overflow:auto}
+.ev{display:flex;gap:10px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:7px 2px;font-size:13.5px}
+.ev b{flex:none;width:34px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ev.wd{color:var(--gold);font-weight:600}
+.ev.quiet{color:var(--muted)}
+.ev.cur{background:var(--uv-bg)}
+.trust{display:grid;gap:12px 24px}
+.trust ul{margin:0;padding-left:18px}
+.trust li{margin:0 0 6px}
+.mono{font:12.5px/1.5 ui-monospace,Consolas,monospace;color:var(--muted)}
+.film .read .lead,.film .read .legend,.film .counters,.film .cov,.film .trust,.film .events,.film .fine,.film .view,.film .top .chips{display:none}
+@media (min-width:760px){
+  .mapcols{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:14px 60px}
+  #threads{display:block}
+  .trust{grid-template-columns:1fr 1fr}
+  .grp{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+}
+@media (min-width:1100px){
+  .top{position:sticky;top:0;z-index:20}
+  .cols{grid-template-columns:minmax(0,1fr) 340px}
+  aside{position:sticky;top:64px;max-height:calc(100vh - 76px);overflow:auto}
+  .detail .x{display:none}
+}
+@media (max-width:1099px){
+  .detail{position:fixed;left:8px;right:8px;bottom:calc(var(--tb) + 8px);z-index:30;max-height:56vh;overflow:auto;box-shadow:var(--shadow);border-color:var(--uv)}
+  .detail:not(.open){display:none}
+}
+@media (max-width:759px){
+  .wrap{gap:10px}
+  section,.card{padding:12px}
+  .transport{position:fixed;left:0;right:0;bottom:0;z-index:25;margin:0;padding:8px max(16px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));background:var(--panel);border-top:1px solid var(--line);box-shadow:var(--shadow)}
+  .btns{margin-top:4px}
+  .b{min-height:40px}
+  .caption{font-size:14px}
+  body{padding-bottom:calc(var(--tb) + 12px)}
+  .fellsec{order:-1}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><h1>YuCe Live</h1><span class="sub">journal of the run <b id="runName"></b></span></div>
+  <div class="chips">
+    <span class="chip">Recorded journal</span>
+    <span class="chip" id="chipFrame"></span>
+    <button class="chip ok" id="chipIntact" type="button"></button>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="read" aria-label="How to read this page">
+    <p class="banner" id="note" hidden></p>
+    <p class="lead">The journal of one run, played back frame by frame. A claim is accepted only with a quote: exact bytes of a document. When a text is withdrawn, everything that rested on it falls and stays here with the reason. What you see at a frame is what the kernel itself gives for that frame.</p>
+    <ul class="legend">
+      <li><i class="sw"></i><span><b>Stands</b>: accepted, and every ground under it stands.</span></li>
+      <li><i class="sw fell"></i><span><b>Fell</b>: lost a ground. It stays on the page with the reason.</span></li>
+      <li><i class="sw wd"></i><span><b>Withdrawn</b>: a quote whose text was taken back.</span></li>
+      <li><i class="sw nv"></i><span><b>No longer stands</b>: replaced by a new version or a later answer, or never stood.</span></li>
+      <li><i class="sw seal"></i><span><b>Seal</b>: the roots of the journal up to this frame.</span></li>
+    </ul>
+  </section>
+
+  <section class="journal" id="journal">
+    <h2>The journal <small id="jn"></small></h2>
+    <div class="strip" id="strip"><div class="rail" id="rail"><span class="wire" id="wire"></span></div></div>
+    <p class="fine" id="stripNote"></p>
+    <div class="transport" id="transport">
+      <p class="caption" id="caption" hidden></p>
+      <div class="scrub"><input type="range" id="rng" min="0" max="1" step="1" value="0" aria-label="Frame of the journal"><output id="rngOut" for="rng"></output></div>
+      <div class="btns">
+        <button class="b pri" id="bPlay" type="button">Play the run</button>
+        <button class="b" id="bPrevM" type="button" title="Previous seal or withdrawal" aria-label="Previous seal or withdrawal">|&#9664;</button>
+        <button class="b" id="bPrev" type="button" title="One frame back" aria-label="One frame back">&#9664;</button>
+        <button class="b" id="bNext" type="button" title="One frame forward" aria-label="One frame forward">&#9654;</button>
+        <button class="b" id="bNextM" type="button" title="Next seal or withdrawal" aria-label="Next seal or withdrawal">&#9654;|</button>
+        <select class="b" id="selSpeed" aria-label="Speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
+        <button class="b" id="bTour" type="button" aria-pressed="true">Captions</button>
+        <button class="b" id="bHist" type="button" aria-pressed="false">Show historical text from the journal</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="counters" id="counters" aria-live="polite"></div>
+
+  <div class="cols">
+    <div class="mainc">
+      <section class="mapsec">
+        <h2>What stands, and on what <small>Select anything to follow its threads.</small></h2>
+        <div class="view" id="view"></div>
+        <div class="map" id="map">
+          <svg id="threads" aria-hidden="true"></svg>
+          <div class="mapcols">
+            <div class="col"><h3>Documents and quotes (exact bytes)</h3><div id="colQ"></div></div>
+            <div class="col"><h3>Claims</h3><div id="colC"></div></div>
+            <div class="col"><h3>Answers</h3><div id="colA"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="fellsec">
+        <h2>What fell <small id="fellN"></small></h2>
+        <div class="steps" id="steps"></div>
+        <p class="fine">The same list by hand: <code>sbgk audit-read fallen --wal run.wal --since &lt;frame&gt;</code></p>
+      </section>
+
+      <section class="cov">
+        <h2>Coverage of the documents <small id="covAt"></small></h2>
+        <p class="none" id="covNone" hidden></p>
+        <div id="cov"></div>
+        <div class="cleg"><span><i class="u uq"></i>quoted</span><span><i class="u ue"></i>read, no quote</span><span><i class="u up"></i>waiting for or failed a second reading</span><span><i class="u ub"></i>left by the budget</span><span><i class="u uw"></i>withdrawn</span><span><i class="u"></i>not read yet</span></div>
+        <p class="fine">One cell is one part: a paragraph, a list item or a table row. A part counts once the kernel closes the reading task. The kernel's table has eight kinds; this page folds them into six. The same table by hand: <code>sbgk audit-read coverage --wal run.wal</code></p>
+      </section>
+    </div>
+
+    <aside>
+      <div class="card detail" id="detail" aria-live="polite"></div>
+      <section class="events">
+        <h2>Frame by frame</h2>
+        <div class="filters" id="filters">
+          <button class="b" type="button" data-f="key" aria-pressed="false">Key frames</button>
+          <button class="b" type="button" data-f="all" aria-pressed="false">All</button>
+          <button class="b" type="button" data-f="seal" aria-pressed="false">Seals</button>
+          <button class="b" type="button" data-f="withdraw" aria-pressed="false">Withdrawals</button>
+        </div>
+        <div class="evs" id="evs"></div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="trust" id="trust">
+    <div>
+      <h2>Where every state comes from</h2>
+      <ul id="trustList"></ul>
+    </div>
+    <div>
+      <h2>Not in the journal, so not on this page</h2>
+      <ul>
+        <li>A clock. Frames have an order, not a time.</li>
+        <li>Tasks handed out and not yet returned, and the texts of the tasks.</li>
+        <li>Hand-ins the kernel refused: a refused line stores nothing.</li>
+      </ul>
+      <h2>What this page does not measure</h2>
+      <ul>
+        <li>Whether a conclusion is true. The kernel checks bytes and registered dependencies, not meaning.</li>
+        <li>Whether the agents missed something in the parts they read.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+'use strict';
+const D = /*DATA*/null;
+const $ = (s) => document.querySelector(s);
+const DOCS = D.docs, Q = D.quotes, R = D.recs, P = D.periods, FR = D.frames, LAST = FR.length - 1;
+const QS = D.questions.map((q) => q.id), QT = Object.fromEntries(D.questions.map((q) => [q.id, q.text]));
+for (const r of Object.values(R)) {
+  if (r.k === 'answer' && !QS.includes(r.q)) { QS.push(r.q); QT[r.q] = r.q === '?' ? 'Answers whose question the journal does not name' : 'A question that is not in the list the run started with'; }
+}
+const BIG = !!D.big;
+const MAXCOL = 160;
+const U = { dash: '\u2013', ell: '\u2026', lq: '\u201c', rq: '\u201d', no: '\u2298', x: '\u2715', dot: '\u25cf', ring: '\u25cb', dotc: '\u00b7' };
+const num = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : 's'}`;
+const noun = (n, w) => (w === 'hypothesis' ? `${num(n)} ${n === 1 ? 'hypothesis' : 'hypotheses'}` : plural(n, w));
+const docOf = (id) => DOCS.find((d) => d.id === id) || { name: id || 'a document', units: 0 };
+const link = (id) => `<button class="lnk" type="button" data-id="${id}">${id}</button>`;
+const kindWord = { claim: 'claim', hypothesis: 'hypothesis', answer: 'answer' };
+const born = (id) => (Q[id] ? Q[id].f : R[id] ? R[id].f : Infinity);
+
+// BEGIN stateAt: what the page shows at frame f, read from the kernel's periods; check_states.mjs runs this very function
+function stateAt(f) {
+  const gone = {}, never = new Set(), here = new Set();
+  for (const id in P) {
+    const o = Q[id] || R[id];
+    if (!o || o.f > f) continue;
+    here.add(id);
+    let p = null;
+    for (const x of P[id]) if (x[0] <= f) p = x;
+    if (p === null) never.add(id);
+    else if (p[1] !== null && p[1] <= f) gone[id] = [p[1], p[2], p[3]];
+  }
+  return { gone, never, here };
+}
+// END stateAt
+
+// what ended at a frame: a withdrawal, a new version of a document, or records that fell or were replaced
+const reasonAt = (id, f) => { const p = (P[id] || []).find((x) => x[1] === f); return p ? p[2] : null; };
+const kindOf = (i) => {
+  const e = FR[i], ended = e.ended || [];
+  if (ended.some((id) => Q[id] && reasonAt(id, i) === 'withdrawn')) return 'withdraw';
+  if (ended.some((id) => Q[id] && reasonAt(id, i) === 'new_version')) return 'version';
+  if (e.seal) return 'seal';
+  if (e.k === 'close') return 'close';
+  if (e.k === 'genesis' || e.k === 'open') return e.k;
+  if (ended.length) return 'fall';
+  if (e.made && e.made.length) return 'rec';
+  if (e.task) return 'task';
+  return 'entry';
+};
+const answerFrames = new Set();
+FR.forEach((e, i) => { if ((e.made || []).some((id) => R[id] && R[id].k === 'answer')) answerFrames.add(i); });
+const endFrames = FR.map((e, i) => ((e.ended || []).length ? i : -1)).filter((i) => i >= 0);
+const KEY = new Set(['withdraw', 'version', 'fall', 'seal', 'close', 'open', 'genesis']);
+const isKey = (i) => KEY.has(kindOf(i)) || answerFrames.has(i);
+const keyFrames = FR.map((_, i) => i).filter(isKey);
+
+// the focused view of a long journal: what ever stopped standing, the answers, and what those rest on
+const focus = new Set();
+for (const id in P) for (const p of P[id]) if (p[1] !== null) focus.add(id);
+const ground = (id, seen) => { if (seen.has(id)) return; seen.add(id); focus.add(id); ((R[id] && R[id].on) || []).forEach((g) => ground(g, seen)); };
+{ const seen = new Set(); Object.keys(R).filter((id) => R[id].k === 'answer').forEach((id) => ground(id, seen)); }
+for (const id of [...focus]) if (R[id]) R[id].on.forEach((g) => focus.add(g));
+
+let F = LAST, sel = null, timer = null, tour = true, speed = 1, filter = BIG ? 'key' : 'all', view = BIG ? 'focus' : 'all';
+let S = stateAt(F);
+
+function levels(st, f) { // drawing only: 0 for a quote that went, one step more for each record whose ground fell in the same frame
+  const lv = {};
+  const lvl = (id, seen) => {
+    if (id in lv) return lv[id];
+    const g = st.gone[id];
+    if (!g || g[0] !== f || seen.has(id)) return 0;
+    seen.add(id);
+    lv[id] = g[1] !== 'basis' || !g[2].length ? 0 : 1 + Math.max(...g[2].map((b) => lvl(b, seen)));
+    return lv[id];
+  };
+  Object.keys(st.gone).forEach((id) => lvl(id, new Set()));
+  return lv;
+}
+const lastSeal = (f) => { for (let i = f; i >= 0; i--) if (FR[i].seal) return [FR[i].seal, i]; return null; };
+const covAt = (f) => { if (!D.coverage.length) return null; let c = D.coverage[0]; for (const x of D.coverage) if (x.at <= f) c = x; return c; };
+const answerText = (o) => (o.on.length ? o.on.slice(0, 2).map((c) => (R[c] ? R[c].t : '')).join(' ') + (o.on.length > 2 ? ` (+${o.on.length - 2} more claims)` : '')
+  : `No claims: ${o.note || 'the answer settles nothing'}`);
+// a record that stopped standing: how the page names it
+function fate(id, g) {
+  if (!g) return null;
+  if (Q[id]) return g[1] === 'withdrawn' ? { cls: 'wd', hide: true, st: `${U.no} withdrawn at frame ${num(g[0])}` } : { cls: 'nv', hide: false, st: `${U.ring} a new version of the document replaced these bytes at frame ${num(g[0])}` };
+  return g[1] === 'basis' ? { cls: 'fell', hide: true, st: `${U.x} fell at frame ${num(g[0])}` } : { cls: 'nv', hide: false, st: `${U.ring} replaced by a later answer at frame ${num(g[0])}` };
+}
+
+function evText(i) {
+  const e = FR[i], k = kindOf(i), who = e.a || 'kernel';
+  if (k === 'genesis') return `The run begins: ${plural(DOCS.length, 'document')}, ${plural(D.questions.length, 'question')}.`;
+  if (k === 'open') return 'The kernel wrote the settings of the run.';
+  if (k === 'close') return 'The run was closed.';
+  if (k === 'seal') return `Seal #${e.seal} (audit root ${e.root}${U.ell}).`;
+  const parts = [];
+  const ended = e.ended || [], qs = ended.filter((id) => Q[id]), fell = ended.filter((id) => R[id] && reasonAt(id, i) === 'basis'), repl = ended.filter((id) => R[id] && reasonAt(id, i) !== 'basis');
+  if (k === 'withdraw') parts.push(`${who} withdrew ${e.k === 'revoke' ? 'the quote of a record' : 'a text'} of ${docOf(Q[qs[0]].d).name}: ${plural(qs.length, 'quote')} went.`);
+  else if (k === 'version') parts.push(`A new version of ${docOf(Q[qs[0]].d).name}: ${plural(qs.length, 'quote')} no longer ${qs.length === 1 ? 'stands' : 'stand'}.`);
+  if (fell.length) parts.push(`${plural(fell.length, 'record')} fell.`);
+  if (repl.length) parts.push(`${plural(repl.length, 'record')} replaced by a later answer.`);
+  if (e.made && e.made.length) {
+    const a = e.made.find((id) => R[id] && R[id].k === 'answer');
+    if (a) {
+      const again = Object.values(R).some((o) => o.k === 'answer' && o.q === R[a].q && o.f < R[a].f);
+      parts.push(`${who}: ${again ? 'new answer' : 'answer'} to ${R[a].q} accepted.`);
+    } else {
+      const n = (k2) => e.made.filter((id) => (k2 === 'quote' ? Q[id] : R[id] && R[id].k === k2)).length;
+      const list = ['quote', 'claim', 'hypothesis'].filter((k2) => n(k2)).map((k2) => noun(n(k2), k2));
+      parts.push(`${who}: ${list.join(' and ')} accepted.`);
+    }
+  }
+  if (e.task) {
+    if (e.task.read) parts.push(`${e.task.by || who} finished reading ${docOf(e.task.read).name}; the kernel closed the task.`);
+    else if (e.task.answer) parts.push(`The kernel closed the answer task for ${e.task.answer}.` + (e.task.kept && e.task.kept.length ? ` It kept ${e.task.kept.join(', ')} from the old answer: still standing.` : ''));
+    else parts.push('The kernel closed a task.');
+  }
+  return parts.join(' ') || `${who}: ${e.k}.`;
+}
+const CAPTIONS = {};
+{
+  const first = (pred) => { for (let i = 1; i <= LAST; i++) if (pred(i)) return i; return -1; };
+  CAPTIONS[0] = 'The journal of one run. Nothing is written yet.';
+  const r = first((i) => (FR[i].made || []).some((id) => Q[id]));
+  if (r > 0) CAPTIONS[r] = 'An agent hands in quotes and claims. The kernel accepts a quote only as exact bytes of the document, and a claim only with a quote under it.';
+  const s = first((i) => FR[i].seal);
+  if (s > 0) CAPTIONS[s] = 'A seal: the roots of the journal up to this frame. Kept elsewhere, it lets anyone check the journal later.';
+  const a = first((i) => answerFrames.has(i));
+  if (a > 0) CAPTIONS[a] = 'An answer to a question. It rests on claims, and each claim rests on quotes. Every thread here is written in the journal.';
+  endFrames.forEach((w) => {
+    const k = kindOf(w);
+    CAPTIONS[w] = k === 'withdraw' ? 'A text is withdrawn. Everything that rested on it falls, step by step, and the questions it reached go back to be answered again.'
+      : k === 'version' ? 'A new version of a document replaces bytes that were quoted. What rested only on them no longer stands.'
+      : 'Records stop standing: the kernel names the ground each one lost.';
+  });
+  const k = first((i) => FR[i].task && FR[i].task.kept && FR[i].task.kept.length);
+  if (k > 0) CAPTIONS[k] = 'The kernel kept the part of the old answer that still stands and took only the new part from the agent.';
+  if (!CAPTIONS[LAST]) CAPTIONS[LAST] = `The last frame. audit-verify checked the whole journal when this page was made: ${D.verify.status}.`;
+}
+
+function shownIds() {
+  const ids = Object.keys(Q).concat(Object.keys(R)).filter((id) => born(id) <= F);
+  return view === 'focus' ? ids.filter((id) => focus.has(id)) : ids;
+}
+
+function nodeHtml(id, lv, cone, anim) {
+  const isQ = !!Q[id], o = isQ ? Q[id] : R[id], g = S.gone[id], fa = fate(id, g), never = S.never.has(id);
+  const hist = document.body.classList.contains('hist');
+  const cls = ['node', isQ ? 'quote' : o.k];
+  if (fa) cls.push(fa.cls); else if (never) cls.push('nv');
+  if (g && g[0] === F) cls.push('nf');
+  if (sel === id) cls.push('sel');
+  if (cone) cls.push(cone.has(id) ? 'hot' : 'dim');
+  if (anim && o.f === F) cls.push('born');
+  const raw = isQ ? `${U.lq}${esc(o.hit)}${U.rq}` : esc(o.k === 'answer' ? answerText(o) : o.t);
+  let t;
+  if (fa && fa.hide) t = hist ? `${raw}<span class="badge ${isQ ? 'gone' : 'lost'}">${isQ ? 'WITHDRAWN' : 'LOST SUPPORT'}</span>` : `Text hidden on this page: ${isQ ? 'withdrawn' : 'the record fell'}.`;
+  else t = isQ && !fa ? `${U.lq}<mark>${esc(o.hit)}</mark>${U.rq}` : raw;
+  const sub = isQ ? `${id} ${U.dotc} ${esc(o.by)} ${U.dotc} bytes ${num(o.a)}${U.dash}${num(o.b)}`
+    : `${id}${o.k === 'hypothesis' ? ` ${U.dotc} hypothesis` : ''} ${U.dotc} ${esc(o.by)} ${U.dotc} frame ${num(o.f)}${o.on.length ? ` ${U.dotc} on ${o.on.slice(0, 6).join(', ')}${o.on.length > 6 ? U.ell : ''}` : ''}`;
+  const st = fa ? fa.st : never ? `${U.ring} accepted, never stood: nothing under it stands` : isQ ? '' : `${U.dot} stands`;
+  return `<button type="button" class="${cls.join(' ')}" id="n-${id}" data-id="${id}" style="--lvl:${lv[id] || 0}"><span class="t">${t}</span><span class="sub">${sub}</span>${st ? `<span class="st">${st}</span>` : ''}</button>`;
+}
+const up = (id, acc) => { ((R[id] && R[id].on) || []).forEach((g) => { if (!acc.has(g)) { acc.add(g); up(g, acc); } }); return acc; };
+const down = (id, acc) => { for (const k in R) if (R[k].on.includes(id) && !acc.has(k)) { acc.add(k); down(k, acc); } return acc; };
+const capped = (ids, html) => ids.slice(0, MAXCOL).map(html).join('') + (ids.length > MAXCOL ? `<p class="more">+ ${num(ids.length - MAXCOL)} more not drawn</p>` : '');
+const standing = (id) => !S.gone[id] && !S.never.has(id);
+
+function render(anim) {
+  S = stateAt(F);
+  const g = S.gone, lv = levels(S, F);
+  const shown = new Set(shownIds());
+  const cone = sel && shown.has(sel) ? down(sel, up(sel, new Set([sel]))) : null;
+  document.body.classList.toggle('wave', !!(anim && endFrames.includes(F)));
+  $('#chipFrame').textContent = `frame ${num(F)} of ${num(LAST)}`;
+  const ls = lastSeal(F);
+  $('#jn').textContent = `frame ${num(F)}` + (ls ? ` ${U.dotc} last seal #${ls[0]} at frame ${num(ls[1])}` : ` ${U.dotc} no seal yet`);
+  const rail = $('#rail');
+  rail.querySelectorAll('.slip').forEach((s) => {
+    const a = +s.dataset.i, b = +(s.dataset.to || s.dataset.i);
+    s.classList.toggle('future', a > F);
+    s.classList.toggle('cur', a <= F && F <= b);
+    if (a <= F && F <= b) { const box = $('#strip'); if (box.scrollWidth > box.clientWidth) box.scrollLeft = s.offsetLeft - box.clientWidth / 2; }
+  });
+  const lastSlip = rail.querySelector('.slip:last-of-type');
+  $('#wire').style.width = (lastSlip ? lastSlip.offsetLeft + lastSlip.offsetWidth + 6 : 0) + 'px';
+  $('#rng').max = LAST; $('#rng').value = F;
+  $('#rngOut').textContent = `frame ${num(F)} / ${num(LAST)}`;
+  $('#bPlay').textContent = timer ? 'Pause' : F >= LAST ? 'Play the run' : 'Play';
+  $('#bTour').setAttribute('aria-pressed', String(tour));
+  const cap = $('#caption');
+  cap.hidden = !tour;
+  if (tour) { let c = ''; for (const i of Object.keys(CAPTIONS).map(Number).sort((x, y) => x - y)) if (i <= F) c = CAPTIONS[i]; cap.textContent = c; }
+  // counters
+  const recs = Object.keys(R).filter((id) => R[id].f <= F);
+  const fellN = recs.filter((id) => g[id] && g[id][1] === 'basis').length;
+  const otherN = recs.filter((id) => (g[id] && g[id][1] !== 'basis') || S.never.has(id)).length + Object.keys(g).filter((id) => Q[id] && g[id][1] !== 'withdrawn').length;
+  const cov = covAt(F), cells = cov ? DOCS.map((d) => (cov.cells[d.id] || '').split('')) : [];
+  const flat = cells.flat(), covered = flat.filter((x) => x === 'q' || x === 'e').length;
+  $('#counters').innerHTML =
+    `<div class="ct j"><b>${num(recs.filter(standing).length)}</b><span>claims and answers stand</span></div>` +
+    `<div class="ct r"><b>${num(fellN)}</b><span>fell: lost a ground</span></div>` +
+    `<div class="ct g"><b>${num(Object.keys(g).filter((id) => Q[id] && g[id][1] === 'withdrawn').length)}</b><span>quotes withdrawn</span></div>` +
+    (otherN ? `<div class="ct"><b>${num(otherN)}</b><span>replaced, or never stood</span></div>` : '') +
+    (cov ? `<div class="ct"><b>${num(covered)} / ${num(flat.length)}</b><span>parts read, at frame ${num(cov.at)}</span></div>` : '') +
+    `<div class="ct"><b>${ls ? '#' + ls[0] : U.dash}</b><span>${ls ? 'last seal, at frame ' + num(ls[1]) : 'no seal yet'}</span></div>`;
+  // the view switch
+  const all = Object.keys(Q).concat(Object.keys(R)).filter((id) => born(id) <= F).length;
+  $('#view').innerHTML = `<span>Showing:</span><button class="b" type="button" data-view="focus" aria-pressed="${view === 'focus'}">What stopped standing, and the answers</button><button class="b" type="button" data-view="all" aria-pressed="${view === 'all'}">Everything</button><span>${num(shown.size)} of ${num(all)} records${view === 'focus' && all > shown.size ? `; ${num(all - shown.size)} others not shown` : ''}</span>`;
+  // map: in the focused view what went or fell comes first, its document first
+  const hit = (d) => Object.keys(Q).some((id) => Q[id].d === d.id && g[id]);
+  const docs = view === 'focus' ? DOCS.filter(hit).concat(DOCS.filter((d) => !hit(d))) : DOCS;
+  const first = (x, y) => (view === 'focus' ? (g[y] ? 1 : 0) - (g[x] ? 1 : 0) : 0);
+  $('#colQ').innerHTML = docs.map((d) => {
+    const qs = Object.keys(Q).filter((id) => Q[id].d === d.id && shown.has(id)).sort((x, y) => first(x, y) || Q[x].a - Q[y].a);
+    return qs.length || view === 'all' ? `<div class="docb"><p class="dname">${esc(d.name)}${d.units ? ` <span>${U.dotc} ${plural(d.units, 'part')}</span>` : ''}</p>${qs.length ? capped(qs, (id) => nodeHtml(id, lv, cone, anim)) : '<p class="none">No quote yet.</p>'}</div>` : '';
+  }).join('') || '<p class="none">No quote yet.</p>';
+  const cl = Object.keys(R).filter((id) => R[id].k !== 'answer' && shown.has(id)).sort((x, y) => first(x, y) || R[x].f - R[y].f);
+  $('#colC').innerHTML = cl.length ? capped(cl, (id) => nodeHtml(id, lv, cone, anim)) : '<p class="none">No claim yet.</p>';
+  $('#colA').innerHTML = QS.map((q) => {
+    const as = Object.keys(R).filter((id) => R[id].k === 'answer' && R[id].q === q && shown.has(id));
+    const reached = Object.keys(R).some((id) => R[id].k === 'answer' && R[id].q === q && R[id].f <= F);
+    if (!D.questions.some((x) => x.id === q) && !reached) return '';
+    const open = as.length && as.every((id) => g[id] || S.never.has(id));
+    const qt = QT[q] || '', short = qt.length > 180 ? qt.slice(0, 180) + U.ell : qt;
+    return `<div class="qslot"><p class="qid" title="${esc(qt)}"><b>${esc(q)}</b> ${esc(short)}${open ? '<span>to answer again</span>' : ''}</p>${as.length ? as.map((id) => nodeHtml(id, lv, cone, anim)).join('') : '<p class="none">No answer yet.</p>'}</div>`;
+  }).join('');
+  drawThreads(shown, cone);
+  // what stopped standing, frame by frame
+  const ef = endFrames.filter((w) => w <= F);
+  if (!ef.length) { $('#fellN').textContent = ''; $('#steps').innerHTML = '<p class="none">Nothing has fallen.</p>'; }
+  else {
+    const qGone = Object.keys(g).filter((id) => Q[id]).length;
+    $('#fellN').textContent = `${plural(fellN, 'record')} fell, ${plural(qGone, 'quote')} went`;
+    let h = '';
+    for (const w of ef.slice(-12)) {
+      const st = stateAt(w), lw = levels(st, w), k = kindOf(w), ended = FR[w].ended || [];
+      const qs = ended.filter((id) => Q[id]), fell = ended.filter((id) => R[id] && reasonAt(id, w) === 'basis'), repl = ended.filter((id) => R[id] && reasonAt(id, w) !== 'basis');
+      const head = k === 'withdraw' ? `<div class="step s0"><b>Withdrawn at frame ${num(w)}</b>${esc(FR[w].a || 'the owner')}: a text of ${esc(docOf(Q[qs[0]].d).name)}. ${qs.length === 1 ? 'Quote' : 'Quotes'} ${qs.slice(0, 12).map(link).join(', ')}${qs.length > 12 ? U.ell : ''} went with it.</div>`
+        : k === 'version' ? `<div class="step s0"><b>New version at frame ${num(w)}</b>${esc(docOf(Q[qs[0]].d).name)}: ${qs.length === 1 ? 'quote' : 'quotes'} ${qs.slice(0, 12).map(link).join(', ')}${qs.length > 12 ? U.ell : ''} no longer ${qs.length === 1 ? 'stands' : 'stand'}.</div>`
+        : `<div class="step s0"><b>At frame ${num(w)}</b>${esc(evText(w))}</div>`;
+      h += `<div class="grp">${head}`;
+      const top = Math.max(0, ...fell.map((id) => lw[id] || 1));
+      for (let l = 1; l <= top; l++) {
+        const at = fell.filter((id) => (lw[id] || 1) === l);
+        if (!at.length) continue;
+        const kinds = new Set(at.map((id) => R[id].k));
+        const what = kinds.size === 1 ? kindWord[[...kinds][0]] : 'record';
+        h += `<div class="step"><b>Step ${l}: ${noun(at.length, what)} lost a ground</b>${at.slice(0, 40).map(link).join(', ')}${at.length > 40 ? ` and ${num(at.length - 40)} more` : ''}</div>`;
+      }
+      if (repl.length) h += `<div class="step again"><b>Replaced by a later answer</b>${repl.slice(0, 40).map(link).join(', ')}</div>`;
+      h += '</div>';
+    }
+    if (ef.length > 12) h = `<p class="more">The last 12 of ${num(ef.length)} frames where something stopped standing.</p>` + h;
+    const fellAnswers = QS.filter((q) => recs.some((id) => R[id].k === 'answer' && R[id].q === q && g[id] && g[id][1] === 'basis'));
+    if (fellAnswers.length) h += `<div class="grp"><div class="step again"><b>To answer again</b>${fellAnswers.map((q) => { const t0 = Math.min(...recs.filter((id) => R[id].k === 'answer' && R[id].q === q && g[id]).map((id) => g[id][0])); const a = recs.find((id) => R[id].k === 'answer' && R[id].q === q && standing(id) && R[id].f > t0); return a ? `${esc(q)}: answered again at frame ${num(R[a].f)} (${link(a)})` : `${esc(q)}: open`; }).join('<br>')}</div></div>`;
+    $('#steps').innerHTML = h;
+  }
+  // coverage
+  const names = { q: 'quoted', e: 'read, no quote', p: 'second reading', b: 'left by the budget', w: 'withdrawn', n: 'not read yet' };
+  $('#covNone').hidden = !!cov;
+  $('#covNone').textContent = cov ? '' : `No coverage table: ${D.coverage_note}.`;
+  $('#covAt').textContent = cov ? `at frame ${num(cov.at)}` + (cov.at !== F ? ` (taken at seals and where records stopped standing; the page is at frame ${num(F)})` : '') : '';
+  $('#cov').innerHTML = !cov ? '' : DOCS.map((d, i) => {
+    const u = cells[i], c = {};
+    u.forEach((x) => { c[x] = (c[x] || 0) + 1; });
+    return `<p class="dname">${esc(d.name)}</p><div class="cells" role="img" aria-label="${Object.keys(names).map((k) => `${c[k] || 0} ${names[k]}`).join(', ')}">${u.map((x) => `<i class="u u${x}"></i>`).join('')}</div><p class="cnt">${Object.keys(names).filter((k) => c[k]).map((k) => `${num(c[k])} ${names[k]}`).join(` ${U.dotc} `)}</p>`;
+  }).join('');
+  // events
+  let ev = '', n = 0;
+  for (let i = F; i >= 0 && n < 400; i--) {
+    const k = kindOf(i);
+    if (filter === 'key' ? !isKey(i) : filter === 'withdraw' ? !['withdraw', 'version', 'fall'].includes(k) : filter !== 'all' && k !== filter) continue;
+    n++;
+    ev += `<button type="button" class="ev ${['withdraw', 'version', 'fall'].includes(k) ? 'wd' : ''} ${['task', 'entry', 'open', 'genesis'].includes(k) ? 'quiet' : ''} ${i === F ? 'cur' : ''}" data-go="${i}"><b>${i}</b><span>${esc(evText(i))}</span></button>`;
+  }
+  $('#evs').innerHTML = ev || '<p class="none">Nothing yet.</p>';
+  document.querySelectorAll('#filters .b').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.f === filter)));
+  renderDetail(g);
+  measure();
+}
+
+function drawThreads(shown, cone) {
+  const svg = $('#threads');
+  if (!matchMedia('(min-width: 760px)').matches || shown.size > 400) { svg.innerHTML = ''; return; }
+  const map = $('#map'), base = map.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${map.clientWidth} ${map.clientHeight}`);
+  let h = '';
+  for (const id in R) {
+    if (!shown.has(id)) continue;
+    const to = document.getElementById('n-' + id);
+    if (!to) continue;
+    const b = to.getBoundingClientRect();
+    for (const gr of R[id].on) {
+      const from = document.getElementById('n-' + gr);
+      if (!from) continue;
+      const a = from.getBoundingClientRect();
+      const x1 = a.right - base.left, y1 = a.top + a.height / 2 - base.top, x2 = b.left - base.left, y2 = b.top + b.height / 2 - base.top, dx = (x2 - x1) / 2;
+      const cls = [];
+      if (!standing(id)) cls.push(standing(gr) ? 'idle' : 'fellp');
+      if (cone) cls.push(cone.has(id) && cone.has(gr) ? 'hot' : 'dim');
+      h += `<path class="${cls.join(' ')}" d="M${x1.toFixed(1)} ${y1.toFixed(1)}C${(x1 + dx).toFixed(1)} ${y1.toFixed(1)} ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`;
+    }
+  }
+  svg.innerHTML = h;
+}
+
+function cmd(text) { return `<div class="cmd"><code>${esc(text)}</code><button class="b" type="button" data-copy="${esc(text)}">Copy</button></div>`; }
+function renderDetail(g) {
+  const d = $('#detail');
+  if (!sel || born(sel) > F) {
+    d.classList.remove('open');
+    d.innerHTML = '<p class="kind">Details</p><p class="kv">Select a quote, a claim or an answer. You will see what it rests on, what rests on it, and the commands that give the same answer from the journal.</p>';
+    return;
+  }
+  d.classList.add('open');
+  const hist = document.body.classList.contains('hist');
+  const x = `<button class="b x" type="button" id="bClose" aria-label="Close details">${U.x}</button>`;
+  const word = (id) => (S.gone[id] ? fate(id, S.gone[id]).st.split(' at frame')[0] : S.never.has(id) ? `${U.ring} never stood` : `${U.dot} stands`);
+  const list = (ids) => ids.slice(0, 30).map((id) => `${link(id)} <span class="kv">${word(id)}</span>`).join('<br>') + (ids.length > 30 ? `<br><span class="kv">and ${num(ids.length - 30)} more</span>` : '') || '<span class="kv">nothing</span>';
+  const deps = Object.keys(R).filter((k) => R[k].f <= F && R[k].on.includes(sel));
+  const o = Q[sel] || R[sel], why = g[sel], fa = fate(sel, why);
+  const cmds = cmd(`sbgk audit-read record --wal run.wal --record ${o.kid}`) + cmd(`sbgk audit-read dependents --wal run.wal --record ${o.kid}`) + (why ? cmd(`sbgk audit-read fallen --wal run.wal --since ${why[0]}`) : '');
+  if (Q[sel]) {
+    const q = Q[sel];
+    const ctx = q.pre !== undefined ? `${esc(q.pre)}<mark>${esc(q.hit)}</mark>${esc(q.post)}` : `<mark>${esc(q.hit)}</mark>`;
+    d.innerHTML = `${x}<p class="kind">Quote ${sel}</p><p class="big">${esc(docOf(q.d).name)}, bytes ${num(q.a)}${U.dash}${num(q.b)}</p>` +
+      (fa && fa.hide ? `<div class="box wd">${fa.st}.${hist ? ` It was: ${U.lq}${esc(q.hit)}${U.rq}.` : ' The text is hidden on this page.'} The journal still keeps it: a withdrawal is not an erasure.</div>`
+        : fa ? `<p class="ctx">${ctx}</p><div class="box wd">${fa.st}.</div>`
+        : `<p class="ctx">${ctx}</p><p class="kv">${U.dot} Stands. Quoted by ${esc(q.by)} at frame ${num(q.f)}. The quote is these bytes, not a retelling.</p>`) +
+      `<p class="dl"><b>Rests on it</b>${list(deps)}</p><p class="kv">Kernel id <span class="mono">${q.kid}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
+    return;
+  }
+  const r = R[sel], hidden = fa && fa.hide && !hist;
+  let h = `${x}<p class="kind">${r.k === 'answer' ? 'Answer to ' + esc(r.q) : kindWord[r.k]} ${sel}</p><p class="big">${hidden ? 'Text hidden on this page.' : esc(r.k === 'answer' ? answerText(r) : r.t)}</p>` +
+    `<p class="kv">${r.k === 'answer' ? `${esc(r.q)}: ${esc(QT[r.q] || '')}<br>` : ''}Handed in by ${esc(r.by)}, accepted at frame ${num(r.f)}.${r.part ? ` Part of the answer ${r.part.map(link).join(', ')}.` : ''}</p>`;
+  if (fa && why[1] === 'basis') {
+    h += `<div class="box fell">${fa.st}. Lost: ${why[2].map(link).join(', ')}.`;
+    if (r.k === 'answer') { const a = Object.keys(R).find((k) => R[k].f <= F && R[k].k === 'answer' && R[k].q === r.q && standing(k) && R[k].f > why[0]); h += a ? ` ${esc(r.q)} was answered again at frame ${num(R[a].f)}: ${link(a)}.` : ` ${esc(r.q)} is to be answered again.`; }
+    h += `${hist ? '' : ' The text is hidden here;'} the journal still keeps it.</div>`;
+  } else if (fa) h += `<div class="box wd">${fa.st}.</div>`;
+  else if (S.never.has(sel)) h += `<p class="kv">${U.ring} Accepted, but it never stood: the kernel gave it no period, so nothing under it stands.</p>`;
+  else h += `<p class="kv">${U.dot} Stands: every ground under it stands.</p>`;
+  h += `<p class="dl"><b>Rests on</b>${list(r.on)}</p>`;
+  if (r.k !== 'answer') {
+    h += r.on.filter((q) => Q[q] && !S.gone[q]).slice(0, 4).map((q) => `<p class="ctx">${Q[q].pre !== undefined ? esc(Q[q].pre) : ''}<mark>${esc(Q[q].hit)}</mark>${Q[q].post !== undefined ? esc(Q[q].post) : ''}<br><span class="kv">${esc(docOf(Q[q].d).name)}, bytes ${num(Q[q].a)}${U.dash}${num(Q[q].b)}</span></p>`).join('');
+    h += `<p class="dl"><b>Rests on it</b>${list(deps)}</p>`;
+  } else if (r.note) h += `<p class="kv">What the answer leaves open, in the agent's words: ${esc(r.note)}</p>`;
+  h += `<p class="kv">Kernel id <span class="mono">${r.kid}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
+  d.innerHTML = h;
+}
+
+function measure() {
+  const t = $('#transport');
+  document.documentElement.style.setProperty('--tb', (getComputedStyle(t).position === 'fixed' ? t.offsetHeight : 0) + 'px');
+}
+function go(f, anim) { F = Math.max(0, Math.min(LAST, f)); render(anim); }
+function stop() { clearTimeout(timer); timer = null; }
+function nextFrame(f) { if (!BIG) return f + 1; const k = keyFrames.find((i) => i > f); return k === undefined ? LAST : k; }
+function tick() {
+  if (F >= LAST) { stop(); render(false); return; }
+  go(nextFrame(F), true);
+  const k = kindOf(F);
+  let wait = ['task', 'entry', 'open'].includes(k) ? 700 : 1500;
+  if (['withdraw', 'version', 'fall'].includes(k)) wait = tour ? 6500 : 4000;
+  if (tour && CAPTIONS[F]) wait = Math.max(wait, 3800);
+  timer = setTimeout(tick, wait / speed);
+}
+function play() {
+  stop();
+  if (F >= LAST) { F = 0; render(false); timer = setTimeout(tick, tour ? 2600 / speed : 600); }
+  else timer = setTimeout(tick, 300);
+  render(false);
+}
+function mark(dir) {
+  for (let i = F + dir; i >= 0 && i <= LAST; i += dir) if (['seal', 'withdraw', 'version', 'fall', 'close'].includes(kindOf(i))) return go(i, dir > 0);
+  go(dir > 0 ? LAST : 0, false);
+}
+
+// the strip: one slip a frame; a long journal keeps its key frames and folds the frames between them
+$('#runName').textContent = D.run || '';
+$('#chipIntact').textContent = `\u2713 audit-verify: ${D.verify.status}`;
+if (D.note) { $('#note').hidden = false; $('#note').textContent = D.note; }
+{
+  let h = '';
+  const slip = (i) => `<button type="button" class="slip k-${kindOf(i)}" data-i="${i}" title="Frame ${i}: ${esc(evText(i))}" aria-label="Frame ${i}"></button>`;
+  if (!BIG) for (let i = 1; i <= LAST; i++) h += slip(i);
+  else {
+    let from = null;
+    const flush = (to) => { if (from === null) return; const n = to - from + 1; h += `<button type="button" class="slip seg" data-i="${from}" data-to="${to}" style="flex-basis:${Math.min(80, 6 + Math.round(Math.sqrt(n) * 4))}px" title="Frames ${from}${U.dash}${to}: ${n} frames" aria-label="Frames ${from} to ${to}"></button>`; from = null; };
+    for (let i = 1; i <= LAST; i++) { if (isKey(i)) { flush(i - 1); h += slip(i); } else if (from === null) from = i; }
+    flush(LAST);
+  }
+  $('#rail').insertAdjacentHTML('beforeend', h);
+  $('#stripNote').textContent = BIG ? `${num(LAST)} frames. Seals, withdrawals, falls and answers are slips of their own; the frames between them are folded into grey bars. Play steps from one key frame to the next. The journal keeps no clock: a position is a frame number, not a time.`
+    : 'One slip is one frame; small grey slips are the kernel closing a task. The journal keeps no clock: a position is a frame number, not a time.';
+}
+{
+  const v = D.verify, ch = D.checked;
+  const compared = !ch.frames ? 'The comparison with <code>sbgk audit-prov --upto</code> was turned off when this page was made.'
+    : `When the page was made, this was compared with <code>sbgk audit-prov --upto N+1</code>, the export of the first frames alone, ${ch.all ? 'at every frame' : `at ${plural(ch.frames, 'frame')}: every seal, every frame where a record stopped standing, and the last frame`}, and found equal.`;
+  $('#trustList').innerHTML = [
+    `<b>The kernel</b> gives every state shown: what stands, what fell and why, at each frame. The page reads the records and the periods in which each stood from <code>sbgk audit-prov</code>. ${compared} The page works out only how to draw them: the steps of a fall, the focused view and the counters.`,
+    `<b>The journal</b> was checked by <code>sbgk audit-verify</code> when the page was made: ${esc(v.status)}, ${num(v.entries)} frames, ${num(v.records)} records.<br><span class="mono">audit root ${esc(String(v.audit_root).slice(0, 24))}${U.ell}<br>engine root ${esc(String(v.engine_root).slice(0, 24))}${U.ell}<br>journal head ${esc(String(v.wal_head).slice(0, 24))}${U.ell}</span>`,
+    D.coverage.length ? 'Coverage is <code>sbgk audit-read coverage</code> over the first frames of the journal.' : `No coverage table: ${esc(D.coverage_note)}.`,
+    D.docs_shown ? 'Quotes are shown in their lines of the documents, after the SHA-256 of each document was checked against the journal.' : 'The documents were not given to the page: a quote is shown as its bytes alone.',
+    'The question of each answer is the one the kernel named when it closed the answer task, or else the one handed in with the answer.',
+    `Made by ${esc(D.kernel)}. The page only reads: it cannot change the journal and makes no network request; its content security policy forbids them.`,
+  ].concat(D.not_shown && D.not_shown.question ? [`Not drawn: ${plural(D.not_shown.question, 'question')} the agents recorded as open; they never stand.`] : []).map((x) => `<li>${x}</li>`).join('');
+}
+
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('button');
+  if (!t) return;
+  if (t.dataset.copy !== undefined) {
+    const done = () => { t.textContent = 'Copied'; setTimeout(() => { t.textContent = 'Copy'; }, 1500); };
+    try { navigator.clipboard.writeText(t.dataset.copy).then(done, () => {}); } catch (e) { /* the text stays selectable */ }
+    return;
+  }
+  if (t.dataset.id) { stop(); sel = sel === t.dataset.id && t.classList.contains('node') ? null : t.dataset.id; if (view === 'focus' && !focus.has(sel)) view = 'all'; render(false); }
+  else if (t.dataset.i) { stop(); go(+t.dataset.i, false); }
+  else if (t.dataset.go) { stop(); go(+t.dataset.go, false); }
+  else if (t.dataset.f) { filter = t.dataset.f; render(false); }
+  else if (t.dataset.view) { view = t.dataset.view; render(false); }
+  else if (t.id === 'chipIntact') { $('#trust').scrollIntoView({ behavior: 'smooth' }); }
+  else if (t.id === 'bClose') { sel = null; render(false); }
+  else if (t.id === 'bPlay') { if (timer) { stop(); render(false); } else play(); }
+  else if (t.id === 'bTour') { tour = !tour; render(false); }
+  else if (t.id === 'bHist') { const on = document.body.classList.toggle('hist'); t.setAttribute('aria-pressed', String(on)); render(false); }
+  else if (t.id === 'bPrev') { stop(); go(F - 1, false); }
+  else if (t.id === 'bNext') { stop(); go(F + 1, true); }
+  else if (t.id === 'bPrevM') { stop(); mark(-1); }
+  else if (t.id === 'bNextM') { stop(); mark(1); }
+});
+$('#rng').addEventListener('input', (e) => { stop(); go(+e.target.value, false); });
+$('#selSpeed').addEventListener('change', (e) => { speed = +e.target.value; });
+addEventListener('resize', () => render(false));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel) { sel = null; render(false); } });
+// the film view, for recording: the journal and the map only, with the historical text shown
+if (window.location.hash === '#film') { document.body.classList.add('film', 'hist'); $('#bHist').setAttribute('aria-pressed', 'true'); }
+render(false);
+})();
+</script>
+</body>
+</html>

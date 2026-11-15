@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+* **YuCe Live: a recorded run, played back frame by frame as one page** (`examples/live-journal/`). `make_page.py --wal run.wal
+  --out page.html` turns a journal into one offline HTML page: what the kernel accepted, what each claim rests on, what fell when
+  a text was withdrawn and why, the coverage of the documents, and the seals, with a slider and a play button. The states come
+  from the kernel: the records and their standing periods from `sbgk audit-prov`, coverage from `sbgk audit-read coverage`. The
+  generator compares its reading of the periods with `sbgk audit-prov --upto N+1` at every frame of a short journal, and at every
+  seal and every frame where a record stopped standing in a long one; `check_states.mjs` runs the page's own script on the
+  kernel's states, at every frame of the demo in CI. A journal that does not verify gets no page. A long journal opens on what
+  stopped standing and on the answers. The page makes no network requests. `demo.py` records a run of three scripted readers and
+  an owner, with no model, and makes its page. The kernel, its rules and the journal format do not change.
+
 ## 0.2.2 (2026-11-15)
 
 * **`yuce mcp`: one agent on its own folder from one line of an MCP client's configuration.** Before, one agent needed three steps:

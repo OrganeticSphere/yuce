@@ -80,6 +80,12 @@ jobs:
           python examples/revoke-and-replay/check_inspector.py report.json
           cargo run --release -p sbgk-core --example findings_gate
 
+      - name: YuCe Live demo (a recorded run played back as one page, checked against the kernel at every frame; no model calls)
+        run: |
+          python examples/live-journal/demo.py --html live_journal.html --states live_states.json
+          node examples/live-journal/check_states.mjs live_journal.html live_states.json
+          python examples/live-journal/check_page.py live_journal.html
+
       - name: Published journals (every recorded run of a release, against its receipts, by this tree's binary)
         if: github.repository == 'OrganeticSphere/yuce' && runner.os == 'Linux'
         env:
