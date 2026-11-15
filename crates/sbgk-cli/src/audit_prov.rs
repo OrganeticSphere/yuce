@@ -28,13 +28,7 @@ pub fn cmd_audit_prov(a: &Args) {
             std::process::exit(1);
         }
     };
-    // written beside it first, then moved over it: a reader never finds half a file
-    let partial = PathBuf::from(format!("{}.partial", out.display()));
-    if same_file(&partial, Path::new(&wal)) {
-        refuse("the export's partial file would be written over the journal: give --out another path");
-    }
-    if let Err(e) = std::fs::write(&partial, export.text()).and_then(|_| std::fs::rename(&partial, &out)) {
-        let _ = std::fs::remove_file(&partial);
+    if let Err(e) = write_beside(&out, &export.text()) {
         refuse(&format!("cannot write the export: {e}"));
     }
     let mut summary = json!({"status": "EXPORTED", "format": prov::FORMAT, "out": out.display().to_string(), "wal": wal, "run_id": export.run_id,
@@ -43,4 +37,31 @@ pub fn cmd_audit_prov(a: &Args) {
         summary["live"] = super::audit_mcp::live_read(export.frames, None);
     }
     println!("{summary}");
+}
+
+/// Writes `text` to a file of its own beside `out`, then moves it over `out`: a reader never finds half a file. The file beside is
+/// created new, under a name no file has: an existing file is never opened, so a name that is another link to the journal, or a
+/// file someone keeps, is never written (Codex review of 32aff362, PROV-01: `<out>.partial`, a hard link to the journal, was
+/// truncated and the journal lost). On a failure only the file this call created is removed. A move over `out` replaces the name
+/// `out`, never the bytes of a file another name holds.
+fn write_beside(out: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let folder = out.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "export".to_string());
+    for attempt in 0..1000u32 {
+        let partial = folder.join(format!(".{name}.{}-{attempt}.partial", std::process::id()));
+        let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&partial) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        let written = file.write_all(text.as_bytes()).and_then(|()| file.sync_all());
+        drop(file);
+        let moved = written.and_then(|()| std::fs::rename(&partial, out));
+        if moved.is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+        return moved;
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "no free name for the file written beside the export"))
 }

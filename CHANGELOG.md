@@ -29,7 +29,8 @@
 * **Provenance export: the journal as W3C PROV-O.** `sbgk audit-prov --wal run.wal [--out file] [--upto n]` writes one JSON-LD file
   that any RDF tool reads, rebuilt from the journal at any time:
   * who wrote each record, in which frame, and what it rests on;
-  * on which bytes of which document version an observation stands (`prov:wasQuotedFrom`);
+  * on which bytes of which document version an observation stands (`prov:wasQuotedFrom`), every version a batch puts being a
+    version of its own;
   * each period in which a record stood, and the frame that ended it: a withdrawal, a new version of the document, or grounds
     that stopped standing.
 

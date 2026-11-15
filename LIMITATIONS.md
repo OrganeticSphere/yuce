@@ -92,7 +92,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   only the dependencies the records declare. It has no times, because the journal holds none; frames are ordered by their
   number. It leaves out the graph builder's links and concepts, the server's own checkpoints and the texts of the directives. In
   it a record is never invalidated, only a period in which it stood: a record stands again when its document is put back to the
-  bytes it quotes. Like the journal, it holds the text of every quote, withdrawn ones too.
+  bytes it quotes. Standing is read at the end of each frame, the points the kernel's projections name: an observation that one
+  batch accepted and made fall has no period, though it still quotes its version. Like the journal, it holds the text of every
+  quote, withdrawn ones too.
 * **The live support of a repair is found by words too.** It can miss a claim worded otherwise and bring one that only sounds
   alike; the repair is told so and answers from the quotes. It holds at most 12 claims, 4 per fallen row: when many rows fall,
   the later rows in id order may get none, and a claim too large for what the kept rows leave of the window is left out. A
