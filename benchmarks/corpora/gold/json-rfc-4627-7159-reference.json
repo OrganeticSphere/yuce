@@ -1,0 +1,71 @@
+{
+ "case": "JSON RFC 4627 -> 7159 -> 8259",
+ "prepared": "2026-11-15 (market session), before any run; not to be changed after results",
+ "sources": {
+  "rfc4627.txt": {
+   "bytes": 16319,
+   "sha256": "a31e840012e96413836c40f31d0506d355f3d9c4853e80d77240b59fff96518d"
+  },
+  "rfc7159.txt": {
+   "bytes": 27451,
+   "sha256": "50aa72534210945457f5460a50f263c1d6cf87a3da8c814c1d9f54cb04f22342"
+  },
+  "rfc8259.txt": {
+   "bytes": 28360,
+   "sha256": "61a5378f4255c720beb2a4b4a63b29540147c140f36988bf086291989b4cd2d7"
+  }
+ },
+ "reference": "official change lists: RFC 7159 Appendix A (from 4627), RFC 8259 Appendix A (from 7159)",
+ "steps": [
+  {
+   "id": "W1",
+   "step": "4627->7159",
+   "kind": "withdraw",
+   "why": "JSON text is no longer limited to an object or array (7159 App. A)",
+   "file": "rfc4627.txt",
+   "quote": "A JSON text is a serialized object or array.",
+   "byte": 2386,
+   "occurrences": 1
+  },
+  {
+   "id": "W2",
+   "step": "4627->7159",
+   "kind": "withdraw",
+   "why": "the eval() safety statement was removed by erratum 3607 (7159 App. A)",
+   "file": "rfc4627.txt",
+   "quote": "A JSON text can be safely passed into JavaScript's eval() function",
+   "byte": 10174,
+   "occurrences": 1
+  },
+  {
+   "id": "W3",
+   "step": "4627->7159",
+   "kind": "withdraw",
+   "why": "encoding section rewritten as 'String and Character Issues' (7159 App. A)",
+   "file": "rfc4627.txt",
+   "quote": "JSON text SHALL be encoded in Unicode.",
+   "byte": 8190,
+   "occurrences": 1
+  },
+  {
+   "id": "W4",
+   "step": "7159->8259",
+   "kind": "withdraw",
+   "why": "UTF-8 is required when transmitted over a network (8259 App. A, Section 8.1)",
+   "file": "rfc7159.txt",
+   "quote": "JSON text SHALL be encoded in UTF-8, UTF-16, or UTF-32.",
+   "byte": 15844,
+   "occurrences": 1
+  },
+  {
+   "id": "C1",
+   "step": "all",
+   "kind": "control: unchanged in all three",
+   "why": "must stay standing",
+   "file": "rfc4627.txt",
+   "quote": "The names within an object SHOULD be unique.",
+   "byte": 4075,
+   "occurrences": 1
+  }
+ ]
+}
