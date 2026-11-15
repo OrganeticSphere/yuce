@@ -20,6 +20,12 @@
   staged before it is written, so a refusal is the withdrawal's own. A command written after the preview can change what the
   withdrawal does. The tool is the owner's, it is open in `yuce mcp` with the reading tools, and the Python client has
   `preview_withdrawal`. The kernel's rules and the journal format do not change.
+* **The reading tools of the server write nothing.** Before, every call of `audit-serve` ended by writing what the dispatcher keeps
+  pending, for example an agent's failure found while its long poll waits, so a reading tool could add an entry to the journal.
+  Now `audit_record`, `audit_links`, `audit_dependents`, `audit_active_claims`, `audit_diff`, `audit_fallen`, `audit_coverage`,
+  `audit_withdraw_preview` and `audit_status` with `telemetry` write nothing; what is pending is written by the next call that
+  coordinates or writes. `audit_status` without `telemetry` moves the run on as before, so it can write the server's own entries:
+  a circle's step, the attestation at the end, an agent's failure. Its tool description now says so.
 * **NOTICE and the README name the product names.** YuCe and Organetic Sphere are product names and trademarks of Aset Uisin;
   the license is Apache-2.0 as before, and its Section 6 already covers the names.
 
