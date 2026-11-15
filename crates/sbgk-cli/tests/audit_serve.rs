@@ -1591,6 +1591,28 @@ fn the_prov_export_of_a_journal_is_the_same_file_every_time_and_stands_what_the_
     let (code, refused) = prov(&["--out", &wal]);
     assert_eq!((code, refused["status"].as_str()), (Some(1), Some("REFUSED")), "{refused}");
     assert_eq!(std::fs::read(&wal).unwrap(), before);
+    // Codex review of 32aff362, PROV-01: a file beside the output that is another link to the journal is never written, a file
+    // someone keeps beside it neither, and an output that is another link to the journal replaces that name, not the journal
+    let linked = fx.p("linked.prov.jsonld");
+    std::fs::hard_link(&wal, format!("{linked}.partial")).unwrap();
+    let kept = fx.p("kept.prov.jsonld");
+    std::fs::write(format!("{kept}.partial"), "kept").unwrap();
+    let alias = fx.p("alias.prov.jsonld");
+    std::fs::hard_link(&wal, &alias).unwrap();
+    for out in [&linked, &kept, &alias] {
+        let (code, made) = prov(&["--out", out]);
+        assert_eq!((code, made["status"].as_str()), (Some(0), Some("EXPORTED")), "{made}");
+        assert_eq!(std::fs::read(out).unwrap(), text, "{out} holds the export");
+        assert_eq!(std::fs::read(&wal).unwrap(), before, "the journal is untouched after the export to {out}");
+    }
+    assert_eq!(std::fs::read(format!("{linked}.partial")).unwrap(), before, "the other link to the journal is untouched");
+    assert_eq!(std::fs::read_to_string(format!("{kept}.partial")).unwrap(), "kept");
+    let left: Vec<String> = std::fs::read_dir(std::path::Path::new(&wal).parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with('.') && n.ends_with(".partial"))
+        .collect();
+    assert!(left.is_empty(), "no file written beside an export is left: {left:?}");
 }
 
 /// The index beside a journal (SPEC_V02_STEP6_7 section 6.5): built on a prefix and brought up to the whole journal it equals one

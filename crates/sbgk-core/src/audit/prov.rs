@@ -122,11 +122,52 @@ fn sorted(mut ids: Vec<String>) -> Value {
     json!(ids)
 }
 
+/// A version of a document as a frame put it: `op` is the operation of a batch that put it (0 outside a batch), so two versions
+/// one batch put are two entities.
 struct Version {
     doc: String,
     frame: usize,
+    op: usize,
     id: Hash,
     previous: Option<usize>,
+}
+
+/// What a frame did, from the outcome the kernel recorded for it: the documents it put, in the order of its operations, with the
+/// version each put made (the version `None` when the outcome does not name it), the records each operation accepted, and how
+/// many operations it has. A batch stops at a failed operation, and what follows it was not applied.
+struct FrameOps {
+    puts: Vec<(usize, String, Option<Hash>)>,
+    accepted: Vec<(usize, String)>,
+    operations: usize,
+}
+
+fn frame_ops(payload: &Value) -> FrameOps {
+    let (command, outcome) = (&payload["command"], &payload["outcome"]);
+    let mut ops = FrameOps { puts: Vec::new(), accepted: Vec::new(), operations: 1 };
+    if outcome["kind"] == "error" {
+        return ops;
+    }
+    let result = &outcome["result"];
+    let version = |r: &Value| r["document_version"].as_str().and_then(crate::hash::from_hex);
+    match command["kind"].as_str() {
+        Some("put_document") => ops.puts.push((0, command["doc_id"].as_str().unwrap_or_default().to_string(), version(result))),
+        Some("batch") => {
+            let operations = command["operations"].as_array().map(Vec::as_slice).unwrap_or_default();
+            ops.operations = operations.len();
+            let results = result["results"].as_array().map(Vec::as_slice).unwrap_or_default();
+            let applied = result["accepted_operations"].as_u64().unwrap_or(0) as usize;
+            for (j, (operation, r)) in operations.iter().zip(results).take(applied).enumerate() {
+                if operation["kind"] == "put_document" {
+                    ops.puts.push((j, operation["doc_id"].as_str().unwrap_or_default().to_string(), version(r)));
+                }
+                for id in r["accepted"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    ops.accepted.push((j, id.to_string()));
+                }
+            }
+        }
+        _ => {}
+    }
+    ops
 }
 
 /// A period in which a record stands: from the frame where it began, to the frame where it stopped, why, and the grounds that
@@ -176,19 +217,35 @@ pub fn export_at(path: &Path, upto: Option<usize>) -> KResult<ProvExport> {
     let mut open: Vec<Option<usize>> = Vec::new();
     let mut prev: Vec<bool> = Vec::new();
     let mut position: HashMap<RecordId, usize> = HashMap::new();
+    // the operation of a batch that accepted a record (records accepted outside a batch are at operation 0)
+    let mut record_op: HashMap<String, usize> = HashMap::new();
     let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, _| {
         let k = m - 1;
         if k >= frames {
             return;
         }
         counts.push(state.record_count());
-        for (doc, id) in state.document_versions() {
-            if current.get(&doc).map(|c| c.0) != Some(id) {
-                let previous = current.get(&doc).map(|c| c.1);
-                current.insert(doc.clone(), (id, versions.len()));
-                versions.push(Version { doc, frame: k, id, previous });
+        // the versions in the order the frame put them: a batch can put a document more than once, and the state at the frame's
+        // end shows the last one only (Codex review of 32aff362, PROV-02: an observation on the version in between lost its source)
+        let ops = if k == 0 { FrameOps { puts: Vec::new(), accepted: Vec::new(), operations: 0 } } else { frame_ops(&scan.payloads[k]) };
+        let mut add = |doc: &str, op: usize, id: Hash| {
+            if current.get(doc).map(|c| c.0) != Some(id) {
+                let previous = current.get(doc).map(|c| c.1);
+                current.insert(doc.to_string(), (id, versions.len()));
+                versions.push(Version { doc: doc.to_string(), frame: k, op, id, previous });
+            }
+        };
+        for (op, doc, id) in &ops.puts {
+            if let Some(id) = id {
+                add(doc, *op, *id);
             }
         }
+        // the genesis, and a put whose outcome names no version (journals of the first formats): the version at the frame's end,
+        // after its operations
+        for (doc, id) in state.document_versions() {
+            add(&doc, ops.operations, id);
+        }
+        record_op.extend(ops.accepted.into_iter().map(|(op, id)| (id, op)));
         for i in position.len()..state.record_count() {
             position.insert(state.record_at(i).id, i);
         }
@@ -229,7 +286,7 @@ pub fn export_at(path: &Path, upto: Option<usize>) -> KResult<ProvExport> {
     let record_iri = |id: &RecordId| format!("{base}record:{}", to_hex(&id.0));
     let agent_iri = |a: &str| format!("{base}agent:{}", part(a));
     let doc_iri = |d: &str| format!("{base}doc:{}", part(d));
-    let version_iri = |v: &Version| format!("{base}version:{}:{}", part(&v.doc), v.frame);
+    let version_iri = |v: &Version| format!("{base}version:{}:{}:{}", part(&v.doc), v.frame, v.op);
     let seal_iri = |n: usize| format!("{base}seal:{n}");
     let mut nodes: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
     let mut named: BTreeSet<usize> = BTreeSet::new();
@@ -284,15 +341,20 @@ pub fn export_at(path: &Path, upto: Option<usize>) -> KResult<ProvExport> {
             set(&mut n, "yuce:to", json!(record_iri(to)));
         }
         if let Some((_, version, start, end)) = state.evidence_binding(&r.id) {
-            // the version current when the observation was accepted: the last one of its document put by then with these bytes
+            // the version current when the observation was accepted: the last one of its document with these bytes put before the
+            // record's frame, or before its operation in the same batch. An observation always has one: an export without it would
+            // lose what the observation quotes, so there is no export (Codex review of 32aff362, PROV-02)
+            let at = (k, record_op.get(&to_hex(&r.id.0)).copied().unwrap_or(0));
             let quoted = r
                 .doc_id
                 .as_deref()
                 .and_then(|d| by_doc.get(d))
-                .and_then(|list| list.iter().rev().map(|v| &versions[*v]).find(|v| v.frame <= k && v.id == version));
-            if let Some(v) = quoted {
-                set(&mut n, "prov:wasQuotedFrom", json!(version_iri(v)));
-            }
+                .and_then(|list| list.iter().rev().map(|v| &versions[*v]).find(|v| (v.frame, v.op) < at && v.id == version))
+                .ok_or_else(|| {
+                    KernelError::new(Code::BadField, format!("the export finds no version of its document for the quote of record {}", to_hex(&r.id.0)))
+                        .field("wal")
+                })?;
+            set(&mut n, "prov:wasQuotedFrom", json!(version_iri(quoted)));
             set(&mut n, "yuce:start", json!(start));
             set(&mut n, "yuce:end", json!(end));
         }
