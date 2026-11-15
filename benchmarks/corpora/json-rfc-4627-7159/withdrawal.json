@@ -1,0 +1,54 @@
+{
+ "chosen": "before any run (2026-11-15), from the reference ../gold/json-rfc-4627-7159-reference.json: one step for each sentence a later edition changed, in the reference's order. A synthetic benchmark intervention: the IETF withdrew none of these sentences.",
+ "rule": "pinned: each step has one candidate, withdrawn whether or not the run quotes it",
+ "steps": [
+  {
+   "name": "2A",
+   "id": "W1",
+   "report": "benchmarks/corpora/json-rfc-4627-7159/rfc4627.md",
+   "why": "JSON text is no longer limited to an object or array (7159 App. A)",
+   "candidates": [
+    {
+     "anchor": "A JSON text is a serialized object or array.",
+     "quote": "A JSON text is a serialized object or array."
+    }
+   ]
+  },
+  {
+   "name": "2B",
+   "id": "W2",
+   "report": "benchmarks/corpora/json-rfc-4627-7159/rfc4627.md",
+   "why": "the eval() safety statement was removed by erratum 3607 (7159 App. A)",
+   "candidates": [
+    {
+     "anchor": "A JSON text can be safely passed into JavaScript's eval() function",
+     "quote": "A JSON text can be safely passed into JavaScript's eval() function"
+    }
+   ]
+  },
+  {
+   "name": "2C",
+   "id": "W3",
+   "report": "benchmarks/corpora/json-rfc-4627-7159/rfc4627.md",
+   "why": "encoding section rewritten as 'String and Character Issues' (7159 App. A)",
+   "candidates": [
+    {
+     "anchor": "JSON text SHALL be encoded in Unicode.",
+     "quote": "JSON text SHALL be encoded in Unicode."
+    }
+   ]
+  },
+  {
+   "name": "2D",
+   "id": "W4",
+   "report": "benchmarks/corpora/json-rfc-4627-7159/rfc7159.md",
+   "why": "UTF-8 is required when transmitted over a network (8259 App. A, Section 8.1)",
+   "candidates": [
+    {
+     "anchor": "JSON text SHALL be encoded in UTF-8, UTF-16, or UTF-32.",
+     "quote": "JSON text SHALL be encoded in UTF-8, UTF-16, or UTF-32."
+    }
+   ]
+  }
+ ]
+}

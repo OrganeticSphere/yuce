@@ -11,6 +11,13 @@
   kernel's states, at every frame of the demo in CI. A journal that does not verify gets no page. A long journal opens on what
   stopped standing and on the answers. The page makes no network requests. `demo.py` records a run of three scripted readers and
   an owner, with no model, and makes its page. The kernel, its rules and the journal format do not change.
+* **A third corpus: RFC 4627 and RFC 7159, the JSON specification** (`benchmarks/corpora/json-rfc-4627-7159/`), byte for byte from
+  the RFC Editor, with a reference fixed before any run: four sentences a later edition changed, each withdrawn in one step of
+  the plan, and one control no edition changed. `benchmarks/PREREGISTRATION_JSON_RFC.md` fixes the run and what it measures
+  before it runs. `benchmarks/test_json_rfc_corpus.py` checks the bytes, every sentence at its offset, how the kernel cuts the
+  files into reading sections, and the plan.
+* **The runner's summary keeps every withdrawal step of its plan.** `summary.json` of `benchmarks/run_pilot_ac.py` listed phases 1
+  to 4 only, so a plan of four steps lost its last phase there (`arm_c.json`, the measures and the blind answers kept it).
 
 ## 0.2.2 (2026-11-15)
 
