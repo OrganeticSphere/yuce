@@ -383,6 +383,7 @@ More on the audit layer: [crates/sbgk-core/src/audit/README.md](crates/sbgk-core
   `mcp-bridge`).
 * `examples/quickstart/`: the minimal example above.
 * `examples/revoke-and-replay/`: the no-LLM demo of the audit server and its offline inspector page.
+* `examples/live-journal/`: YuCe Live, a recorded run played back frame by frame as one offline page.
 * `examples/findings-gate/`: a security review's findings on code files through the kernel: a made-up finding, a lost agent, a
   file that changes.
 * `benchmarks/`: the benchmark runner and its tests, and the open corpus in `benchmarks/corpora/`.
