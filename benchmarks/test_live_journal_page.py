@@ -33,6 +33,22 @@ class TemplateCheck(unittest.TestCase):
         out = check()
         self.assertEqual(out.returncode, 0, out.stdout)
 
+    def test_a_template_that_could_fool_check_states_is_refused(self):
+        page = (EXAMPLE / "page.html").read_text(encoding="utf-8")
+        nl = chr(10)
+        cases = {
+            "a second stateAt after the markers": page.replace(
+                "// END stateAt", "// END stateAt" + nl + "function stateAt(f) { return { gone: {}, never: new Set(), here: new Set() }; }"),
+            "a state that does not come from stateAt": page.replace("  S = stateAt(F);", "  S = { gone: {}, never: new Set(), here: new Set() };"),
+            "a second pair of markers": page.replace("// END stateAt", "// END stateAt" + nl + "// BEGIN stateAt" + nl + "// END stateAt"),
+            "stateAt reassigned": page.replace("let S = stateAt(F);", "let S = stateAt(F); stateAt = () => S;"),
+        }
+        for name, text in cases.items():
+            self.assertNotEqual(text, page, name)
+            path = pathlib.Path(self.tmp.name) / "template.html"
+            path.write_text(text, encoding="utf-8")
+            self.assertEqual(check("--template", str(path)).returncode, 1, name)
+
     def test_a_made_page_with_its_data_passes_and_a_bad_one_does_not(self):
         good = json.dumps({"format": make_page.FORMAT, "verify": {"status": "VERIFIED"}})
         self.assertEqual(check(str(self.made(good))).returncode, 0)

@@ -2,7 +2,8 @@
 content security policy forbids them, its source is ASCII, it has one place for the data; a made page is the template with a
 JSON object of format yuce-live-journal/1 in that place and nothing else changed.
 
-usage: python check_page.py [made_page.html]     It exits 0 when every check passes, 1 otherwise. Standard library only."""
+usage: python check_page.py [--template page.html] [made_page.html]
+It exits 0 when every check passes, 1 otherwise. Standard library only."""
 import json
 import pathlib
 import re
@@ -18,10 +19,14 @@ FORMAT = "yuce-live-journal/1"
 
 
 def main() -> int:
-    if len(sys.argv) > 2:
+    args = sys.argv[1:]
+    template = TEMPLATE
+    if args[:1] == ["--template"] and len(args) >= 2:
+        template, args = pathlib.Path(args[1]), args[2:]
+    if len(args) > 1:
         print(__doc__)
         return 2
-    page = TEMPLATE.read_text(encoding="utf-8")
+    page = template.read_text(encoding="utf-8")
     problems = []
     if not page.isascii():
         problems.append("the template has non-ASCII characters")
@@ -31,13 +36,23 @@ def main() -> int:
     for pattern in NETWORK:
         for m in re.finditer(pattern, bare, flags=re.I):
             problems.append(f"line {bare.count(chr(10), 0, m.start()) + 1}: {m.group(0)!r} could reach the network")
+    # check_states.mjs runs the code between the markers: it must be the page's one stateAt, and the page's states come from it alone
+    script = page[page.find("<script>"):]
+    begin, end = script.find("// BEGIN stateAt"), script.find("// END stateAt")
+    if script.count("// BEGIN stateAt") != 1 or script.count("// END stateAt") != 1 or not 0 <= begin < end:
+        problems.append("the page must mark its one stateAt with one BEGIN and one END line")
+    elif (len(re.findall(r"\bfunction\s+stateAt\b", script)) != 1 or not re.search(r"\bfunction\s+stateAt\b", script[begin:end])
+          or re.search(r"\bstateAt\s*=(?!=)", script) or re.search(r"\b(const|let|var|class)\s+stateAt\b", script)):
+        problems.append("the page must declare stateAt once, between its markers, and never reassign it")
+    if [m.group(0) for m in re.finditer(r"\bS\s*=(?!=)[^;]*", script)] != ["S = stateAt(F)", "S = stateAt(F)"]:
+        problems.append("the page must take its state S from stateAt(F) alone")
     csp = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)">', page)
     policy = csp.group(1) if csp else ""
     if ("default-src 'none'" not in policy or "form-action 'none'" not in policy or "base-uri 'none'" not in policy
             or re.search(r"connect-src|https?:", policy)):
         problems.append("the content security policy must be default-src 'none', form-action 'none' and base-uri 'none', no source allowed")
-    if len(sys.argv) == 2:
-        made = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+    if args:
+        made = pathlib.Path(args[0]).read_text(encoding="utf-8")
         head, tail = page.split(PLACE, 1)
         if not (made.startswith(head) and made.endswith(tail) and len(made) > len(head) + len(tail)):
             problems.append("the made page is not the template with its data in place")
@@ -57,7 +72,7 @@ def main() -> int:
                 problems.append(f"the data is not JSON: {e}")
     for p in problems:
         print("  " + p)
-    print(f"page.html{' and ' + sys.argv[1] if len(sys.argv) == 2 else ''}: {'OK' if not problems else f'{len(problems)} problem(s)'}")
+    print(f"{template.name}{' and ' + args[0] if args else ''}: {'OK' if not problems else f'{len(problems)} problem(s)'}")
     return 1 if problems else 0
 
 

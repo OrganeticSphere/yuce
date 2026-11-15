@@ -210,7 +210,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
       <li><i class="sw"></i><span><b>Stands</b>: accepted, and every ground under it stands.</span></li>
       <li><i class="sw fell"></i><span><b>Fell</b>: lost a ground. It stays on the page with the reason.</span></li>
       <li><i class="sw wd"></i><span><b>Withdrawn</b>: a quote whose text was taken back.</span></li>
-      <li><i class="sw nv"></i><span><b>No longer stands</b>: replaced by a new version or a later answer, or never stood.</span></li>
+      <li><i class="sw nv"></i><span><b>No longer stands</b>: its bytes went to a new version, its grounds no longer support it, or it never stood.</span></li>
       <li><i class="sw seal"></i><span><b>Seal</b>: the roots of the journal up to this frame.</span></li>
     </ul>
   </section>
@@ -387,13 +387,13 @@ function levels(st, f) { // drawing only: 0 for a quote that went, one step more
 }
 const lastSeal = (f) => { for (let i = f; i >= 0; i--) if (FR[i].seal) return [FR[i].seal, i]; return null; };
 const covAt = (f) => { if (!D.coverage.length) return null; let c = D.coverage[0]; for (const x of D.coverage) if (x.at <= f) c = x; return c; };
-const answerText = (o) => (o.on.length ? o.on.slice(0, 2).map((c) => (R[c] ? R[c].t : '')).join(' ') + (o.on.length > 2 ? ` (+${o.on.length - 2} more claims)` : '')
+const answerText = (o) => (o.on.length ? o.on.slice(0, 2).map((c) => (R[c] ? R[c].t : Q[c] ? `${U.lq}${Q[c].hit}${U.rq}` : '')).join(' ') + (o.on.length > 2 ? ` (+${o.on.length - 2} more claims)` : '')
   : `No claims: ${o.note || 'the answer settles nothing'}`);
 // a record that stopped standing: how the page names it
 function fate(id, g) {
   if (!g) return null;
   if (Q[id]) return g[1] === 'withdrawn' ? { cls: 'wd', hide: true, st: `${U.no} withdrawn at frame ${num(g[0])}` } : { cls: 'nv', hide: false, st: `${U.ring} a new version of the document replaced these bytes at frame ${num(g[0])}` };
-  return g[1] === 'basis' ? { cls: 'fell', hide: true, st: `${U.x} fell at frame ${num(g[0])}` } : { cls: 'nv', hide: false, st: `${U.ring} replaced by a later answer at frame ${num(g[0])}` };
+  return g[1] === 'basis' ? { cls: 'fell', hide: true, st: `${U.x} fell at frame ${num(g[0])}` } : { cls: 'nv', hide: false, st: `${U.ring} its grounds stand but no longer support it, from frame ${num(g[0])}` };
 }
 
 function evText(i) {
@@ -407,7 +407,7 @@ function evText(i) {
   if (k === 'withdraw') parts.push(`${who} withdrew ${e.k === 'revoke' ? 'the quote of a record' : 'a text'} of ${docOf(Q[qs[0]].d).name}: ${plural(qs.length, 'quote')} went.`);
   else if (k === 'version') parts.push(`A new version of ${docOf(Q[qs[0]].d).name}: ${plural(qs.length, 'quote')} no longer ${qs.length === 1 ? 'stands' : 'stand'}.`);
   if (fell.length) parts.push(`${plural(fell.length, 'record')} fell.`);
-  if (repl.length) parts.push(`${plural(repl.length, 'record')} replaced by a later answer.`);
+  if (repl.length) parts.push(`${plural(repl.length, 'answer')} no longer supported by grounds that still stand.`);
   if (e.made && e.made.length) {
     const a = e.made.find((id) => R[id] && R[id].k === 'answer');
     if (a) {
@@ -510,7 +510,7 @@ function render(anim) {
     `<div class="ct j"><b>${num(recs.filter(standing).length)}</b><span>claims and answers stand</span></div>` +
     `<div class="ct r"><b>${num(fellN)}</b><span>fell: lost a ground</span></div>` +
     `<div class="ct g"><b>${num(Object.keys(g).filter((id) => Q[id] && g[id][1] === 'withdrawn').length)}</b><span>quotes withdrawn</span></div>` +
-    (otherN ? `<div class="ct"><b>${num(otherN)}</b><span>replaced, or never stood</span></div>` : '') +
+    (otherN ? `<div class="ct"><b>${num(otherN)}</b><span>no longer supported, or never stood</span></div>` : '') +
     (cov ? `<div class="ct"><b>${num(covered)} / ${num(flat.length)}</b><span>parts read, at frame ${num(cov.at)}</span></div>` : '') +
     `<div class="ct"><b>${ls ? '#' + ls[0] : U.dash}</b><span>${ls ? 'last seal, at frame ' + num(ls[1]) : 'no seal yet'}</span></div>`;
   // the view switch
@@ -557,7 +557,7 @@ function render(anim) {
         const what = kinds.size === 1 ? kindWord[[...kinds][0]] : 'record';
         h += `<div class="step"><b>Step ${l}: ${noun(at.length, what)} lost a ground</b>${at.slice(0, 40).map(link).join(', ')}${at.length > 40 ? ` and ${num(at.length - 40)} more` : ''}</div>`;
       }
-      if (repl.length) h += `<div class="step again"><b>Replaced by a later answer</b>${repl.slice(0, 40).map(link).join(', ')}</div>`;
+      if (repl.length) h += `<div class="step again"><b>Grounds stand but no longer support it</b>${repl.slice(0, 40).map(link).join(', ')}</div>`;
       h += '</div>';
     }
     if (ef.length > 12) h = `<p class="more">The last 12 of ${num(ef.length)} frames where something stopped standing.</p>` + h;

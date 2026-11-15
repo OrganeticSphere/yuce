@@ -40,21 +40,23 @@ The kernel gives every state the page shows: what stands, what fell and why, at 
 * `sbgk audit-prov` gives the records, what each rests on, and the periods in which each stood, with the frame and the reason
   that ended a period. At frame N a record handed in by then:
   * stands while a period of it holds frame N;
-  * fell, was withdrawn, or was replaced (by a new version of its document, or by a later answer) when its last period ended;
+  * fell, was withdrawn, went with its bytes to a new version of its document, or (an answer) is no longer supported by
+    grounds that still stand, when its last period ended;
   * never stood when the kernel gave it no period, such as an answer that settles nothing.
 * `make_page.py` compares this with `sbgk audit-prov --upto N+1`, the export of the first frames alone, and stops with exit code 1
   on a difference.
   * It compares at every frame of a journal of up to 200 frames and records, and in the demo.
   * For a longer journal it compares at every seal, every frame where a record stopped standing, and the last frame. `--check all`
     asks for every frame.
-* `check_states.mjs` runs the page's own script on those kernel states and compares them record by record. CI does this at every
-  frame of the demo.
+* `check_states.mjs` runs the page's own `stateAt` on those kernel states and compares them record by record. CI does this at
+  every frame of the demo. `check_page.py` makes sure the page has that one `stateAt` and takes every state from it.
 * The coverage of the documents is `sbgk audit-read coverage` over the first frames of the journal: at every frame of a short
   journal, at seals and where records stopped standing in a long one. A run for which the kernel keeps no coverage table says so.
 * The question of each answer is the one the kernel named when it closed the answer task, or else the one handed in with the
   answer.
 
-The page works out only how to draw these states: the steps of a fall, the focused view and the counters.
+The page works out how to draw these states (the steps of a fall, the focused view, the counters) and which questions an
+answer that fell sends back.
 
 A journal of more than 200 frames or records opens in a focused view: what stopped standing, and the answers with what they rest
 on. *Everything* shows the rest. The strip of frames keeps seals, withdrawals, falls and answers as slips of their own and folds
