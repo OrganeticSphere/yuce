@@ -6,8 +6,9 @@ The states on the page come from the kernel, read from the journal by the binary
   that ended a period;
 - `sbgk audit-read coverage`, run on the first frames of the journal, gives the coverage table at a frame.
 
-At frame N a record handed in by then stands while a period of it holds frame N, has fallen (or was withdrawn, or replaced by a
-new version of its document) when its last period ended, and never stood when the kernel gave it no period. The generator
+At frame N a record handed in by then stands while a period of it holds frame N; it fell, was withdrawn, went with its bytes to a
+new version of its document, or (an answer) is no longer supported by grounds that still stand, when its last period ended; and it
+never stood when the kernel gave it no period. The generator
 compares this with `sbgk audit-prov --upto N+1`, the export of the first frames alone: with --check all (the default for a
 journal of up to 200 frames and records) at every frame, with --check seals at every seal, every frame where a record's period
 ended, and the last frame. A difference stops it with exit code 1. --states FILE writes the kernel's states at the compared
@@ -344,7 +345,7 @@ def build(a, kernel: Kernel) -> int:
             "docs": [{k: d[k] for k in ("id", "name", "units")} for d in docs], "docs_shown": bool(texts),
             "docs_unchecked": unchecked, "questions": questions,
             "frames": out_frames, "quotes": quotes, "recs": recs, "periods": periods, "coverage": coverage,
-            "coverage_note": "" if has_cov else (final_cov.get("meaning") or final_cov.get("message") or "the kernel keeps no coverage table for this run"),
+            "coverage_note": "" if has_cov else (final_cov.get("reason") or final_cov.get("message") or "the kernel keeps no coverage table for this run"),
             "checked": {"frames": len(at), "all": check == "all"},
             "not_shown": {k: v for k, v in {"question": sum(1 for n in records.values() if n["yuce:kind"] == "question")}.items() if v}}
     if a.states:

@@ -13,7 +13,10 @@ if (!pagePath || !statesPath) {
 const page = readFileSync(pagePath, 'utf8');
 const start = page.indexOf('const D = ') + 'const D = '.length;
 const D = JSON.parse(page.slice(start, page.indexOf(';\n', start)));
-const begin = page.indexOf('// BEGIN stateAt'), end = page.indexOf('// END stateAt');
+// the markers are searched after the data, so a journal whose text holds them cannot move them; check_page.py makes sure the
+// page has one pair of them and one function stateAt, the one between them, and that the page takes its states from it alone
+const after = page.indexOf(';\n', start);
+const begin = page.indexOf('// BEGIN stateAt', after), end = page.indexOf('// END stateAt', after);
 if (begin < 0 || end < begin) {
   console.error('the page has no marked stateAt function');
   process.exit(1);
