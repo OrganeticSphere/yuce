@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-11-15)
 
 * **`yuce mcp`: one agent on its own folder from one line of an MCP client's configuration.** Before, one agent needed three steps:
   start `audit-serve --profile solo`, read a token from the subjects file, and add a bridge entry with that token.
