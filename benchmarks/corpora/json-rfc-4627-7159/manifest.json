@@ -1,0 +1,47 @@
+{
+ "schema": "r2r.tobi_corpus_metadata_manifest.v1",
+ "source": {
+  "origin_recorded": "https://github.com/OrganeticSphere/yuce.git",
+  "commit": "a24cf5f634fb71221f8406ccac500f3904f5ce32",
+  "repository": "OrganeticSphere/yuce",
+  "note": "the two files at their paths in this repository: the RFC Editor's plain-text editions, bytes unchanged, under .md names; each entry's upstream names the URL its bytes come from; a date is the first day of the month of publication"
+ },
+ "entries": [
+  {
+   "path": "benchmarks/corpora/json-rfc-4627-7159/rfc4627.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 16319,
+   "raw_sha256": "a31e840012e96413836c40f31d0506d355f3d9c4853e80d77240b59fff96518d",
+   "git_blob": "67b89092e71d34dcb6d2eff51d36404c646b220b",
+   "version": "RFC 4627",
+   "date": "2006-07-01",
+   "upstream": {
+    "url": "https://www.rfc-editor.org/rfc/rfc4627.txt",
+    "name": "rfc4627.txt"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "benchmarks/corpora/json-rfc-4627-7159/rfc7159.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 27451,
+   "raw_sha256": "50aa72534210945457f5460a50f263c1d6cf87a3da8c814c1d9f54cb04f22342",
+   "git_blob": "64fcada43f7a256a5f4b95d34e72058761f5cfce",
+   "version": "RFC 7159",
+   "date": "2014-03-01",
+   "upstream": {
+    "url": "https://www.rfc-editor.org/rfc/rfc7159.txt",
+    "name": "rfc7159.txt"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  }
+ ]
+}

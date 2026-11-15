@@ -13,7 +13,12 @@ between editions. RFC 8259, the current edition, is not in the corpus; it is nam
 - Only the file names differ: `.md` instead of `.txt`. The kernel takes documents from a corpus manifest as Markdown candidates only,
   and neither RFC has a line that starts with `#` or a code fence, so the kernel cuts it into reading sections exactly as it would
   cut the `.txt` file (`benchmarks/test_json_rfc_corpus.py` checks both).
-- `reports.txt` gives the files in publication order.
+- `manifest.json` names, for each file, its size, SHA-256, git blob id, edition, date of publication (the first day of its month) and
+  the RFC Editor URL its bytes come from. The kernel's document ids come from the manifest's source repository, commit and path,
+  and the RFC Editor's editions are in no git repository, so the manifest names this repository (`OrganeticSphere/yuce`), the commit
+  of it that holds the two files, and their paths from the repository's root. A run of this corpus takes the repository's root as
+  `--repo`.
+- `reports.txt` gives the files in publication order, and `document_order.json` gives the kernel's document ids in that order.
 - The texts are copyright of the IETF Trust (RFC 7159) and of the Internet Society (RFC 4627) and of the persons named as their
   authors, under BCP 78 and the IETF Trust's Legal Provisions. They are reproduced here in full and without modification, with
   their copyright notices inside, to pin the bytes of a benchmark; they are not modified or used to make derivative works.
@@ -31,6 +36,8 @@ between editions. RFC 8259, the current edition, is not in the corpus; it is nam
 - The withdrawals are a synthetic benchmark intervention: the IETF withdrew none of these sentences, later editions changed them.
 
 `benchmarks/test_json_rfc_corpus.py` checks:
-- the bytes of both files against the reference;
+- the bytes of both files against the reference and the manifest;
+- in a clone of this repository, that the pinned commit holds both files at their paths;
+- the document order against the kernel's document ids;
 - every sentence of the reference at its byte offset, once, inside one reading section of the kernel;
 - the withdrawal plan against the reference.

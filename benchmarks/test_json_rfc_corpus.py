@@ -1,5 +1,5 @@
-"""The JSON RFC corpus (benchmarks/corpora/json-rfc-4627-7159): its bytes, the sentences of its reference, how the kernel cuts it
-into reading sections, and its withdrawal plan.
+"""The JSON RFC corpus (benchmarks/corpora/json-rfc-4627-7159): its bytes, its manifest and document order, the sentences of its
+reference, how the kernel cuts it into reading sections, and its withdrawal plan.
 
 Run: python -m unittest discover -s benchmarks -p "test_*.py"
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -62,6 +63,8 @@ class JsonRfcCorpus(unittest.TestCase):
         self.ref = json.loads(REFERENCE.read_text(encoding="utf-8"))
         self.files = {name: (ROOT / name.replace(".txt", ".md")).read_bytes() for name in self.ref["sources"]
                       if (ROOT / name.replace(".txt", ".md")).exists()}
+        self.raw_manifest = (ROOT / "manifest.json").read_bytes()
+        self.manifest = json.loads(self.raw_manifest)
 
     def test_both_files_are_the_rfc_editors_bytes(self):
         self.assertEqual(sorted(self.files), ["rfc4627.txt", "rfc7159.txt"], "RFC 8259 is named by the reference, not in the corpus")
@@ -71,6 +74,47 @@ class JsonRfcCorpus(unittest.TestCase):
         self.assertEqual(sum(len(r) for r in self.files.values()), 43770)
         self.assertEqual(hashlib.sha256(REFERENCE.read_bytes()).hexdigest(), "7ebaf0a2710785d798e8230fad58e8585c78ae4c3afcde784160aa24331b041b",
                          "the reference is the file fixed before any run")
+
+    def test_the_manifest_pins_both_files_to_a_commit_of_this_repository(self):
+        source = self.manifest["source"]
+        # the kernel's document identity names a repository, a commit of it and the path from its root; the RFC Editor's editions
+        # are in no git repository, so the manifest names this one and the commit of it that holds the two files
+        self.assertEqual((source["origin_recorded"], source["repository"]), ("https://github.com/OrganeticSphere/yuce.git",
+                                                                             "OrganeticSphere/yuce"))
+        self.assertRegex(source["commit"], r"^[0-9a-f]{40}$")
+        entries = self.manifest["entries"]
+        self.assertEqual([e["path"] for e in entries], [PREFIX + "rfc4627.md", PREFIX + "rfc7159.md"])
+        for e in entries:
+            raw, up = (REPO / e["path"]).read_bytes(), e["upstream"]
+            self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (e["size_bytes"], e["raw_sha256"]), e["path"])
+            want = self.ref["sources"][up["name"]]
+            self.assertEqual((e["size_bytes"], e["raw_sha256"]), (want["bytes"], want["sha256"]), "the manifest names the reference's bytes")
+            # the git blob id: a checkout that converted line endings would change it
+            self.assertEqual(hashlib.sha1(b"blob %d\0" % len(raw) + raw).hexdigest(), e["git_blob"], e["path"])
+            self.assertEqual((e["path"], up["url"]), (PREFIX + up["name"].replace(".txt", ".md"), "https://www.rfc-editor.org/rfc/" + up["name"]))
+        self.assertEqual([(e["version"], e["date"]) for e in entries], [("RFC 4627", "2006-07-01"), ("RFC 7159", "2014-03-01")])
+
+    def test_the_pinned_commit_holds_both_files_where_its_history_is_at_hand(self):
+        # in a clone of OrganeticSphere/yuce the pinned commit is in the history: every path there is the file's blob. Elsewhere
+        # (an exported snapshot, the private development repository) the commit is not at hand and the check is skipped.
+        commit = self.manifest["source"]["commit"]
+        try:
+            at_hand = subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True).returncode == 0
+        except OSError:
+            at_hand = False
+        if not at_hand:
+            self.skipTest("the pinned commit is not in this checkout's history")
+        for e in self.manifest["entries"]:
+            blob = subprocess.run(["git", "-C", str(REPO), "rev-parse", f"{commit}:{e['path']}"], capture_output=True, text=True)
+            self.assertEqual((blob.returncode, blob.stdout.strip()), (0, e["git_blob"]), e["path"])
+
+    def test_the_reports_and_the_document_order_follow_publication(self):
+        reports = (ROOT / "reports.txt").read_text(encoding="utf-8").split()
+        self.assertEqual(reports, [e["path"] for e in self.manifest["entries"]])
+        docs = {p: (REPO / p).read_bytes().decode("utf-8") for p in reports}
+        by_id = P.source_document_paths(self.raw_manifest, docs)
+        order = json.loads((ROOT / "document_order.json").read_text(encoding="utf-8"))
+        self.assertEqual([by_id[d] for d in order], reports, "the kernel's document ids in publication order")
 
     def test_every_sentence_of_the_reference_is_at_its_offset_once(self):
         for s in self.ref["steps"]:
