@@ -381,7 +381,8 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
         measures=artifact_step("measures",lambda:P.measures(a,c,docs),{"status":"UNAVAILABLE"})
         graph=artifact_step("graph_shape",lambda:P.graph_shape(out/"arm_c"/"run.wal"),{"status":"UNAVAILABLE"})
         measures["graph_shape"]=graph
-        phases = ("phase1", "phase2", "phase3", "phase4")
+        # phase 1, then one phase per withdrawal step of the plan, however many it has (a plan of four steps lost its last one here)
+        phases = ("phase1", *(f"phase{n}" for n in range(2, 2 + len(P.withdrawal_steps(withdraw)))))
         summary = {"provenance": ran, "arm_c_reused": None if reused is None else {k: v for k, v in reused.items() if k != "circles"},
                    "executor": P.executors.describe(), "corpus": corpus, "model": model.name, "model_config": getattr(model, "config", None), "builder_model": "per-card" if P.DYNAMIC_ROLES else builder.name,
                    "builder_model_config": None if P.DYNAMIC_ROLES else getattr(builder, "config", None), "builder_card": builder_card or "kernel defaults",

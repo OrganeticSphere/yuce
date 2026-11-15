@@ -151,6 +151,22 @@ class BuildScope(unittest.TestCase):
         # the window of a control run spans more reports than a concept-narrowed one: every question still gets its answer
         self.assertEqual(st["completion"]["unresolved"], [], st["completion"])
 
+    def test_the_summary_of_a_run_keeps_every_withdrawal_step_of_its_plan(self):
+        P.BUILD_SCOPE, P.ARM_A_FROZEN = "none", True
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            manifest, docs = corpus(root)
+            paths = sorted(docs)
+            steps = [{"name": f"2{x}", "report": paths[i], "candidates": [{"anchor": f"rule {i}", "quote": f"The old check of rule {i} was removed."}]}
+                     for i, x in enumerate("ABCD")]
+            s = R.run(manifest, root / "repo", paths, root / "out", P.StubModel(), 3, {"steps": steps}, phase_timeout_s=120, max_calls=400,
+                      team=[P.StubModel(), P.StubModel(), P.StubModel()])
+            arm_c = json.loads((root / "out" / "arm_c.json").read_text(encoding="utf-8"))
+        for n in range(1, 6):
+            self.assertEqual(s["arm_c"][f"phase{n}"]["receipt"]["status"], "TERMINAL", n)
+            self.assertEqual(s["arm_c"][f"phase{n}"], arm_c[f"phase{n}"], f"the summary holds phase {n} as arm_c.json does")
+        self.assertEqual([w["step"] for w in s["withdrawn"]], ["2A", "2B", "2C", "2D"])
+
     def test_with_links_off_the_builder_names_concepts_and_makes_no_link(self):
         r = self.run_c("concepts")
         receipt, st = r["phase1"]["receipt"], r["phase1"]["status"]
