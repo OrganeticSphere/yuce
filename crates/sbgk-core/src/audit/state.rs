@@ -1490,6 +1490,21 @@ impl AuditState {
         self.core.session.arena.doc(doc_id)
     }
 
+    /// Whether each record stands, in record order: the `grounded` column of the status projection, without its hashes. The PROV
+    /// export (`prov.rs`) reads it at the frames of a replay.
+    pub(super) fn standing(&self) -> Vec<bool> {
+        let support = self.core.support_flags();
+        self.core.data.records.iter().map(|r| support.get(&r.id).is_some_and(|v| v.0)).collect()
+    }
+
+    /// The current version id of every document, sorted by document id: the PROV export compares them from frame to frame.
+    pub(super) fn document_versions(&self) -> Vec<(String, Hash)> {
+        let arena = &self.core.session.arena;
+        let mut out: Vec<(String, Hash)> = arena.doc_ids().filter_map(|d| arena.doc(d).map(|e| (d.clone(), e.version_id))).collect();
+        out.sort();
+        out
+    }
+
     /// The texts withdrawn from a document: a quittance never hands them out.
     pub(super) fn withdrawn_of(&self, doc_id: &str) -> Vec<&[u8]> {
         self.core.data.withdrawn.get(doc_id).into_iter().flatten().map(Vec::as_slice).collect()

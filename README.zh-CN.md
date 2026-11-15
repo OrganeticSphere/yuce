@@ -23,6 +23,7 @@ YuCe 处理的是后半段：**某条证据被撤回后，哪些已被接受的�
 - **任何人都能核验的日志。** 封印签名为 C2SP 检查点（Ed25519）。`sbgk audit-verify` 用保存在别处的回执或检查点核验日志。核验始终免费。
 - **没有任何内容被静默跳过。** `sbgk audit-read coverage` 根据日志、无需模型，说明文档中每个列表项、段落和表格行的结果：已被引用（由哪些记录引用）、因阅读预算未覆盖、被撤回，或未读。补漏阅读（`--gap-pass`，默认关闭）可以把没有引用覆盖的部分作为窄任务重新分给智能体；它按文档 id 的顺序分派，目前没有任何一次运行表明它能提升回答（见 [BENCHMARKS.md](BENCHMARKS.md) 和 [LIMITATIONS.md](LIMITATIONS.md)）。
 - **日志旁的索引。** `sbgk audit-index` 生成任何工具都能读取的 SQLite 文件，可随时由日志重建。
+- **W3C 标准的来源记录。** `sbgk audit-prov` 把日志写成 W3C PROV-O：一个任何 RDF 工具都能读取的 JSON-LD 文件，可随时由日志重建。它说明每条记录由谁写下、立足于哪个文档版本的哪些字节、依据什么，以及何时成立、何时不再成立。同一份日志总是得到相同的字节。示例见 [examples/prov-export](examples/prov-export)。
 - **独立核验器。** `verifier/` 中的 `yuce-verify`：按公开的格式规范独立实现的 TypeScript 程序，与内核不共享代码，也不共享依赖；在 Node.js 和浏览器中检查 J0、J1 两级。
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。

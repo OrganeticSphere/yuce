@@ -26,6 +26,16 @@
   `audit_withdraw_preview` and `audit_status` with `telemetry` write nothing; what is pending is written by the next call that
   coordinates or writes. `audit_status` without `telemetry` moves the run on as before, so it can write the server's own entries:
   a circle's step, the attestation at the end, an agent's failure. Its tool description now says so.
+* **Provenance export: the journal as W3C PROV-O.** `sbgk audit-prov --wal run.wal [--out file] [--upto n]` writes one JSON-LD file
+  that any RDF tool reads, rebuilt from the journal at any time:
+  * who wrote each record, in which frame, and what it rests on;
+  * on which bytes of which document version an observation stands (`prov:wasQuotedFrom`);
+  * each period in which a record stood, and the frame that ended it: a withdrawal, a new version of the document, or grounds
+    that stopped standing.
+
+  The same journal always gives the same bytes, and the file names the SHA-256 of its content, the last frame and the last seal.
+  A journal with a torn tail is refused, and so is an output path that names the journal. `rdflib` reads the sample in
+  `examples/prov-export` in CI. The kernel's rules and the journal format do not change.
 * **NOTICE and the README name the product names.** YuCe and Organetic Sphere are product names and trademarks of Aset Uisin;
   the license is Apache-2.0 as before, and its Section 6 already covers the names.
 
