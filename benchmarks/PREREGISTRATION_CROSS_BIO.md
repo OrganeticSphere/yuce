@@ -18,9 +18,9 @@ units.
   `benchmarks/corpora/gold/` after the run, with these SHA-256:
   - the reference, `1fe4a773a9869dc117c0148e97dea606ff8db691b9e9b7bc177cf4e3738b0d6b`: 17 facts, 6 links between papers,
     4 traps, the two withdrawals with what must fall and what must stand, the three questions and the scoring rules;
-  - the scoring addendum, `7e0e3010a403ad7039c4089a3ef42df6d184c604d4e0fb0e6d1551a5ef31207d`: one rule for the link that compares
+  - the scoring addendum, `ad33514ff0cfc381b9d497081b34908b4624cbbde7af359d3ffb0a15da30762e`: one rule for the link that compares
     the thresholds;
-  - the run-plan addendum, `83701a16b72844588ec2a4b5ace41c37f5205f5c58b5a713ae5875a02bcfbce2`: both withdrawals applied, when the
+  - the run-plan addendum, `d01e0e809ced6fb3907a02cc61a87bb2536f3fce6b69cf271c60f0fd56ba00df`: both withdrawals applied, when the
     second counts, and the topics of the questions.
 - The corpus's `questions.json`, `withdrawal.json` and `checklist.md` are fixed with this file and ship in the run's archive.
   - The questions are the reference's three, word for word. Their topics are stems of words of each question's own text, so a
@@ -42,8 +42,8 @@ units.
 
 From the run's journal, with no model (part I of `checklist.md`):
 1. **Each step's checks:** what must fall, what must stand, the failure rule, the collateral records, and the questions sent back.
-2. **The condition of W2:** whether an answer line of Q1–Q3 lost a ground at 2A. W2 counts for the showcase only if none did. Its
-   checks are reported either way.
+2. **The condition of W2:** whether an answer line of Q1–Q3 lost a ground at 2A. W2 counts toward the result "an answer fell and was
+   given again" only if none did. Its checks are reported either way.
 3. **Links:** the standing claims whose quotes come from two or more papers, with the byte intervals of their quotes.
 4. **The journal:** `sbgk audit-verify` verifies it, and every seal checks against the frames before it.
 5. **Cost:** calls, tokens and the spend estimate of the runner's brake.
