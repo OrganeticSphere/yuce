@@ -1,0 +1,3 @@
+benchmarks/corpora/bacteria-under-flow/B_thomen2017.md
+benchmarks/corpora/bacteria-under-flow/A_rossy2019.md
+benchmarks/corpora/bacteria-under-flow/C_hubert2024.md

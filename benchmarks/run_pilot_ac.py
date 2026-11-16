@@ -5,8 +5,9 @@
       --checklist <checklist.md> --withdrawal-plan <plan.json> --model stub
                                                         # a corpus (benchmarks/corpora/...) with the stub model: the mechanics ($0)
 
-A corpus is given by --reports with its own --checklist and --withdrawal-plan. The optional package benchmarks/sbgk_bench/closed adds
-options and models (pilot_ac.CLOSED_MODELS); without it argparse simply does not know its options.
+A corpus is given by --reports with its own --checklist and --withdrawal-plan, and may bring its own research questions
+(--questions; default: RQ1 and RQ2 of pilot_ac.QUESTIONS). The optional package benchmarks/sbgk_bench/closed adds options and
+models (pilot_ac.CLOSED_MODELS); without it argparse simply does not know its options.
 """
 from __future__ import annotations
 
@@ -152,6 +153,36 @@ def binary_fits_tag(ran: dict) -> bool:
     """On a tagged checkout the binary must be of that version: an older one beside the tag would make the run's archive say otherwise."""
     tag, version = ran.get("git_tag"), ran.get("sbgk_version")
     return not tag or not version or tag.removeprefix("v") == version.split()[-1]
+
+
+
+QUESTION_FIELDS = {"id", "text", "about", "stances", "relations", "concept_types"}
+
+
+def questions_from(path: pathlib.Path) -> list[dict]:
+    """A corpus's own research questions, fixed before the run: a JSON list of {"id", "text", "about": [topics]} with optional
+    "stances", "relations" and "concept_types", as pilot_ac.QUESTIONS holds them. The kernel shows each question with its topics to
+    the readers and picks the claims of an answer's window by them, so they are part of the run and its snapshot records them."""
+    try:
+        qs = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"--questions: {e}") from None
+    if not isinstance(qs, list) or not 1 <= len(qs) <= 8:
+        raise ValueError("--questions: a JSON list of 1 to 8 questions")
+    seen = set()
+    for q in qs:
+        if not isinstance(q, dict) or set(q) - QUESTION_FIELDS or not {"id", "text", "about"} <= set(q):
+            raise ValueError(f"--questions: each question has id, text and about, and only {sorted(QUESTION_FIELDS)}: {q!r}"[:300])
+        if not isinstance(q["id"], str) or not q["id"].isascii() or not q["id"].isalnum() or len(q["id"]) > 16 or q["id"] in seen:
+            raise ValueError(f"--questions: ids are distinct, ASCII letters and digits, at most 16: {q['id']!r}")
+        seen.add(q["id"])
+        if not isinstance(q["text"], str) or not q["text"].strip():
+            raise ValueError(f"--questions: {q['id']} has no text")
+        for field in ("about", "stances", "relations", "concept_types"):
+            v = q.get(field, ["x"])
+            if not isinstance(v, list) or not v or not all(isinstance(t, str) and t.strip() for t in v):
+                raise ValueError(f"--questions: {q['id']}.{field} is a non-empty list of non-empty strings")
+    return qs
 
 
 def corpus_choice(reports: pathlib.Path | None, plan: pathlib.Path | None, checklist: pathlib.Path | None,
@@ -693,6 +724,9 @@ def main() -> None:
                     help='a JSON withdrawal plan fixed before the run: {"steps": [{"name": "2A", "report": <path>, "candidates": '
                          '[{"anchor": <text>, "quote": <exact line holding it>}]}, ...]}')
     ap.add_argument("--checklist", type=pathlib.Path, help="the blind checklist written for the corpus of --reports")
+    ap.add_argument("--questions", type=pathlib.Path,
+                    help='the research questions of the corpus of --reports, fixed before the run: a JSON list of {"id", "text", '
+                         '"about": [topics]} (stances, relations, concept_types optional); default: RQ1 and RQ2 of pilot_ac.QUESTIONS')
     ap.add_argument("--out", type=pathlib.Path, default=C.WORK / "pilot_ac" / time.strftime("%Y%m%d_%H%M%S"))
     ap.add_argument("--builder-requests", type=int, default=0,
                     help="the graph builder's typed requests per run (U1: reread_gap, check_coverage, find_link_basis; 0: off)")
@@ -802,6 +836,13 @@ def main() -> None:
     P.REUSE_ARM_C = a.reuse_arm_c
     # both arms and the kernel's --section-bytes read this at run time; corpus.section_bytes records it
     P.SECTION_BYTES = a.section_bytes
+    if a.questions is not None:
+        if a.reports is None:
+            sys.exit("--questions goes with --reports")
+        try:
+            P.QUESTIONS = questions_from(a.questions)
+        except ValueError as e:
+            sys.exit(str(e))
     if a.builder_requests < 0:
         sys.exit("--builder-requests must be 0 (off) or positive")
     P.BUILDER_REQUESTS = a.builder_requests
