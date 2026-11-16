@@ -1,0 +1,71 @@
+{
+ "schema": "r2r.tobi_corpus_metadata_manifest.v1",
+ "source": {
+  "origin_recorded": "https://github.com/OrganeticSphere/yuce.git",
+  "commit": "e15d0acf0f2161cf04a9a7f55200a7f5d30b207e",
+  "repository": "OrganeticSphere/yuce",
+  "note": "the three files at their paths in this repository: excerpts of three CC BY 4.0 papers, converted from the Europe PMC JATS XML, each with a header naming the paper, the licence and the changes; each entry's upstream names the paper; a date is the paper's electronic publication date"
+ },
+ "entries": [
+  {
+   "path": "benchmarks/corpora/bacteria-under-flow/B_thomen2017.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 40998,
+   "raw_sha256": "f350479e95368bbaca4bf25b2f841c8c100dbc88b3f8174c41f53b2141f26e23",
+   "git_blob": "d993968a9177fabb137fd525c9de99b39ce8d8c8",
+   "version": "Thomen et al. 2017",
+   "date": "2017-04-12",
+   "upstream": {
+    "doi": "10.1371/journal.pone.0175197",
+    "pmcid": "PMC5389662",
+    "url": "https://doi.org/10.1371/journal.pone.0175197",
+    "licence": "CC BY 4.0"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "benchmarks/corpora/bacteria-under-flow/A_rossy2019.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 28794,
+   "raw_sha256": "e86d281bf6f8a2b658f67dede19cfd8dee290c728f783a4bd24f26311ab90d01",
+   "git_blob": "dea14906296fa4f4e1d5dfa029bf6f406c1165c3",
+   "version": "Rossy et al. 2019",
+   "date": "2019-06-06",
+   "upstream": {
+    "doi": "10.1038/s41467-019-10469-6",
+    "pmcid": "PMC6554397",
+    "url": "https://doi.org/10.1038/s41467-019-10469-6",
+    "licence": "CC BY 4.0"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  },
+  {
+   "path": "benchmarks/corpora/bacteria-under-flow/C_hubert2024.md",
+   "extension": ".md",
+   "corpus_role": "markdown_document_candidate",
+   "size_bytes": 36828,
+   "raw_sha256": "4de06f5bacdfb4bb155e018e00a5c0c2c2ea56e36ecd842acfa9a2e03e3f18dd",
+   "git_blob": "ee4ba1c8402a4be23970cd43a3c74d0b92a4dc30",
+   "version": "Hubert et al. 2024",
+   "date": "2024-07-22",
+   "upstream": {
+    "doi": "10.1038/s41467-024-49997-1",
+    "pmcid": "PMC11263347",
+    "url": "https://doi.org/10.1038/s41467-024-49997-1",
+    "licence": "CC BY 4.0"
+   },
+   "references": {
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   }
+  }
+ ]
+}
