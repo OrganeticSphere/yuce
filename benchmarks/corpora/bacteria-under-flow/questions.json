@@ -1,0 +1,32 @@
+[
+ {
+  "id": "Q1",
+  "text": "What limits bacterial colonisation of surfaces under flow, and at what thresholds?",
+  "about": [
+   "coloni",
+   "surface",
+   "flow",
+   "threshold"
+  ]
+ },
+ {
+  "id": "Q2",
+  "text": "Are the flow thresholds reported in these works comparable with each other, and what would be needed to compare them?",
+  "about": [
+   "threshold",
+   "flow",
+   "compar"
+  ]
+ },
+ {
+  "id": "Q3",
+  "text": "What does the later work change or add regarding the role of mechanical forces in bacterial growth under flow, and for which object of measurement?",
+  "about": [
+   "mechanical",
+   "force",
+   "growth",
+   "flow",
+   "measurement"
+  ]
+ }
+]

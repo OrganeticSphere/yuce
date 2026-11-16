@@ -1,0 +1,27 @@
+{
+ "rule": "pinned before the run: 2A withdraws W1, 2B withdraws W2, in this order on one journal, both always; W2 counts for the showcase only if no answer line of Q1-Q3 lost a ground at 2A (PREREGISTRATION_CROSS_BIO.md)",
+ "steps": [
+  {
+   "name": "2A",
+   "id": "W1",
+   "report": "benchmarks/corpora/bacteria-under-flow/B_thomen2017.md",
+   "candidates": [
+    {
+     "anchor": "no direct impact of mechanical forces on biofilm growth rate was observed",
+     "quote": "no direct impact of mechanical forces on biofilm growth rate was observed"
+    }
+   ]
+  },
+  {
+   "name": "2B",
+   "id": "W2",
+   "report": "benchmarks/corpora/bacteria-under-flow/A_rossy2019.md",
+   "candidates": [
+    {
+     "anchor": "Surface occupation dramatically dropped for growth at mean fluid velocity higher than 4 mm s^−1",
+     "quote": "Surface occupation dramatically dropped for growth at mean fluid velocity higher than 4 mm s^−1"
+    }
+   ]
+  }
+ ]
+}
