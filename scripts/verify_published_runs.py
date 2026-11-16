@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 
 RUNS = {"v0.1.0": ["haiku-K", "deepseek1-K", "deepseek2-K"], "v0.1.6": ["makers1-K", "makers2-K"], "v0.1.7": ["control017-K"],
-        "v0.2.0": ["control02-run1-K", "control02-run2-K", "first02-run1-K", "first02-run2-K"]}
+        "v0.2.0": ["control02-run1-K", "control02-run2-K", "first02-run1-K", "first02-run2-K"], "v0.2.2": ["jsonrfc-run1-K"]}
 ROOTS = ("audit_root", "engine_root", "session_root", "wal_head")
 
 

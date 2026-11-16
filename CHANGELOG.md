@@ -18,6 +18,11 @@
   repository's root, as the A2A corpus does. `benchmarks/test_json_rfc_corpus.py` checks the bytes, the manifest and, in a clone
   of this repository, that the commit holds both files, the document order, every sentence at its offset, how the kernel cuts the
   files into reading sections, and the plan.
+* **The JSON RFC run** (BENCHMARKS.md): one run of the kernel's side on the third corpus, three readers, as the preregistration
+  fixed it. After each of the four withdrawals no claim on the withdrawn sentence stays grounded, the control stands, and the
+  journal verifies; no answer rested on a withdrawn sentence, so no question was sent back. Graded blind: 9 of 10 statements
+  correct, no stale-current error, and 8 of 8 planted lines found. The run and its grading are release assets of v0.2.2, and
+  `scripts/verify_published_runs.py` checks its journal.
 * **The runner's summary keeps every withdrawal step of its plan.** `summary.json` of `benchmarks/run_pilot_ac.py` listed phases 1
   to 4 only, so a plan of four steps lost its last phase there (`arm_c.json`, the measures and the blind answers kept it).
 

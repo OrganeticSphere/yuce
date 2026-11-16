@@ -294,6 +294,45 @@ withdraws, so 2B was not graded again.
   that wrong source in the identity of each document, and they are kept as they are. The manifest was corrected in 0.2.1, after
   these runs: it names this repository and the commit of it that holds the five files, with their paths from its root.
 
+### Withdrawals on a standard: RFC 4627 and RFC 7159 (0.2.2), grader Gemini 4 Argon
+
+As `benchmarks/PREREGISTRATION_JSON_RFC.md` fixed it before the run: the JSON specification in two editions, RFC 4627 and RFC
+7159, byte for byte from the RFC Editor (two files, 43,770 bytes,
+[benchmarks/corpora/json-rfc-4627-7159](benchmarks/corpora/json-rfc-4627-7159/README.md)), side K alone, three readers on
+`deepseek-flash` (thinking off, temperature 0), one run, from a clean tree of this repository at `3ca9def` and the binary built
+from it (the kernel of v0.2.2), with the flags of the A2A runs and the gap pass off. The reference holds four sentences a later
+edition changed, W1 to W3 in RFC 4627 and W4 in RFC 7159, each withdrawn in one step, 2A to 2D, and one control that no edition
+changed, C1 ("The names within an object SHOULD be unique."). Measured from the journal, without a model:
+
+| Step | Withdrawn | Its quotes before the step | Claims grounded on it after | Its quotes stored after | What fell with it |
+|---|---|---|---|---|---|
+| 2A | W1, RFC 4627 | 2 | 0 | 0 | 2 quotes, 2 claims, 2 hypotheses |
+| 2B | W2, RFC 4627 | 2 | 0 | 0 | 2 quotes, 2 claims, 2 hypotheses |
+| 2C | W3, RFC 4627 | 2 | 0 | 0 | 2 quotes, 2 claims |
+| 2D | W4, RFC 7159 | 4 | 0 | 0 | 4 quotes, 4 claims |
+
+* **By the pre-registered rule nothing counts against the kernel:** no claim on a withdrawn sentence stayed grounded after its
+  step; no claim resting on C1 alone fell (the 6 quotes of C1 and the 4 claims that rest only on them stand at the end); the
+  journal verifies (200 frames, 8 seals).
+* **No answer rested on a withdrawn sentence.** What fell were the readers' records. None of the 10 claims the answer to RQ1 cites
+  rested on W1 to W4, so the kernel sent no question back, and the answers of all five stages are the same bytes. Withdrawal
+  discipline in the answers is `not applicable` at every step, as the checklist reads it from the journal: this run shows the
+  cascade on the readers' records, not an answer kept or repaired after a withdrawal.
+* **The grading.** One grader, Gemini 4 Argon at high effort through the Antigravity CLI, blind, in one call with the whole
+  packet inline and no tool used. Of the answer's 10 statements, 9 correct and 1 distorted: it says RFC 7159 kept a warning
+  against `eval()`, where RFC 7159 added the warning and dropped RFC 4627's sentence that a JSON text can be safely passed to
+  `eval()`. W1 is stated ended, C1 current, W2 to W4 absent: no stale-current error, no control error. RQ2 had no answer
+  (`unknown`) at any stage.
+* **Planted lines.** In a second call, a copy of the answer after each step carried two planted lines: the step's withdrawn
+  sentence stated as current, and C1 stated as ended. The grader found 8 of 8 and flagged no other statement. In that call it
+  graded the `eval()` statement correct in all four copies: one statement graded two ways.
+* **Cost.** 66 calls, none failed, 3 minutes (the reading; each withdrawal stage took under a tenth of a second), $0.09 by the
+  runner's estimate, under a cap of $1.
+* **What this run is not.** One run, with no repeat and no side without the kernel to compare with. The withdrawals are a
+  synthetic intervention: the IETF withdrew none of these sentences; later editions changed them.
+* **Checking it.** The journal goes on past the last receipt by a seal and the close: check it against
+  `arm_c.phase5.receipt` without `--at-end`. `scripts/verify_published_runs.py` checks it against every stage's receipt.
+
 ### How far these numbers go
 
 The tables are what was measured. What they do not show:
@@ -419,8 +458,8 @@ was. Recommended for 0.1: runs of **a few thousand records** and up to **8 agent
 
 ## The recorded runs
 
-The runs of section 1 are release assets of v0.1.0, the two runs on four makers of v0.1.6, the control run of 0.1.7 of v0.1.7 and
-the runs of 0.2 of v0.2.0: one archive per run and per grading, each with a manifest of its files (sizes and SHA-256), and
+The runs of section 1 are release assets of v0.1.0, the two runs on four makers of v0.1.6, the control run of 0.1.7 of v0.1.7,
+the runs of 0.2 of v0.2.0 and the JSON RFC run of v0.2.2: one archive per run and per grading, each with a manifest of its files (sizes and SHA-256), and
 `SHA256SUMS` over all of them (`SHA256SUMS-runs.txt` from v0.1.6 on).
 
 | Archive | What it holds |
@@ -434,6 +473,7 @@ the runs of 0.2 of v0.2.0: one archive per run and per grading, each with a mani
 | `control017-K`, `control017-grading-opus` | the control run of 0.1.7 and its grading (v0.1.7) |
 | `control02-run1-K`, `control02-run2-K`, `control02-grading-fable` | the control runs of 0.2 and their grading (v0.2.0) |
 | `first02-run1-K`, `first02-run2-K` | the first runs of 0.2, made again after the fix; their four graded packets are in `control02-grading-fable` |
+| `jsonrfc-run1-K`, `jsonrfc-grading-argon` | the JSON RFC run, and its grading with the measures from the journal and the scripts that made them (v0.2.2) |
 
 A run folder holds the journal (`arm_c/run.wal`), the calls and replies, the answers, the inputs (corpus copy, checklist,
 withdrawal plan) and the summary. Left out: the agents' tokens (`arm_c/subjects.json`; replaying the journal needs none)
