@@ -1,5 +1,5 @@
-"""The corpus bacteria-under-flow (benchmarks/corpora/bacteria-under-flow): its bytes and attribution headers, both withdrawn
-passages inside one reading section of the kernel, its questions and its withdrawal plan. The reference is published after the
+"""The corpus bacteria-under-flow (benchmarks/corpora/bacteria-under-flow): its bytes and attribution headers, its manifest and
+document order, both withdrawn passages inside one reading section of the kernel, its questions and its withdrawal plan. The reference is published after the
 run; benchmarks/PREREGISTRATION_CROSS_BIO.md names it by SHA-256.
 
 Run: python -m unittest discover -s benchmarks -p "test_*.py"
@@ -10,6 +10,7 @@ import hashlib
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import unittest
 
@@ -69,6 +70,8 @@ class CrossBioCorpus(unittest.TestCase):
     def setUp(self):
         self.files = {name: (ROOT / name).read_bytes() for name in FILES}
         self.plan = json.loads((ROOT / "withdrawal.json").read_text(encoding="utf-8"))
+        self.raw_manifest = (ROOT / "manifest.json").read_bytes()
+        self.manifest = json.loads(self.raw_manifest)
 
     def test_the_three_papers_are_their_pinned_bytes_with_their_attribution(self):
         for name, (size, sha, pmc) in FILES.items():
@@ -82,6 +85,48 @@ class CrossBioCorpus(unittest.TestCase):
         self.assertEqual(sum(len(r) for r in self.files.values()), 106620)
         reports = (ROOT / "reports.txt").read_text(encoding="utf-8").split()
         self.assertEqual(reports, [PREFIX + n for n in FILES], "publication order: 2017, 2019, 2024")
+
+    def test_the_manifest_pins_the_three_files_to_a_commit_of_this_repository(self):
+        source = self.manifest["source"]
+        # the kernel's document identity names a repository, a commit of it and the path from its root; the papers are in no git
+        # repository, so the manifest names this one and the commit of it that holds the three files
+        self.assertEqual((source["origin_recorded"], source["repository"]), ("https://github.com/OrganeticSphere/yuce.git",
+                                                                             "OrganeticSphere/yuce"))
+        self.assertRegex(source["commit"], r"^[0-9a-f]{40}$")
+        entries = self.manifest["entries"]
+        self.assertEqual([e["path"] for e in entries], [PREFIX + n for n in FILES])
+        for e in entries:
+            raw = (REPO / e["path"]).read_bytes()
+            size, sha, pmc = FILES[e["path"][len(PREFIX):]]
+            self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (e["size_bytes"], e["raw_sha256"]), e["path"])
+            self.assertEqual((e["size_bytes"], e["raw_sha256"]), (size, sha), e["path"])
+            # the git blob id: a checkout that converted line endings would change it
+            self.assertEqual(hashlib.sha1(b"blob %d\0" % len(raw) + raw).hexdigest(), e["git_blob"], e["path"])
+            self.assertEqual((e["upstream"]["pmcid"], e["upstream"]["licence"]), (pmc, "CC BY 4.0"), e["path"])
+            self.assertEqual(e["upstream"]["url"], "https://doi.org/" + e["upstream"]["doi"])
+        self.assertEqual([e["date"] for e in entries], ["2017-04-12", "2019-06-06", "2024-07-22"])
+
+    def test_the_pinned_commit_holds_the_three_files_where_its_history_is_at_hand(self):
+        # in a clone of OrganeticSphere/yuce the pinned commit is in the history: every path there is the file's blob. Elsewhere
+        # (an exported snapshot, the private development repository) the commit is not at hand and the check is skipped.
+        commit = self.manifest["source"]["commit"]
+        try:
+            at_hand = subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True).returncode == 0
+        except OSError:
+            at_hand = False
+        if not at_hand:
+            self.skipTest("the pinned commit is not in this checkout's history")
+        for e in self.manifest["entries"]:
+            blob = subprocess.run(["git", "-C", str(REPO), "rev-parse", f"{commit}:{e['path']}"], capture_output=True, text=True)
+            self.assertEqual((blob.returncode, blob.stdout.strip()), (0, e["git_blob"]), e["path"])
+
+    def test_the_reports_and_the_document_order_follow_publication(self):
+        reports = (ROOT / "reports.txt").read_text(encoding="utf-8").split()
+        self.assertEqual(reports, [e["path"] for e in self.manifest["entries"]])
+        docs = {p: (REPO / p).read_bytes().decode("utf-8") for p in reports}
+        by_id = P.source_document_paths(self.raw_manifest, docs)
+        order = json.loads((ROOT / "document_order.json").read_text(encoding="utf-8"))
+        self.assertEqual([by_id[d] for d in order], reports, "the kernel's document ids in publication order")
 
     def test_both_withdrawn_passages_are_at_their_offsets_once_inside_one_section(self):
         for st in self.plan["steps"]:

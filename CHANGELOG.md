@@ -28,8 +28,10 @@
 * **A fourth corpus: three papers on bacteria under flow** (`benchmarks/corpora/bacteria-under-flow/`), excerpts of CC BY 4.0
   papers of 2017, 2019 and 2024 with their attribution, for withdrawals and for claims that join papers. Its reference was fixed
   before any run and is published after it; `benchmarks/PREREGISTRATION_CROSS_BIO.md` names it and its two addenda by SHA-256 and
-  fixes the run, what it measures and what would count against the kernel. `benchmarks/test_cross_bio_corpus.py` checks the bytes
-  and headers, both withdrawn passages inside one reading section, the questions and the plan.
+  fixes the run, what it measures and what would count against the kernel. Its manifest names `OrganeticSphere/yuce` and the
+  commit of it that holds the three files, as the RFC corpus does. `benchmarks/test_cross_bio_corpus.py` checks the bytes and
+  headers, the manifest and, in a clone of this repository, that the commit holds the files, the document order, both withdrawn
+  passages inside one reading section, the questions and the plan.
 * **A corpus can bring its own research questions.** `benchmarks/run_pilot_ac.py --questions <file>` takes a JSON list of
   questions with their topics (default: RQ1 and RQ2, as before), checks it before any work, gives it to the kernel and records it
   in the run's snapshot. `benchmarks/test_questions_option.py` checks the file and a stub run that answers each question.

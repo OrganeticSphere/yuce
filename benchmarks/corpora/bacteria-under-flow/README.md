@@ -29,7 +29,11 @@ JATS XML of Europe PMC to Markdown. Its header names the paper, the licence and 
 - **`questions.json`** holds the run's three questions with their topics. A topic is the stem of a word of the question itself.
   The kernel shows the topics to the readers, and picks the claims of an answer's window by them.
 - **`withdrawal.json`**: two steps, both applied. 2A withdraws a clause of B, 2B a sentence of A.
-- **`reports.txt`** gives the files in publication order.
+- **`manifest.json`** names, for each file, its size, SHA-256, git blob id, publication date and paper (DOI, PMC id, licence).
+  The kernel's document ids come from the manifest's source repository, commit and path. The papers are in no git repository,
+  so the manifest names this repository (`OrganeticSphere/yuce`), the commit of it that holds the three files, and their paths
+  from the repository's root. A run of this corpus takes the repository's root as `--repo`.
+- **`reports.txt`** gives the files in publication order, and **`document_order.json`** the kernel's document ids in that order.
 - **`checklist.md`** says how the run is graded.
 - **The reference** was fixed before the run, with two addenda. It holds the papers' facts, the links between papers, the traps,
   and for each withdrawal what must fall and what must stand. `benchmarks/PREREGISTRATION_CROSS_BIO.md` names the three files by
@@ -39,5 +43,6 @@ JATS XML of Europe PMC to Markdown. Its header names the paper, the licence and 
 
 `benchmarks/test_cross_bio_corpus.py` checks:
 - the bytes of the three files, their attribution headers, and the publication order;
+- the manifest against the files and, in a clone of this repository, that the pinned commit holds them; the document order;
 - that both withdrawn passages sit at their offsets, once each, and inside one reading section of the kernel;
 - the questions and their topics, and the plan.
