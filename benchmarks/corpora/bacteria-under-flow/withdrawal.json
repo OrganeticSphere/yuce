@@ -1,5 +1,5 @@
 {
- "rule": "pinned before the run: 2A withdraws W1, 2B withdraws W2, in this order on one journal, both always; W2 counts for the showcase only if no answer line of Q1-Q3 lost a ground at 2A (PREREGISTRATION_CROSS_BIO.md)",
+ "rule": "pinned before the run: 2A withdraws W1, 2B withdraws W2, in this order on one journal, both always; W2 counts toward the result 'an answer fell and was given again' only if no answer line of Q1-Q3 lost a ground at 2A (PREREGISTRATION_CROSS_BIO.md)",
  "steps": [
   {
    "name": "2A",

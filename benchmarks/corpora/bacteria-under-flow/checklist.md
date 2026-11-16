@@ -15,8 +15,8 @@ For each step, 2A and 2B:
 - **collateral:** the records that rest both on the withdrawn interval and on what must stand. They fall, and are counted apart;
 - **sent back:** the questions the kernel sends back to be answered again.
 
-The condition of W2: whether any answer line of Q1–Q3 lost a ground at 2A. W2 counts for the showcase (an answer fell and was
-given again) only if none did; its mechanical checks above are reported either way.
+The condition of W2: whether any answer line of Q1–Q3 lost a ground at 2A. W2 counts toward the result "an answer fell and was
+given again" only if none did; its mechanical checks above are reported either way.
 
 The export: the standing claims whose quotes come from two or more papers, with the byte intervals of their quotes.
 
