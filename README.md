@@ -6,9 +6,10 @@
 
 YuCe answers that from the record, not by asking a model. Your agents work through it over MCP: it hands each agent one bounded
 task at a time, accepts a quote only when its bytes occur in the source, records which conclusions rest on which quotes, and keeps
-the accepted records and their grounds in a sealed, hash-chained journal. When a source is withdrawn, the kernel itself lists the
-conclusions that stood on it, and the others stay standing. A stopped run replays its journal to the same roots, and anyone can
-check a published journal without a model.
+the accepted records and their grounds in a sealed, hash-chained journal. The journal is a write-ahead log: a record is written
+and synced to disk before the kernel's state changes and before the agent gets its answer. When a source is withdrawn, the kernel
+itself lists the conclusions that stood on it, and the others stay standing. A stopped run replays its journal to the same roots,
+and anyone can check a published journal without a model.
 
 **A deterministic evidence control kernel for AI agent teams:** Rust, Apache-2.0, calls no model. Agents of any model are its
 clients. Deterministic here means that the kernel's answers follow from its inputs and a journal replays to the same roots; two
