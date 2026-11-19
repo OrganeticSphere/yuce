@@ -1010,7 +1010,8 @@ Audit server for a team of agents:
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the
-                audit, engine and session roots, exit 1 if the journal is refused or the receipt names no state of it
+                audit, engine and session roots, exit 1 if the journal is refused or the receipt names no state of it; `not_checked`
+                says what no check covers (without --checkpoint: a journal cut back to an earlier frame boundary verifies too)
   keygen        a signing key for checkpoints: --name <name> --out <file>; writes the key to the file and prints its verifier key
   audit-sign    signs the seals of a recorded 0.2 journal: --wal <run.wal> --signing-key <file> [--out <folder>]; C2SP checkpoints
                 (default folder <run.wal>.checkpoints); audit-verify --checkpoint <file> [--trusted-keys <file>] [--key <verifier>]

@@ -1840,6 +1840,11 @@ pub(crate) fn live_read(frames: usize, in_flight: Option<u64>) -> Value {
 /// crash. Exit 2 when the file cannot be read: that says nothing about the journal. A journal cut back to a complete entry is a
 /// shorter sound journal: only a receipt shows that anything is missing. A journal a server is writing is checked up to its last
 /// complete entry at that moment and the report says so (`live`): an entry the server has not finished is no torn tail.
+/// What `audit-verify` says it did not check when no anchor kept apart from the journal was given (Probe 1 finding 8).
+const UNANCHORED: &str = "frame-boundary truncation: verified without an external checkpoint, so a journal cut back to an earlier frame boundary \
+                          verifies like the whole one; give --checkpoint with a signed checkpoint kept apart from the journal, or --expect with \
+                          its latest receipt";
+
 pub fn cmd_audit_verify(a: &Args) {
     let wal = a.req("wal");
     refuse_locked_whole(&wal);
@@ -1889,7 +1894,16 @@ pub fn cmd_audit_verify(a: &Args) {
     if read.live {
         out["live"] = live_read(entries, Some(read.in_flight_bytes));
     }
+    // what this check does not cover, said beside its status (Probe 1 finding 8, 17.11.2026: a plain VERIFIED was read as more
+    // than it is). The hash chain holds for every prefix of a journal: without an anchor kept apart from it, a journal cut back to
+    // an earlier frame boundary verifies like the whole one. The status keeps its values; an anchor given below narrows the field
+    out["external_checkpoint"] = json!(false);
+    out["not_checked"] = json!(UNANCHORED);
     if let Some((verdict, refused)) = checkpoint {
+        if let Some(frames) = verdict["names"]["frames"].as_u64().filter(|_| !refused) {
+            out["external_checkpoint"] = json!(true);
+            out["not_checked"] = json!(format!("frame-boundary truncation after frame {frames}, the last one the signed checkpoint covers"));
+        }
         out["checkpoint"] = verdict;
         if refused {
             out["status"] = json!("CHECKPOINT_REFUSED");
@@ -1920,6 +1934,13 @@ pub fn cmd_audit_verify(a: &Args) {
             out["status"] = json!("MISMATCH");
             println!("{out}");
             std::process::exit(1);
+        }
+        // a receipt kept apart anchors the journal up to its state, no further
+        if out["external_checkpoint"] == false {
+            out["not_checked"] = json!(format!(
+                "frame-boundary truncation after entry {}, the receipt's state: verified without an external checkpoint, and the receipt anchors the journal only up to its state",
+                at.unwrap_or(0)
+            ));
         }
         if read.bytes != read.complete_bytes {
             out["note"] = json!(
