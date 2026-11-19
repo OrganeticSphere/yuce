@@ -74,6 +74,9 @@ pub struct Follower {
     /// of their end (as `last` is the mark of a frame). The next step reads on from there, not from the frame again.
     tail: Option<(u64, u64, Hash)>,
     broken: Option<(usize, KernelError)>,
+    /// The first bytes of the file (at most `MARK_BYTES`), kept when the follower stopped before it read any frame: there is no
+    /// end of a frame to read again then, and these bytes tell a file that became another one.
+    start: Option<(u64, Hash)>,
     /// The bytes read from the file so far.
     #[cfg(test)]
     read_bytes: u64,
@@ -95,6 +98,7 @@ impl Follower {
             last: None,
             tail: None,
             broken: None,
+            start: None,
             #[cfg(test)]
             read_bytes: 0,
         }
@@ -127,6 +131,11 @@ impl Follower {
             if back > 0 {
                 let read = self.read(self.offset - back, back)?;
                 self.same(read.as_ref().map_or(&[][..], |r| r.bytes.as_slice()), read.is_some())?;
+            } else if let Some((n, hash)) = self.start {
+                let read = self.read(0, n)?;
+                if !read.is_some_and(|r| r.bytes.len() as u64 == n && sha256(&r.bytes) == hash) {
+                    return Err(Stop::Replaced("the first bytes of the file are no longer what they were".to_string()));
+                }
             }
             if let Some((frame, error)) = &self.broken {
                 return Err(Stop::Broken { frame: *frame, error: Box::new(error.clone()) });
@@ -184,10 +193,8 @@ impl Follower {
             match self.apply(&fresh[at..end], visit) {
                 Ok(more) => go_on = more,
                 Err(error) => {
-                    let frame = self.frames();
                     self.restore();
-                    self.broken = Some((frame, error.clone()));
-                    return Err(Stop::Broken { frame, error: Box::new(error) });
+                    return Err(self.stop(error));
                 }
             }
             self.offset += (end + 1 - at) as u64;
@@ -240,8 +247,16 @@ impl Follower {
 
     /// The stop at bytes longer than the longest frame with no end of a frame.
     fn unterminated(&mut self) -> Stop {
+        self.stop(error("audit WAL unterminated frame exceeds 64 MiB"))
+    }
+
+    /// The follower stops at the frame after the ones it read, for `error`. One that read no frame keeps a mark of the file's
+    /// first bytes, to read them again at each later step.
+    fn stop(&mut self, error: KernelError) -> Stop {
         let frame = self.frames();
-        let error = error("audit WAL unterminated frame exceeds 64 MiB");
+        if self.last.is_none() {
+            self.start = self.read(0, MARK_BYTES as u64).ok().flatten().map(|r| (r.bytes.len() as u64, sha256(&r.bytes)));
+        }
         self.broken = Some((frame, error.clone()));
         Stop::Broken { frame, error: Box::new(error) }
     }

@@ -277,6 +277,39 @@ fn a_follower_that_stopped_reads_no_more_than_the_end_of_the_last_frame_at_a_lat
 }
 
 #[test]
+fn a_follower_that_stopped_before_any_frame_tells_a_file_that_became_another_one() {
+    let (whole, path) = (temp("start_whole"), temp("start"));
+    let bytes = journal(&whole.0);
+    // a file whose first line is no frame of a journal
+    append(&path.0, b"{\"not\":\"a frame\"}\n");
+    let mut watch = Watch::new(&path.0);
+    assert!(matches!(watch.step(), Err(Stop::Broken { frame: 0, .. })));
+    // what is written after that line changes nothing, and a later step reads the first bytes only
+    append(&path.0, &vec![b'0'; 3 * 1024 * 1024]);
+    let before = watch.follower.read_bytes;
+    for _ in 0..5 {
+        assert!(matches!(watch.step(), Err(Stop::Broken { frame: 0, .. })));
+    }
+    assert!(watch.follower.read_bytes - before <= 5 * MARK_BYTES as u64, "{} bytes read by five steps", watch.follower.read_bytes - before);
+    assert!(watch.follower.state().is_none());
+    // a journal put at that path is another file: a new follower reads it from its start
+    std::fs::write(&path.0, &bytes).unwrap();
+    assert!(matches!(watch.step(), Err(Stop::Replaced(_))));
+    let mut again = Watch::new(&path.0);
+    again.step().unwrap();
+    assert_eq!(again.export(), prov::export(&whole.0).unwrap().text());
+    // the same of a file shorter than the bytes kept, and of one that is empty
+    let (short, empty) = (temp("start_short"), temp("start_empty"));
+    for (file, now) in [(&short, &b"{}"[..]), (&empty, &b""[..])] {
+        append(&file.0, b"{\"not\":\"a frame\"}\n");
+        let mut watch = Watch::new(&file.0);
+        assert!(matches!(watch.step(), Err(Stop::Broken { frame: 0, .. })));
+        std::fs::write(&file.0, now).unwrap();
+        assert!(matches!(watch.step(), Err(Stop::Replaced(_))));
+    }
+}
+
+#[test]
 fn a_frame_in_flight_is_read_once_however_many_steps_wait_for_its_end() {
     let (whole, growing) = (temp("flight_whole"), temp("flight"));
     // a journal whose second frame is longer than a megabyte: a document put with that much text
