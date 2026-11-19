@@ -145,6 +145,37 @@ fn table_row(markdown: bool, line: &str) -> bool {
 /// Markdown). A reader of a piece cut from the middle sees what the rows and lines are about; the scope stays the piece, so the
 /// context cannot be quoted (SPEC_V02 roadmap: section and table header at the first reading).
 pub(crate) fn reading_context(doc: &str, text: &str, start: usize) -> Vec<String> {
+    context_lines(doc, text, start).into_iter().map(|(label, a, b)| format!("{label}: {}", text[a..b].trim())).collect()
+}
+
+/// `reading_context` as an agent is shown it (Codex's PR55-R2): the same lines, each with its withdrawn bytes as marks, as in the
+/// section itself, so that a withdrawn heading or table header does not come back as live context above a later section. Returns
+/// the lines and whether any shows a mark; with nothing withdrawn they are `reading_context`'s, byte for byte.
+pub(crate) fn shown_context(doc: &str, text: &str, start: usize, closed: &[(usize, usize)]) -> (Vec<String>, bool) {
+    if closed.is_empty() {
+        return (reading_context(doc, text, start), false);
+    }
+    let mut marked = false;
+    let lines = context_lines(doc, text, start)
+        .into_iter()
+        .map(|(label, a, b)| {
+            let (line, m) = shown_line(text, a, b, closed);
+            marked |= m;
+            format!("{label}: {line}")
+        })
+        .collect();
+    (lines, marked)
+}
+
+/// The line `text[a..b]`, trimmed, with its withdrawn bytes as marks, and whether it marks any.
+pub(crate) fn shown_line(text: &str, a: usize, b: usize, closed: &[(usize, usize)]) -> (String, bool) {
+    let line = &text[a..b];
+    let from = a + (line.len() - line.trim_start().len());
+    super::units::shown_section(text, from, from + line.trim().len(), closed)
+}
+
+/// The lines of `reading_context`, each with its label and the byte range of the whole line in `text`.
+fn context_lines(doc: &str, text: &str, start: usize) -> Vec<(&'static str, usize, usize)> {
     let markdown = super::has_headings(doc);
     let start = start.min(text.len());
     let mut out = Vec::new();
@@ -156,24 +187,24 @@ pub(crate) fn reading_context(doc: &str, text: &str, start: usize) -> Vec<String
     let first = after.iter().find(|(_, l, _)| !l.trim().is_empty()).map_or(("", false), |(_, l, code)| (*l, *code));
     let heading = |l: &str, code: bool| !code && l.trim_start().starts_with('#');
     if markdown && !heading(first.0, first.1) {
-        if let Some((_, h, _)) = before.iter().rev().find(|(_, l, code)| heading(l, *code)) {
-            out.push(format!("section heading: {}", h.trim()));
+        if let Some((at, h, _)) = before.iter().rev().find(|(_, l, code)| heading(l, *code)) {
+            out.push(("section heading", *at, at + h.len()));
         }
     }
     if !first.1 && table_row(markdown, first.0) {
         // walk back over the rows of the same table (blank lines between rows in plain text, the rule in Markdown) to its first
         // row; a line of code ends the table
         let mut header = None;
-        for (_, line, code) in before.iter().rev() {
+        for (at, line, code) in before.iter().rev() {
             let t = line.trim();
             if !code && table_row(markdown, line) {
-                header = Some(t);
+                header = Some((*at, at + line.len()));
             } else if *code || !(t.is_empty() && !markdown) {
                 break;
             }
         }
-        if let Some(h) = header {
-            out.push(format!("table header: {h}"));
+        if let Some((a, b)) = header {
+            out.push(("table header", a, b));
         }
     }
     out
@@ -537,7 +568,10 @@ impl Dispatcher {
         let (second, doc, lo, hi) = parse_pack(key).expect("a gap key");
         let text = s.doc_text(doc).unwrap_or_default();
         let targets = self.pack_targets(s, doc, lo, hi);
-        let mut context: Vec<String> = reading_context(doc, &text, lo).into_iter().map(|c| format!("  {c}")).collect();
+        // withdrawn bytes of the context as marks (Codex's PR55-R2)
+        let closed = s.closed_spans(doc);
+        let (context, mut marked) = shown_context(doc, &text, lo, &closed);
+        let mut context: Vec<String> = context.into_iter().map(|c| format!("  {c}")).collect();
         let all = units(doc, &text);
         let mut body = String::new();
         for (n, (a, b)) in targets.iter().enumerate() {
@@ -549,10 +583,12 @@ impl Dispatcher {
                     .iter()
                     .rev()
                     .filter(|u| u.1 <= *a)
-                    .map(|u| text[u.0..u.1].lines().next().unwrap_or(""))
-                    .find(|p| p.len() - p.trim_start().len() < indent);
-                if let Some(p) = parent {
-                    context.push(format!("  parent of unit {}: {}", n + 1, p.trim()));
+                    .map(|u| (u.0, text[u.0..u.1].lines().next().unwrap_or("")))
+                    .find(|(_, p)| p.len() - p.trim_start().len() < indent);
+                if let Some((at, p)) = parent {
+                    let (p, m) = shown_line(&text, at, at + p.len(), &closed);
+                    marked |= m;
+                    context.push(format!("  parent of unit {}: {p}", n + 1));
                 }
             }
             body.push_str(&format!("[{}] (bytes {a}..{b})\n<<<\n{unit}\n>>>\n", n + 1));
@@ -561,9 +597,10 @@ impl Dispatcher {
             "TASK GAP{}: the reading of report {doc} recorded nothing from the units below. For each unit, record what it states that \
              matters for the research questions, with an exact quote from that unit. If a unit states nothing worth recording, write \
              nothing for it; if none does, answer with no lines. Quote only from the UNITS; the CONTEXT is shown only to understand \
-             them and is never quoted.\nRESEARCH QUESTIONS:\n{}\nCONTEXT (do not quote):\n{}\nUNITS doc_id=\"{doc}\":\n{body}",
+             them and is never quoted.\nRESEARCH QUESTIONS:\n{}\n{}CONTEXT (do not quote):\n{}\nUNITS doc_id=\"{doc}\":\n{body}",
             if second { " (second reader)" } else { "" },
             self.questions_text(),
+            if marked { super::units::WITHDRAWN_NOTE } else { "" },
             if context.is_empty() { "  (none)".to_string() } else { context.join("\n") },
         );
         let ranges = targets.iter().map(|(a, b)| (doc.to_string(), *a, *b)).collect();
@@ -653,6 +690,24 @@ Ni 2010 | China | 2
         let at = txt.find("Ni 2010").unwrap();
         assert_eq!(reading_context("review.txt", txt, at), ["table header: Study | Country | Arms"], "plain text: rows of three cells or more");
         assert!(reading_context("review.txt", txt, txt.find("Included").unwrap()).is_empty());
+    }
+
+    #[test]
+    fn the_context_shown_marks_its_withdrawn_bytes_and_is_the_context_itself_without_them() {
+        // Codex's PR55-R2: a withdrawn heading came back as live context above a later section
+        let md = "# Trials RED\n\nSome text.\n\n| Study | Year |\n|---|---|\n| Lee 2009 | 2009 |\n| Ni 2010 | 2010 |\n";
+        let at = md.find("| Ni 2010").unwrap();
+        let span = |q: &str| {
+            let i = md.find(q).unwrap();
+            (i, i + q.len())
+        };
+        assert_eq!(shown_context("t.md", md, at, &[]), (reading_context("t.md", md, at), false));
+        assert_eq!(shown_context("t.md", md, at, &[span("Lee 2009")]), (reading_context("t.md", md, at), false), "withdrawn text elsewhere");
+        let (lines, marked) = shown_context("t.md", md, at, &[span(" RED"), span("Year")]);
+        assert!(marked);
+        assert_eq!(lines, ["section heading: # Trials[withdrawn: 4 bytes]", "table header: | Study | [withdrawn: 4 bytes] |"]);
+        let (lines, _) = shown_context("t.md", md, at, &[span("# Trials RED")]);
+        assert_eq!(lines[0], "section heading: [withdrawn: 12 bytes]", "a heading withdrawn whole is a mark, not text");
     }
 
     #[test]

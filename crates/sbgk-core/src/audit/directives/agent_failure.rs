@@ -2,6 +2,9 @@ use super::*;
 impl Dispatcher {
     pub(super) fn reported_unresolved<S: AuditStore>(&self, s: &S) -> BTreeSet<String> {
         let mut keys = self.unresolved.clone();
+        // a unit fallen again past its bound of openings is given up at the next call that coordinates; until then it is reported
+        // as such, so that no completion shows it closed (Codex's PR55-R1)
+        keys.extend(self.fallen_units(s, &Flags::of(s)).1);
         if self.cfg.agent_attempts.is_some() {
             for (key, e) in super::agent_failures::state(s)["work"].as_object().into_iter().flat_map(|m| m.iter()) {
                 if e["unresolved"] == true && (!key.starts_with("rq:") || e["question_set_revision"] == self.question_set_revision()) {
