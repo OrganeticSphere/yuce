@@ -3591,10 +3591,22 @@ def answers_md(a: dict, c: dict) -> tuple[str, dict]:
         if not ans:
             return "(none)"
         out = [] if plain else [f"outcome: {ans['outcome']}"] + ([f"reason: {ans['reason']}"] if ans.get("reason") else [])
+        # the kernel's notices of an answer, each once: a notice belongs to the record it names, and every claim resting on that
+        # record carries it, so written into each claim's text one notice came back 18 times in one answer (run CROSS_BIO_r1)
+        notices = []
+        for cl in ans["claims"]:
+            notices += [n for n in cl.get("temporal_warnings") or [] if n not in notices]
+        if notices and not plain:
+            out += ["Kernel notices:"] + [f"  - {n}" for n in notices]
         for cl in ans["claims"]:
             tags = [f"stance: {cl['stance']}"] if cl.get("stance") and not plain else []
             tags += [f"as of: {cl['as_of']}"] if cl.get("as_of") and not plain else []
-            out.append(f"- {cl['text']}" + (f" [{'; '.join(tags)}]" if tags else ""))
+            text = cl["text"]
+            if cl.get("authored_text") is not None and cl.get("temporal_warnings") and not plain:
+                named = [n.split(" ", 1)[0] for n in cl["temporal_warnings"] if n.startswith("@")]
+                lead = "Historical statement" if any(" stale_suspect:" in n for n in cl["temporal_warnings"]) else "Statement"
+                text = (f"(kernel notices {', '.join(named)}) " if named else "(kernel notices above) ") + f"{lead}: {cl['authored_text']}"
+            out.append(f"- {text}" + (f" [{'; '.join(tags)}]" if tags else ""))
             out += [f"  - [{x['report']}] \"{x['quote']}\"" for x in cl["quotes"]]
         if ans.get("unsettled"):
             out.append(f"Not settled: {ans['unsettled']}")

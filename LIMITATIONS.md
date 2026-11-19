@@ -75,7 +75,10 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   overlaps the withdrawn bytes, though the rest of the quote still stands, and every place in the document where the same bytes
   stand is closed with them. The text an agent writes is another matter: a later answer can repeat withdrawn content in other
   words, and how often it does is measured, not prevented. A note that a claim lost its later quote speaks for that claim: another record may
-  still show the later state.
+  still show the later state. With `--withdrawn-anchor`, a standing claim that names a hash, version, `#`number, error code or
+  file path found only in withdrawn text, and in none of its own quotes, is flagged; the kernel does not judge meaning, and
+  nothing falls by the flag. A whole number with its unit is no such name: a claim that keeps "4 mm/s" after the sentence
+  holding it was withdrawn is not flagged. A decimal number reads as a version, so "0.691" is one.
 * **`audit-proof --out` of 0.2.0 does not refuse the journal's own path.** Pointed at the journal, it writes the quittance over
   it, and the run is lost. 0.2.1 refuses it, as `audit-index` does for its database; with 0.2.0 keep the default
   (`<run.wal>.proofs/`) or name another file.
@@ -179,6 +182,7 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   not the default: it knew fewer version transitions than a dedicated graph system and cost three times as much.
 * **Reading version transitions into the kernel** (`--build-scope versions`).
 * **The dynamic ontology** (`--ontology-revisions`, `--ontology-review`): concepts that grow and are revised during a run.
+* **The withdrawn-name notice** (`--withdrawn-anchor`): measured on the recorded runs, where it finds none.
 
 ## Not in 0.1
 

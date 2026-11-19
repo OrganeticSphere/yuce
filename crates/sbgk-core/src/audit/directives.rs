@@ -2694,7 +2694,7 @@ impl Dispatcher {
             links.join("\n"),
             if open.is_empty() { "  (none)".to_string() } else { open.join("\n") }
         );
-        (format!("{prompt}{}", super::quality::stale::prompt(s)), Scope::default(), issued)
+        (format!("{prompt}{}{}", super::quality::stale::prompt(s), super::quality::withdrawn_anchor::prompt(s)), Scope::default(), issued)
     }
 
     /// The claims a summary answers from, best first, and how many there were before the cap. A claim is about the question when

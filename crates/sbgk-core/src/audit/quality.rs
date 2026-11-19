@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 pub mod evolution;
 pub mod stale;
+pub mod withdrawn_anchor;
 pub fn config<S: AuditStore>(s: &S) -> Value {
     s.checkpoint("audit:mcp:coverage").map(|c| c["context"]["graph_quality"].clone()).unwrap_or(Value::Null)
 }

@@ -1145,6 +1145,11 @@ fn record_json(state: &AuditState, id: &RecordId) -> Value {
             if !warnings.is_empty() {
                 out["temporal_warnings"] = json!(warnings);
             }
+            // a standing claim that names what only withdrawn text held (16.11.2026): a notice, nothing falls by it
+            let withdrawn = sbgk_core::audit::quality::withdrawn_anchor::annotation(state, *id);
+            if !withdrawn.is_null() {
+                out["withdrawn_anchor"] = withdrawn;
+            }
             if let Value::Object(more) = read::record_projection(state, id) {
                 out.as_object_mut().expect("object").extend(more);
             }
@@ -1569,7 +1574,7 @@ fn create_run(a: &Args, wal: &Path) -> AuditState {
 /// without them is the one it always was.
 fn graph_quality_args(a: &Args) -> Value {
     let mut q = json!({});
-    for k in ["term-hygiene", "ring-rotate", "link-both-sides", "stale-suspect", "evolution-cards", "temporal-summary"] {
+    for k in ["term-hygiene", "ring-rotate", "link-both-sides", "stale-suspect", "withdrawn-anchor", "evolution-cards", "temporal-summary"] {
         if a.sw(k) {
             q[k.replace('-', "_")] = json!(true);
         }
@@ -2143,11 +2148,11 @@ pub fn cmd_audit_proof_verify(a: &Args) {
 /// checked first, as `audit-verify` checks it, and a refused journal is not read (exit 1). The tools answer as the live server's
 /// do for the same state: `status`, `dependents` (`--record`, or `--doc-id` with an optional `--start`/`--end`), `active-claims`
 /// (`--doc-id`), `diff` (`--from`, `--to`), `record` (`--record`), `fallen` (`--since`) and `coverage` (`--doc-id`, `--unit-status`),
-/// each with `--limit`.
+/// each with `--limit`; and `withdrawn-anchor`, the standing claims that name what only withdrawn text held, all of them.
 pub fn cmd_audit_read(a: &Args) {
-    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record, fallen or coverage");
-    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen" | "coverage") {
-        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record, fallen or coverage"));
+    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record, fallen, coverage or withdrawn-anchor");
+    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen" | "coverage" | "withdrawn-anchor") {
+        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record, fallen, coverage or withdrawn-anchor"));
     }
     if let Some(status) = a.get("unit-status").filter(|st| !UNIT_STATUSES.contains(st)) {
         fail(&format!("--unit-status '{status}': one of {}", UNIT_STATUSES.join(", ")));
@@ -2206,6 +2211,7 @@ pub fn cmd_audit_read(a: &Args) {
             Err(e) => fail(&e.to_string()),
         },
         "coverage" => read::coverage(&state, entries, a.get("doc-id"), a.get("unit-status"), limit),
+        "withdrawn-anchor" => read::withdrawn_anchor(&state),
         _ => read::fallen(&state, entries, since.map(snapshot), limit),
     };
     if journal.live {
