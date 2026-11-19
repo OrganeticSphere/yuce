@@ -1,0 +1,431 @@
+{
+ "_status": "CHECKED AGAINST THE KERNEL (V1-V9: 2026-11-10; V10-V16: 2026-11-19; the whole file computed again on 2026-11-19, dev 1a88f0d3)",
+ "_note": "Computed 2026-11-10 only from the text of the kernel's specification of the 0.2 journal format, without reading kernel code. Checked the same evening against sbgk-core: every value V1-V8 is given by the kernel's own functions, unchanged. The kernel pins them in its tests, so a change of the format breaks those tests first: trees.rs spec_text_vectors (V1, V2, V4), persistence.rs spec_text_vectors (V3, the whole frame line byte for byte), state_root.rs spec_text_vectors (V5, V6), state_tests.rs the_seal_and_projection_hashes_give_the_vectors_written_from_the_spec_text (V7, V8). V2_real (new): the records leaf of a real observation and of a real claim on it, as the kernel serializes them, and the records root their frame names (state_tests.rs a_real_record_leaf_and_its_frame_records_root). V5 and V6 check the state-root formula only: the verifier does not recompute the state root (level J4 is cancelled). V9 (added 10.11.2026, late evening): a real pair of lines, the frame before a seal and the seal frame, from withdrawal-version-close.wal (a synthetic run of the kernel on two short documents); the equalities it shows are listed in V9_checks and were checked before writing.",
+ "_note_delivery2": "V10-V16 (19.11.2026, delivery 2, amendment 3): every value was computed by the kernel own functions in a test module that was not committed (worktree of dev d5620f83, sbgk-core 0.2.2): the request hash of a frame body; the Gear table, the content-defined chunks and the version of a document; the evidence node of a quote and its id; the id of a record; the settings hash; a git-manifest document identity built and checked by the kernel; and V14, a small run the kernel wrote (inputs/valid/kinds-batch-put.wal), with the leaf value L of each of its 13 records as the kernel serializes it, its leaf and the records root of every frame. The same evening every value was computed again by a separate script written from the text of amendment 3 only, with equal results. V1-V9 are unchanged.",
+ "_definitions": {
+  "H": "SHA-256(ASCII(domain) || 0x00 || x1 || x2 ...)",
+  "JCS": "RFC 8785, UTF-8",
+  "lp": "4-byte big-endian length, then bytes",
+  "tree_shape": "RFC 6962: left subtree takes the largest power of two strictly less than n",
+  "SHA256": "plain SHA-256 of the bytes, no domain (request hash, record id, document version, evidence id)",
+  "u16le_u32le": "unsigned integer, 2 or 4 bytes, little-endian (evidence node only)"
+ },
+ "_note_amendment4": "Amendment 4 (SPEC-DEFECT-16): V11_version_one_chunk is replaced by V11_short_documents. \"Prior witness.\" is two chunks, [0,7) and [7,14), with the same version as before; \"Short note.\" is one chunk, its best score being on its last byte. The whole file was computed again by the kernel on merged dev (19.11.2026, dev 1a88f0d3), by the same test module, not committed; every other value is unchanged.",
+ "vectors": {
+  "V1_rec_empty": "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41",
+  "V2_L_jcs": [
+   "{\"id\":\"vector-0\",\"kind\":\"observe\"}",
+   "{\"id\":\"vector-1\",\"kind\":\"observe\"}",
+   "{\"id\":\"vector-2\",\"kind\":\"observe\"}"
+  ],
+  "V2_leaf": [
+   "02cc8d3401b742e842f47e5eb86387d04c3e40caaaef6fefce763c6a14586b3a",
+   "91541b96915cc39cdacd38e0437d9257a5d24f043ddc7d7fb5d97d75d70b7170",
+   "7afb8d6308012bdd6bedebc2d8a2393af51a234827d9382f59a90f21f582cc24"
+  ],
+  "V2_root_n1": "02cc8d3401b742e842f47e5eb86387d04c3e40caaaef6fefce763c6a14586b3a",
+  "V2_root_n2": "0e47cfc6c3aafdf12a6a75d3c0834a9c3d44105565ae9661225cf18b28f2c9f4",
+  "V2_root_n3": "9ffe7bd62d1a3077572650027a8a5ff2f0e4a9470a43e4c3a98d507fd151b94e",
+  "V3_B_jcs": "{\"actor\":\"kernel\",\"note\":\"synthetic vector, not a real frame\"}",
+  "V3_body_hash": "8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d",
+  "V3_Hd_jcs": "{\"body_hash\":\"8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":0,\"wal_op\":\"genesis\"}",
+  "V3_h": "09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc",
+  "V3_line": "{\"body\":{\"actor\":\"kernel\",\"note\":\"synthetic vector, not a real frame\"},\"hash\":\"09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc\",\"header\":{\"body_hash\":\"8cc44deb9e6221a35721f07e0a0d4bebacef06e074fe903c45b58d462d34e98d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":0,\"wal_op\":\"genesis\"}}\n",
+  "V3_line_sha256": "3e73136c14bb58c8091442795e0f3cfc2beb7224f907e7bd707afa20d9c8c53f",
+  "V3_line_len": 453,
+  "V4_frame_hashes": [
+   "09cdb29cc18bdc6fb6310d325d645bed02107f2e2e453be7b7854d8b0be587dc",
+   "b4bae464021d624403627580d82ca0648b01665e080bbe8c6d42f4e43fb56c1c",
+   "c9609d57fb2cffdcebc4c3834042f827576269e1556438ab854c8acf694cfed9"
+  ],
+  "V4_log_root_n1": "32afd763295e47fd58bb46c2586b435b862e2eddcb3647ae7d562bb8b52c2370",
+  "V4_log_root_n2": "3e318f3d65a78bf4f2f50a7f055fe8c937a69ac8838926dd71a0434ed1f460a2",
+  "V4_log_root_n3": "3e68089e94499e6df51727b8b615320676ff1e203d8b77551e28502e685da147",
+  "V5_bucket_meta_0_empty": "1c6cdbb266d0260bd4b04ce1e9eadbd16494e40891adf3ad162fa5a9828d5cb6",
+  "V5_section_meta_empty": "4a7b45a454c3180a968b4f38966412ba22ebbf53499e033b9d97b66afcdfa2ba",
+  "V5_section_withdrawn_empty": "e85d6d838983ee31cf9e31d7d7441938a9fb9ef27df8b0b152e047793d78a78d",
+  "V5_root_empty_state": "b556e673e5dbadeb5200567af4cabbe567b5df849e56a5855059c861a9b15e99",
+  "V6_key_jcs": "\"run_id\"",
+  "V6_value_jcs": "\"vector-run\"",
+  "V6_kh": "ec29e20c74d605ecabc16e1d26973e4990a130bb8f2757cf05d7019cd3630ca2",
+  "V6_bucket": 236,
+  "V6_leaf": "179ee8c007329c42e5e5eca7e239e29b9270110676d658930440dc4adc14c6ce",
+  "V6_section_meta": "2d43f69bb24904fa5b04b35be09496074658a1e5dfaab1266fdc5026464403c3",
+  "V6_root": "6102326a854af6dbcd524b7d0f8b0834ee9f3e79c0dded78925323c092a34741",
+  "V7_P_jcs": "{\"audit_root\":\"6102326a854af6dbcd524b7d0f8b0834ee9f3e79c0dded78925323c092a34741\",\"engine_root\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"format\":\"r2r-seal/2\",\"log_root\":\"3e68089e94499e6df51727b8b615320676ff1e203d8b77551e28502e685da147\",\"log_size\":3,\"projections\":{\"dependencies\":\"65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133\",\"status\":\"88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875\"},\"run_id\":\"vector-run\",\"wal_head\":\"c9609d57fb2cffdcebc4c3834042f827576269e1556438ab854c8acf694cfed9\"}",
+  "V7_seal_hash": "30f2caab8a2e00b324a3c42993822f7318be44dfd2068b8557427e44b68c6f72",
+  "V8_proj_status_empty": "88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875",
+  "V8_proj_deps_empty": "65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133",
+  "V8_session_root": "92bd027e0f65b39feac22b7ce1ddf60aafaa5955b7700056afa614811e917d79",
+  "V8_settings_hash_empty": "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e",
+  "V2_real_leaf_value_jcs": [
+   "{\"author\":\"worker\",\"based_on\":[],\"body\":{\"doc_id\":\"policy\",\"document_version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\",\"evidence_id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"exact_quote\":\"Prior witness.\",\"kind\":\"observe\",\"terms\":[\"witness\"]},\"directive\":\"task\",\"doc_id\":\"policy\",\"ends\":null,\"evidence\":{\"id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"span\":[0,14],\"version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\"},\"id\":\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\",\"kind\":\"observe\",\"quote\":\"Prior witness.\",\"seq\":1,\"stance\":null,\"terms\":[\"witness\"],\"text\":null}",
+   "{\"author\":\"worker\",\"based_on\":[\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"body\":{\"based_on\":[\"@fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"witness\",\"text\":\"Witnessed.\"},\"directive\":\"task\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"4eafd577a079dc6af30ed85830b1d4d33195381a2f862d6d71b4907238291741\",\"span\":[0,14],\"version\":\"7f86c086e2ceb0b95ab0e39567add60a72c04071257432275865ce614a0fb346\"},\"id\":\"fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"}],\"id\":\"171d56daeb0b8a3d687b2c84475f2dcf03fcb370a476015529c38503067cf74b\",\"kind\":\"claim\",\"quote\":null,\"seq\":2,\"stance\":\"reported\",\"terms\":[\"witness\"],\"text\":\"Witnessed.\"}"
+  ],
+  "V2_real_leaf": [
+   "b635f5edec501dc2abee35d22ffd97d64978faec23dc11fc54fb0ebc0621fb50",
+   "2a2317d6c6cfca54d42dfb6da4c3d5ca04b6cc1fca50bc31841aef9dfef3cfc2"
+  ],
+  "V2_real_records_root": "6f99214ff9e8891fd0945b8394b24ee522d1eb9c45f3e5c5aaf4e0276020edcf",
+  "V9_real_seal_pair_source": "withdrawal-version-close.wal (a synthetic run of two short documents written by the kernel; no run data)",
+  "V9_seal_frame_index": 2,
+  "V9_line_frame_n_minus_1": "{\"body\":{\"actor\":\"reader-1\",\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"command\":{\"directive\":\"task-1\",\"kind\":\"submit\",\"lines\":[{\"doc_id\":\"trial.txt\",\"exact_quote\":\"Title: Tai chi for knee arthritis.\",\"kind\":\"observe\",\"local_id\":\"ot\",\"terms\":[\"trial\"]},{\"doc_id\":\"review.txt\",\"exact_quote\":\"Review A includes the Ni 2010 trial.\",\"kind\":\"observe\",\"local_id\":\"oa\",\"terms\":[\"review\"]},{\"based_on\":[\"oa\",\"ot\"],\"kind\":\"claim\",\"local_id\":\"c1\",\"stance\":\"reported\",\"subject\":\"review\",\"text\":\"Review A rests on the Ni 2010 trial.\"},{\"doc_id\":\"review.txt\",\"exact_quote\":\"Other trials: Wang 2009 — Kraków.\",\"kind\":\"observe\",\"local_id\":\"ow\",\"terms\":[\"trial\"]},{\"based_on\":[\"ow\"],\"kind\":\"claim\",\"local_id\":\"c2\",\"stance\":\"reported\",\"subject\":\"review\",\"text\":\"Review A also cites Wang 2009.\"}],\"scope\":{\"docs\":[\"trial.txt\",\"review.txt\"],\"ranges\":[],\"topic\":\"trials\"}},\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"outcome\":{\"kind\":\"records\",\"result\":{\"accepted\":[\"321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d\",\"9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894\",\"b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe\",\"5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d\",\"b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e\"],\"error\":null,\"failed_index\":null}},\"request_hash\":\"9116d4211721c46c36ec9e2646fdd8bd72247092f08d34c47eacf6e7325295fb\",\"submission_id\":\"seed\"},\"hash\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\",\"header\":{\"body_hash\":\"ebd1472742495ecfa2c5509c50c96de7db053c4fa869d01321eeb423ff3a946d\",\"format\":\"sbgk-session-log/3\",\"previous\":\"21fc6a471ba0493b250dea51b8540f553af2b5993329fb2ee5ff520971b5e5ec\",\"records_root\":\"e0a6ce91138617ddd65660df6f23cdd62ef8c0cbc00ab1b0b6146fbac73a36e5\",\"seq\":1,\"wal_op\":\"audit\"}}",
+  "V9_line_seal_frame_n": "{\"body\":{\"actor\":\"kernel\",\"audit_root\":\"9750d7624a05799c86117e283b67f963098c2759c5dd64223f64d078dc279801\",\"command\":{\"kind\":\"seal\",\"seal\":{\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"format\":\"r2r-seal/2\",\"log_root\":\"c7c4bff5bb9f303fe3a080db14716e44880dde96eeca3a9698235307f427ae45\",\"log_size\":2,\"projections\":{\"dependencies\":\"5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307\",\"status\":\"e75ce9dc8c6158b0c5f52af78b0db65f1d402c73889e5d0219a892ff40256573\"},\"run_id\":\"reference-small\",\"wal_head\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\"}},\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"outcome\":{\"kind\":\"value\",\"result\":{\"seal\":{\"audit_root\":\"29bc887798cfd195c29fc7b3c4cc1951cafb89e7f9abbb0fde17390acd45d016\",\"engine_root\":\"64c5ae12f84a61351a393350a421ae2c002c7e72700361e207bf5a0eb2e19559\",\"format\":\"r2r-seal/2\",\"log_root\":\"c7c4bff5bb9f303fe3a080db14716e44880dde96eeca3a9698235307f427ae45\",\"log_size\":2,\"projections\":{\"dependencies\":\"5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307\",\"status\":\"e75ce9dc8c6158b0c5f52af78b0db65f1d402c73889e5d0219a892ff40256573\"},\"run_id\":\"reference-small\",\"wal_head\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\"},\"seal_hash\":\"3649c1601a583d7ef0d880f8ab89baeb91c1462d530807de76e1421a532d8574\"}},\"request_hash\":\"cdf5e62277473d302915c629ed9a8c82af851cb2f694e8270dd7273cf20f1483\",\"submission_id\":\"seal-2\"},\"hash\":\"7af5780a5eaa1dd005f13bdebb8018d18ae3a755ed71a7c72b9be4c473b68a04\",\"header\":{\"body_hash\":\"b6feee168dbf40373cbcd29607ce84be96f3552ef2dac02b8f4f52394c7d6dbf\",\"format\":\"sbgk-session-log/3\",\"previous\":\"97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b\",\"records_root\":\"fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41\",\"seq\":2,\"wal_op\":\"audit\"}}",
+  "V9_frame_hash_n_minus_1": "97a7e27617a64edbc0fb289ebb6804317a657581431deb94efcd55a84816ea0b",
+  "V9_frame_hash_n": "7af5780a5eaa1dd005f13bdebb8018d18ae3a755ed71a7c72b9be4c473b68a04",
+  "V9_seal_hash": "3649c1601a583d7ef0d880f8ab89baeb91c1462d530807de76e1421a532d8574",
+  "V9_checks": [
+   "P.log_size == n",
+   "P.wal_head == hash of frame n-1",
+   "P.audit_root == body.audit_root of frame n-1",
+   "P.engine_root == body.engine_root of frame n-1",
+   "body.audit_root of frame n != P.audit_root (the seal receipt)",
+   "outcome.result.seal_hash == H(R2R-SEAL/2, JCS(P))",
+   "P.log_root == RFC 6962 root over the hashes of frames 0..n-1"
+  ],
+  "V10_request_actor": "owner",
+  "V10_request_command_jcs": "{\"doc_id\":\"note.txt\",\"kind\":\"put_document\",\"text\":\"Vector text.\"}",
+  "V10_request_preimage_jcs": "[\"r2r-audit-request/1\",\"owner\",{\"doc_id\":\"note.txt\",\"kind\":\"put_document\",\"text\":\"Vector text.\"}]",
+  "V10_request_hash": "2ba189a45a0bd63c5a4cbaa1cfe2cd2a617922a0cedc9dc3f04cd00650ece554",
+  "V11_gear_index": [
+   0,
+   1,
+   2,
+   255
+  ],
+  "V11_gear_hex": [
+   "7ce8bb23b8f1bd32",
+   "6c15dd941e896853",
+   "676c0c68b5d87f66",
+   "96eb1800e4698ba7"
+  ],
+  "V11_cdc": {
+   "window_w": 512,
+   "max_chunk": 2048
+  },
+  "V11_documents": [
+   {
+    "bytes": 9250,
+    "chunk_hashes": [
+     "a7bb17c6299cdbd6834e663b9da6578d93514a05b920b6aa5a00f6782554b6dd",
+     "b2d7c26d169d171cfa7bd352a58813f1ffe0d99288052f72dbe7064cb30247cc",
+     "a839f649cd77c439e0f2f021b0f70d56816feb69ca22627aa1318b2f2bd9b6a4",
+     "914eb3d253579df0776c4ffe87779e43d6e6e4e092e739970e0614e1b46beba8",
+     "cdbb2eccb297f94ee09c5f819cfab0cd23a2a6eb7082a8ce5640fb42749cd371",
+     "2c7708bd1a27d3e85d751c48da209074eab51d4e92216892a6a97214402df986",
+     "67601ccfcf6e5f0bf0fbd323598d1b3d2e7978b3fe97d744786cceeb4f48a5c4",
+     "d8407132a230745ec79bea5da63f90d5bdac198a6dec4086ac6a22d28848771a",
+     "0b8e9e2bfef8bddc235e744edf9b1d55d93bbfd1fffb34e18bf351043f08578f",
+     "fdf3f0f7506195c321c2f33bed94f08fae626e145933ca2ab2791afbc7f3e1c1",
+     "03eb222f7af221f310b0d3cc5a5ec01e5f3e53964fc7c69ab975523ec12994b4"
+    ],
+    "chunk_ranges": [
+     [
+      0,
+      708
+     ],
+     [
+      708,
+      1671
+     ],
+     [
+      1671,
+      2325
+     ],
+     [
+      2325,
+      2851
+     ],
+     [
+      2851,
+      3896
+     ],
+     [
+      3896,
+      4989
+     ],
+     [
+      4989,
+      6561
+     ],
+     [
+      6561,
+      7333
+     ],
+     [
+      7333,
+      7900
+     ],
+     [
+      7900,
+      8905
+     ],
+     [
+      8905,
+      9250
+     ]
+    ],
+    "doc_id": "vector-a.txt",
+    "raw_sha256": "3d372b2943f2db8430e7766584fd05d05faf4a91d1dbd064002410d348f4b802",
+    "text": "Line 000: the vector document states fact number 0 about the sample corpus.\nLine 001: the vector document states fact number 1 about the sample corpus.\nLine 002: the vector document states fact number 2 about the sample corpus.\nLine 003: the vector document states fact number 3 about the sample corpus.\nLine 004: the vector document states fact number 4 about the sample corpus.\nLine 005: the vector document states fact number 5 about the sample corpus.\nLine 006: the vector document states fact number 6 about the sample corpus.\nLine 007: the vector document states fact number 7 about the sample corpus.\nLine 008: the vector document states fact number 8 about the sample corpus.\nLine 009: the vector document states fact number 9 about the sample corpus.\nLine 010: the vector document states fact number 10 about the sample corpus.\nLine 011: the vector document states fact number 11 about the sample corpus.\nLine 012: the vector document states fact number 12 about the sample corpus.\nLine 013: the vector document states fact number 13 about the sample corpus.\nLine 014: the vector document states fact number 14 about the sample corpus.\nLine 015: the vector document states fact number 15 about the sample corpus.\nLine 016: the vector document states fact number 16 about the sample corpus.\nLine 017: the vector document states fact number 17 about the sample corpus.\nLine 018: the vector document states fact number 18 about the sample corpus.\nLine 019: the vector document states fact number 19 about the sample corpus.\nLine 020: the vector document states fact number 20 about the sample corpus.\nLine 021: the vector document states fact number 21 about the sample corpus.\nLine 022: the vector document states fact number 22 about the sample corpus.\nLine 023: the vector document states fact number 23 about the sample corpus.\nLine 024: the vector document states fact number 24 about the sample corpus.\nLine 025: the vector document states fact number 25 about the sample corpus.\nLine 026: the vector document states fact number 26 about the sample corpus.\nLine 027: the vector document states fact number 27 about the sample corpus.\nLine 028: the vector document states fact number 28 about the sample corpus.\nLine 029: the vector document states fact number 29 about the sample corpus.\nLine 030: the vector document states fact number 30 about the sample corpus.\nLine 031: the vector document states fact number 31 about the sample corpus.\nLine 032: the vector document states fact number 32 about the sample corpus.\nLine 033: the vector document states fact number 33 about the sample corpus.\nLine 034: the vector document states fact number 34 about the sample corpus.\nLine 035: the vector document states fact number 35 about the sample corpus.\nLine 036: the vector document states fact number 36 about the sample corpus.\nLine 037: the vector document states fact number 37 about the sample corpus.\nLine 038: the vector document states fact number 38 about the sample corpus.\nLine 039: the vector document states fact number 39 about the sample corpus.\nLine 040: the vector document states fact number 40 about the sample corpus.\nLine 041: the vector document states fact number 41 about the sample corpus.\nLine 042: the vector document states fact number 42 about the sample corpus.\nLine 043: the vector document states fact number 43 about the sample corpus.\nLine 044: the vector document states fact number 44 about the sample corpus.\nLine 045: the vector document states fact number 45 about the sample corpus.\nLine 046: the vector document states fact number 46 about the sample corpus.\nLine 047: the vector document states fact number 47 about the sample corpus.\nLine 048: the vector document states fact number 48 about the sample corpus.\nLine 049: the vector document states fact number 49 about the sample corpus.\nLine 050: the vector document states fact number 50 about the sample corpus.\nLine 051: the vector document states fact number 51 about the sample corpus.\nLine 052: the vector document states fact number 52 about the sample corpus.\nLine 053: the vector document states fact number 53 about the sample corpus.\nLine 054: the vector document states fact number 54 about the sample corpus.\nLine 055: the vector document states fact number 55 about the sample corpus.\nLine 056: the vector document states fact number 56 about the sample corpus.\nLine 057: the vector document states fact number 57 about the sample corpus.\nLine 058: the vector document states fact number 58 about the sample corpus.\nLine 059: the vector document states fact number 59 about the sample corpus.\nLine 060: the vector document states fact number 60 about the sample corpus.\nLine 061: the vector document states fact number 61 about the sample corpus.\nLine 062: the vector document states fact number 62 about the sample corpus.\nLine 063: the vector document states fact number 63 about the sample corpus.\nLine 064: the vector document states fact number 64 about the sample corpus.\nLine 065: the vector document states fact number 65 about the sample corpus.\nLine 066: the vector document states fact number 66 about the sample corpus.\nLine 067: the vector document states fact number 67 about the sample corpus.\nLine 068: the vector document states fact number 68 about the sample corpus.\nLine 069: the vector document states fact number 69 about the sample corpus.\nLine 070: the vector document states fact number 70 about the sample corpus.\nLine 071: the vector document states fact number 71 about the sample corpus.\nLine 072: the vector document states fact number 72 about the sample corpus.\nLine 073: the vector document states fact number 73 about the sample corpus.\nLine 074: the vector document states fact number 74 about the sample corpus.\nLine 075: the vector document states fact number 75 about the sample corpus.\nLine 076: the vector document states fact number 76 about the sample corpus.\nLine 077: the vector document states fact number 77 about the sample corpus.\nLine 078: the vector document states fact number 78 about the sample corpus.\nLine 079: the vector document states fact number 79 about the sample corpus.\nLine 080: the vector document states fact number 80 about the sample corpus.\nLine 081: the vector document states fact number 81 about the sample corpus.\nLine 082: the vector document states fact number 82 about the sample corpus.\nLine 083: the vector document states fact number 83 about the sample corpus.\nLine 084: the vector document states fact number 84 about the sample corpus.\nLine 085: the vector document states fact number 85 about the sample corpus.\nLine 086: the vector document states fact number 86 about the sample corpus.\nLine 087: the vector document states fact number 87 about the sample corpus.\nLine 088: the vector document states fact number 88 about the sample corpus.\nLine 089: the vector document states fact number 89 about the sample corpus.\nLine 090: the vector document states fact number 90 about the sample corpus.\nLine 091: the vector document states fact number 91 about the sample corpus.\nLine 092: the vector document states fact number 92 about the sample corpus.\nLine 093: the vector document states fact number 93 about the sample corpus.\nLine 094: the vector document states fact number 94 about the sample corpus.\nLine 095: the vector document states fact number 95 about the sample corpus.\nLine 096: the vector document states fact number 96 about the sample corpus.\nLine 097: the vector document states fact number 97 about the sample corpus.\nLine 098: the vector document states fact number 98 about the sample corpus.\nLine 099: the vector document states fact number 99 about the sample corpus.\nLine 100: the vector document states fact number 100 about the sample corpus.\nLine 101: the vector document states fact number 101 about the sample corpus.\nLine 102: the vector document states fact number 102 about the sample corpus.\nLine 103: the vector document states fact number 103 about the sample corpus.\nLine 104: the vector document states fact number 104 about the sample corpus.\nLine 105: the vector document states fact number 105 about the sample corpus.\nLine 106: the vector document states fact number 106 about the sample corpus.\nLine 107: the vector document states fact number 107 about the sample corpus.\nLine 108: the vector document states fact number 108 about the sample corpus.\nLine 109: the vector document states fact number 109 about the sample corpus.\nLine 110: the vector document states fact number 110 about the sample corpus.\nLine 111: the vector document states fact number 111 about the sample corpus.\nLine 112: the vector document states fact number 112 about the sample corpus.\nLine 113: the vector document states fact number 113 about the sample corpus.\nLine 114: the vector document states fact number 114 about the sample corpus.\nLine 115: the vector document states fact number 115 about the sample corpus.\nLine 116: the vector document states fact number 116 about the sample corpus.\nLine 117: the vector document states fact number 117 about the sample corpus.\nLine 118: the vector document states fact number 118 about the sample corpus.\nLine 119: the vector document states fact number 119 about the sample corpus.\n",
+    "version": "826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820"
+   },
+   {
+    "bytes": 5033,
+    "chunk_hashes": [
+     "b2ffbd40e42ab2974b8bd1ef624cc34a7b059f1e738d851b095d46e3656741ed",
+     "d5e3c7bb220e04d19308b776f316aec98e3696388d56b9e4487527473aef1a10",
+     "d5e3c7bb220e04d19308b776f316aec98e3696388d56b9e4487527473aef1a10",
+     "a59ba8abeed0f4373414c46e744dcc923613f4155870374f3c0028b0d2b6da35",
+     "d77d691ce8e0d8ccd6085189ce188aabf1f8cee5de2a6519d1f72c33fe371826"
+    ],
+    "chunk_ranges": [
+     [
+      0,
+      49
+     ],
+     [
+      49,
+      2097
+     ],
+     [
+      2097,
+      4145
+     ],
+     [
+      4145,
+      5021
+     ],
+     [
+      5021,
+      5033
+     ]
+    ],
+    "doc_id": "vector-b.txt",
+    "raw_sha256": "d85fd4d5846fc42a1bd7d4bb1ca7eca6f49563e9a3906d7382d57d0ce501f7d7",
+    "text": "Header\n========================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================\nTail line after the run.\n",
+    "version": "2c65efde18e67162213a698813ddd70e0b165fd80e4c0f6285557519d0e71d3b"
+   },
+   {
+    "bytes": 2461,
+    "chunk_hashes": [
+     "839f7fc3886c398f5c43949643cfa5f8348867fb0a96a456b0eeccf47fc2c420",
+     "06760b1c70471cd3b2b595f796075e514014bd9a58d23640608cacfc806ff2b9",
+     "6d3fe757deeafb0a62b23ecc2630e6a233b9ba531edca01cab180cd9aa30435c"
+    ],
+    "chunk_ranges": [
+     [
+      0,
+      25
+     ],
+     [
+      25,
+      2073
+     ],
+     [
+      2073,
+      2461
+     ]
+    ],
+    "doc_id": "vector-c.txt",
+    "raw_sha256": "c1e183f6d1eb0a0f3d282b25600f7a0a1ace46b98017177c7895dfc88ba211b0",
+    "text": "Opening of the third document.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\nKraków — naïve café, 東京 and Ελλάδα: a document that is not ASCII.\n",
+    "version": "f64c723425c1f78c225f318d81f082027289e438ea15973d77dc61fd72027e6c"
+   }
+  ],
+  "V11_version_empty_document": "901cbbf1d192aacb62fc67b8c2c097a61674e2ebb6d0f53f755d3cc9f42cca96",
+  "V11_short_documents": [
+   {
+    "chunk_hashes": [
+     "15d1b8fe1699936f229654455e476a1be1a8b0f0ebed64862df4350937d93ce2",
+     "570a72d6add52e0c38c66724e294ad5e3b369fa89a6aeb1bc26365fd83a7a06f"
+    ],
+    "chunk_ranges": [
+     [
+      0,
+      7
+     ],
+     [
+      7,
+      14
+     ]
+    ],
+    "text": "Prior witness.",
+    "version": "16c4bc86b661afd480cb64a3113eb0baeaebf83e10c7aec966d371a6091a81a7"
+   },
+   {
+    "chunk_hashes": [
+     "0517584556731f0ab13e0df5a2b8f26a8959fdf9e66253d985ba24f89e7b31c0"
+    ],
+    "chunk_ranges": [
+     [
+      0,
+      11
+     ]
+    ],
+    "text": "Short note.",
+    "version": "257e0197b7e4c238b4df8096666473bf366d10699fd08cb7fd4d8d6a95c38c1e"
+   }
+  ],
+  "V12_evidence": [
+   {
+    "doc_id": "vector-a.txt",
+    "evidence_id": "a05a53d7f36e9f08887b6f30ea032e8325a68b6e5a26540f2c79223111c0c466",
+    "node_bytes_hex": "010c00766563746f722d612e747874369b7d8fd4f0b850b856de6d4c30801850dbe4e60b11a0bd5c0900420dddf9831c00000001a7bb17c6299cdbd6834e663b9da6578d93514a05b920b6aa5a00f6782554b6dd000000001c000000",
+    "quote": "Line 000: the vector documen",
+    "segments": [
+     [
+      "a7bb17c6299cdbd6834e663b9da6578d93514a05b920b6aa5a00f6782554b6dd",
+      0,
+      28
+     ]
+    ],
+    "span": [
+     0,
+     28
+    ]
+   },
+   {
+    "doc_id": "vector-a.txt",
+    "evidence_id": "f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3",
+    "node_bytes_hex": "010c00766563746f722d612e7478748a611a32754bd5f88858409fef956d077f5374fb65a0ebbc5e0bf88f9d92eb362d00000002a7bb17c6299cdbd6834e663b9da6578d93514a05b920b6aa5a00f6782554b6ddb0020000c4020000b2d7c26d169d171cfa7bd352a58813f1ffe0d99288052f72dbe7064cb30247cc0000000019000000",
+    "quote": " 009: the vector document states fact number ",
+    "segments": [
+     [
+      "a7bb17c6299cdbd6834e663b9da6578d93514a05b920b6aa5a00f6782554b6dd",
+      688,
+      708
+     ],
+     [
+      "b2d7c26d169d171cfa7bd352a58813f1ffe0d99288052f72dbe7064cb30247cc",
+      0,
+      25
+     ]
+    ],
+    "span": [
+     688,
+     733
+    ]
+   }
+  ],
+  "V13_record_author": "worker",
+  "V13_record_directive": "task",
+  "V13_record_ordinal": 2,
+  "V13_record_body_jcs": "{\"based_on\":[\"@fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"component\",\"text\":\"It is reported.\"}",
+  "V13_record_preimage_jcs": "[\"r2r.audit.record.v1\",\"worker\",\"task\",2,{\"based_on\":[\"@fb510d9ed7398438b7fc925b34799f2904259d35840af9ab0230744fe5ab1d64\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"component\",\"text\":\"It is reported.\"}]",
+  "V13_record_id": "f7333f9726d62a191a5f065b13a461e6e8b7df3609b3de119afd3a59b65e096f",
+  "V14_journal": "inputs/valid/kinds-batch-put.wal",
+  "V14_documents": "inputs/valid/kinds-batch-put.docs",
+  "V14_frames": 8,
+  "V14_records": [
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[],\"body\":{\"doc_id\":\"vector-a.txt\",\"document_version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\",\"evidence_id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"exact_quote\":\" 009: the vector document states fact number \",\"kind\":\"observe\",\"terms\":[\"fact\",\"corpus\",\"fact\"]},\"directive\":\"T1\",\"doc_id\":\"vector-a.txt\",\"ends\":null,\"evidence\":{\"id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"span\":[688,733],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\",\"kind\":\"observe\",\"quote\":\" 009: the vector document states fact number \",\"seq\":1,\"stance\":null,\"terms\":[\"fact\",\"corpus\"],\"text\":null}",
+    "frame": 1,
+    "index": 0,
+    "leaf": "88e7cdd737dbb16f15ad7bbcea6cd722a3e2b3160479ec5d39fa8ca42d5eb6f2"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[],\"body\":{\"doc_id\":\"vector-c.txt\",\"document_version\":\"f64c723425c1f78c225f318d81f082027289e438ea15973d77dc61fd72027e6c\",\"evidence_id\":\"0e4b4b0c292da27bddfdca87cde1a60ab5738b511d8134ded6ae2ebb35fc2b95\",\"exact_quote\":\"Opening of the third document.\\nKraków — naïve café, 東京\",\"kind\":\"observe\",\"terms\":[\"city\"]},\"directive\":\"T1\",\"doc_id\":\"vector-c.txt\",\"ends\":null,\"evidence\":{\"id\":\"0e4b4b0c292da27bddfdca87cde1a60ab5738b511d8134ded6ae2ebb35fc2b95\",\"span\":[0,63],\"version\":\"f64c723425c1f78c225f318d81f082027289e438ea15973d77dc61fd72027e6c\"},\"id\":\"283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\",\"kind\":\"observe\",\"quote\":\"Opening of the third document.\\nKraków — naïve café, 東京\",\"seq\":2,\"stance\":null,\"terms\":[\"city\"],\"text\":null}",
+    "frame": 1,
+    "index": 1,
+    "leaf": "9102b91138417529a379c90076ea566b8cceecf0ac1ceb40fb3cc40a46b1e2b2"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"body\":{\"based_on\":[\"@479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"kind\":\"claim\",\"object\":\"corpus\",\"stance\":\"reported\",\"subject\":\"fact\",\"text\":\"The vector document states fact 7.\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"span\":[688,733],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"}],\"id\":\"b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\",\"kind\":\"claim\",\"quote\":null,\"seq\":3,\"stance\":\"reported\",\"terms\":[\"fact\",\"corpus\"],\"text\":\"The vector document states fact 7.\"}",
+    "frame": 1,
+    "index": 2,
+    "leaf": "8047f4e94912106535816cfe7c69155710580850780fde4929a1d25a81bc0573"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[\"283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\",\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"body\":{\"as_of\":20261119,\"based_on\":[\"@283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\",\"@479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"kind\":\"claim\",\"stance\":\"confirmed\",\"subject\":\"city\",\"text\":\"The document names Kraków.\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"0e4b4b0c292da27bddfdca87cde1a60ab5738b511d8134ded6ae2ebb35fc2b95\",\"span\":[0,63],\"version\":\"f64c723425c1f78c225f318d81f082027289e438ea15973d77dc61fd72027e6c\"},\"id\":\"283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\"},{\"evidence\":{\"id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"span\":[688,733],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"}],\"id\":\"6a676c6df7c2c78eb5bf398b821f2fd8456d60f8448d4814f4187f496ceeed2b\",\"kind\":\"claim\",\"quote\":null,\"seq\":4,\"stance\":\"confirmed\",\"terms\":[\"city\"],\"text\":\"The document names Kraków.\"}",
+    "frame": 1,
+    "index": 3,
+    "leaf": "689df08d5956de5544b5094b601ae119511ea92ed4a709651b3319158e74435a"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[\"283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\"],\"body\":{\"based_on\":[\"@283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\"],\"falsifier\":\"A list without cities.\",\"kind\":\"hypothesis\",\"subject\":\"city\",\"text\":\"The corpus may list more cities.\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"0e4b4b0c292da27bddfdca87cde1a60ab5738b511d8134ded6ae2ebb35fc2b95\",\"span\":[0,63],\"version\":\"f64c723425c1f78c225f318d81f082027289e438ea15973d77dc61fd72027e6c\"},\"id\":\"283362d309de9acac7df19549a74343232813ff53e00461727b3380227256ae3\"}],\"id\":\"bb6e2d7a29a100b0e0005cc17b48088382564b504011f49b307cab1bb24688b0\",\"kind\":\"hypothesis\",\"quote\":null,\"seq\":5,\"stance\":null,\"terms\":[\"city\"],\"text\":\"The corpus may list more cities.\"}",
+    "frame": 1,
+    "index": 4,
+    "leaf": "9ac5f954665889a6e9ad3445ff39036e12387ba0d105b70a16bf0a9e5f9df053"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[],\"body\":{\"about\":[\"city\",\"corpus\"],\"kind\":\"question\",\"needed\":\"A complete list.\",\"text\":\"Which cities are named?\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":null,\"id\":\"28b30f8d330db284f164c33a99db010b14d7a000f8c6e597854c74a659b188b9\",\"kind\":\"question\",\"quote\":null,\"seq\":6,\"stance\":null,\"terms\":[\"city\",\"corpus\"],\"text\":\"Which cities are named?\"}",
+    "frame": 1,
+    "index": 5,
+    "leaf": "aa731e820673ce4a39b1f8f4f477672d7df22d55036a1de49688d3deaaf465b3"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"body\":{\"based_on\":[\"@479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"],\"from\":\"@b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\",\"kind\":\"relation\",\"rel\":\"supports\",\"to\":\"@6a676c6df7c2c78eb5bf398b821f2fd8456d60f8448d4814f4187f496ceeed2b\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":[\"b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\",\"supports\",\"6a676c6df7c2c78eb5bf398b821f2fd8456d60f8448d4814f4187f496ceeed2b\"],\"grounds\":[{\"evidence\":{\"id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"span\":[688,733],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"}],\"id\":\"170414ea7003cfead60a0ba7f61743cb928c83325bc7805c06c12976394419d1\",\"kind\":\"relation\",\"quote\":null,\"seq\":7,\"stance\":null,\"terms\":[],\"text\":null}",
+    "frame": 2,
+    "index": 0,
+    "leaf": "5b7617743be889c9cd231d3084e58cd8d6b9be8395df64c74e6fdeb569f12175"
+   },
+   {
+    "L_jcs": "{\"author\":\"w1\",\"based_on\":[\"b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\"],\"body\":{\"answer_ids\":[\"@b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\"],\"directive_id\":\"T1\",\"kind\":\"done\",\"outcome\":\"answered\",\"rq_id\":\"RQ1\",\"text\":\"Fact 7 is stated.\"},\"directive\":\"T1\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"id\":\"b114b895a0e6c3a649ed821961db30c8647a559af79b5a843d59eef2b6be5d07\"}],\"id\":\"ca471d341e8efacd2c8ad8037daf58b08312833e6b7c1706f6ee9c78f01e84d5\",\"kind\":\"done\",\"quote\":null,\"seq\":8,\"stance\":null,\"terms\":[],\"text\":\"Fact 7 is stated.\"}",
+    "frame": 2,
+    "index": 1,
+    "leaf": "2f7b126afec79b9236cffd10e2b77e03e9beff468ce8bfa029bb73c2180a7bd3"
+   },
+   {
+    "L_jcs": "{\"author\":\"w2\",\"based_on\":[],\"body\":{\"doc_id\":\"vector-a.txt\",\"document_version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\",\"evidence_id\":\"1182564b8dfa7c4abb750df597ae912ca7c74e51926fa8af7e3bcdbbc43adbe1\",\"exact_quote\":\"the vector document states fact number 50\",\"kind\":\"observe\",\"terms\":[\"fact\"]},\"directive\":\"T2\",\"doc_id\":\"vector-a.txt\",\"ends\":null,\"evidence\":{\"id\":\"1182564b8dfa7c4abb750df597ae912ca7c74e51926fa8af7e3bcdbbc43adbe1\",\"span\":[3850,3891],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"727801c8dc8d8243cfa461d4a51acf3764195223d8c91f95c4dbc1d1055d072b\",\"kind\":\"observe\",\"quote\":\"the vector document states fact number 50\",\"seq\":9,\"stance\":null,\"terms\":[\"fact\"],\"text\":null}",
+    "frame": 3,
+    "index": 0,
+    "leaf": "6529a31c31cf426705725d9c7091144979a7479ebb6929dc36c122f32d52796f"
+   },
+   {
+    "L_jcs": "{\"author\":\"w2\",\"based_on\":[\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\",\"727801c8dc8d8243cfa461d4a51acf3764195223d8c91f95c4dbc1d1055d072b\"],\"body\":{\"based_on\":[\"@479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\",\"@727801c8dc8d8243cfa461d4a51acf3764195223d8c91f95c4dbc1d1055d072b\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"fact\",\"text\":\"Facts 7 and 50 are stated.\"},\"directive\":\"T2\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"f9f375e9ea2f6a8f874c23f9167dfbda3b9d28691731aed578ed01bb5ce780f3\",\"span\":[688,733],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"479c73e57790c6f3e0ca560b92486076da84a5689cefb15a26f0ed4fac7cab7e\"},{\"evidence\":{\"id\":\"1182564b8dfa7c4abb750df597ae912ca7c74e51926fa8af7e3bcdbbc43adbe1\",\"span\":[3850,3891],\"version\":\"826a3898e3d941b7b93296ba625ef940f725623fb64c0ebe5440ac6ecd1e9820\"},\"id\":\"727801c8dc8d8243cfa461d4a51acf3764195223d8c91f95c4dbc1d1055d072b\"}],\"id\":\"39c6000dcaf73b0d0abbc0ea805ff0a17e02cc9d4d71aaf02732b2c62a462d0a\",\"kind\":\"claim\",\"quote\":null,\"seq\":10,\"stance\":\"reported\",\"terms\":[\"fact\"],\"text\":\"Facts 7 and 50 are stated.\"}",
+    "frame": 3,
+    "index": 1,
+    "leaf": "d24cda4187a7b5da541f326150ee19365604249015b03102262ccf8c2fcb6e34"
+   },
+   {
+    "L_jcs": "{\"author\":\"w3\",\"based_on\":[],\"body\":{\"doc_id\":\"vector-b.txt\",\"document_version\":\"2c65efde18e67162213a698813ddd70e0b165fd80e4c0f6285557519d0e71d3b\",\"evidence_id\":\"d7df8ef31a5b381403c7b7d691910a6e337728ca628a49314c9fdec32f190b28\",\"exact_quote\":\"Tail line after the run.\",\"kind\":\"observe\",\"terms\":[\"tail\"]},\"directive\":\"T3\",\"doc_id\":\"vector-b.txt\",\"ends\":null,\"evidence\":{\"id\":\"d7df8ef31a5b381403c7b7d691910a6e337728ca628a49314c9fdec32f190b28\",\"span\":[5008,5032],\"version\":\"2c65efde18e67162213a698813ddd70e0b165fd80e4c0f6285557519d0e71d3b\"},\"id\":\"ff4a1a591e83111c6d357b0d54af128618109715f57324f24441aa74016b2dd1\",\"kind\":\"observe\",\"quote\":\"Tail line after the run.\",\"seq\":11,\"stance\":null,\"terms\":[\"tail\"],\"text\":null}",
+    "frame": 4,
+    "index": 0,
+    "leaf": "8b29e5c3adf93bc7a33991a4632e2595d9d84ec9b410c8c98927dc2172b7f6a3"
+   },
+   {
+    "L_jcs": "{\"author\":\"w3\",\"based_on\":[],\"body\":{\"doc_id\":\"vector-b.txt\",\"document_version\":\"de85e80851cba1d2e3c2327a79315da0c6daf07a8dde77eeb990cf19984119e7\",\"evidence_id\":\"6e9e5e0969d1e19be7c8b02649e4fff57cfb86d5b9f332923a1d918141e72ee8\",\"exact_quote\":\"A new version of the second vector document.\",\"kind\":\"observe\",\"terms\":[\"version\"]},\"directive\":\"T3\",\"doc_id\":\"vector-b.txt\",\"ends\":null,\"evidence\":{\"id\":\"6e9e5e0969d1e19be7c8b02649e4fff57cfb86d5b9f332923a1d918141e72ee8\",\"span\":[7,51],\"version\":\"de85e80851cba1d2e3c2327a79315da0c6daf07a8dde77eeb990cf19984119e7\"},\"id\":\"3237bb88c8509606d0096ca301e7a1421546463beecfbaebdb7d5ee83e054b44\",\"kind\":\"observe\",\"quote\":\"A new version of the second vector document.\",\"seq\":12,\"stance\":null,\"terms\":[\"version\"],\"text\":null}",
+    "frame": 4,
+    "index": 1,
+    "leaf": "d4df4c1e89b66761ff6dd4efca1d762f37329f6478a4f0ad6a7b374dbd5c5cdf"
+   },
+   {
+    "L_jcs": "{\"author\":\"w3\",\"based_on\":[\"3237bb88c8509606d0096ca301e7a1421546463beecfbaebdb7d5ee83e054b44\"],\"body\":{\"based_on\":[\"@3237bb88c8509606d0096ca301e7a1421546463beecfbaebdb7d5ee83e054b44\"],\"kind\":\"claim\",\"stance\":\"reported\",\"subject\":\"version\",\"text\":\"The second document has a new version.\"},\"directive\":\"T3\",\"doc_id\":null,\"ends\":null,\"grounds\":[{\"evidence\":{\"id\":\"6e9e5e0969d1e19be7c8b02649e4fff57cfb86d5b9f332923a1d918141e72ee8\",\"span\":[7,51],\"version\":\"de85e80851cba1d2e3c2327a79315da0c6daf07a8dde77eeb990cf19984119e7\"},\"id\":\"3237bb88c8509606d0096ca301e7a1421546463beecfbaebdb7d5ee83e054b44\"}],\"id\":\"20009431340eba0585be9c9a0430cad7c6ea6d97c6a4ead1bab2845ebd9d582e\",\"kind\":\"claim\",\"quote\":null,\"seq\":13,\"stance\":\"reported\",\"terms\":[\"version\"],\"text\":\"The second document has a new version.\"}",
+    "frame": 4,
+    "index": 2,
+    "leaf": "4907b7607cc8fa44c3f814743eb783317c186846a43eee3c9a9179072a784835"
+   }
+  ],
+  "V14_records_roots": [
+   "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41",
+   "1ef1bba4563de5708117e697ffb9b05e1cf6e9e0b6bd0eaa75e446dfa16eacf3",
+   "8d2053daee3f127657eebbd2fdee299b59c07e5df807983575f0eddca668059e",
+   "c3d8d2241c7e304bda83a77b161ceaee8b67d5ebbf7ec717e87fd463943f0d29",
+   "708d245046af46cf03cb0d3e3e35a7d9fcf34f944d8629c1de84a0639d50caf9",
+   "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41",
+   "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41",
+   "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41"
+  ],
+  "V15_settings_jcs": "{\"build_scope\":\"none\",\"format\":\"r2r-audit-mcp-coverage/1\",\"section_bytes\":6000,\"section_rule\":2}",
+  "V15_settings_hash": "8bf8d518bf552da3ce1452d4a673d1de6b7937b34258ccfe46150e39fa809e26",
+  "V15_settings_hash_empty": "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e",
+  "V16_git_document_text": "# Report\n\nA pinned report.\n",
+  "V16_git_identity": {
+   "commit": "0123456789abcdef0123456789abcdef01234567",
+   "date": "2026-11-19",
+   "kind": "git_manifest",
+   "path": "reports/a.md",
+   "raw_sha256": "783c26301d06a733752efc96d42b4c1ef38fbbf9b3d1447c2cd73e46e6266480",
+   "repo": "https://example.invalid/reports.git",
+   "revision_refs": {
+    "classification": "unresolved_lexical",
+    "commit_candidates": [],
+    "pull_request_candidates": []
+   },
+   "size_bytes": 27
+  },
+  "V16_git_id_preimage_jcs": "[\"R2R-AUDIT-GIT-DOCUMENT/1\",\"https://example.invalid/reports.git\",\"0123456789abcdef0123456789abcdef01234567\",\"reports/a.md\",\"783c26301d06a733752efc96d42b4c1ef38fbbf9b3d1447c2cd73e46e6266480\"]",
+  "V16_git_document_id": "d_607b2fc0581c7b790a9ea1acd3e26cdfe2c18c8dca0c6709eb99614115016cde"
+ }
+}

@@ -1,6 +1,7 @@
 // Shared helpers for the tests. Everything is tested through the built
 // delivery file dist/yuce-verify.mjs.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as yv from "../dist/yuce-verify.mjs";
 
@@ -47,3 +48,17 @@ export function outcome(report) {
 }
 
 export const OTHER_HASH = "ab".repeat(32);
+
+/** The files of a documents folder under inputs/, e.g. docsOf("valid/kinds-batch-put.docs"). */
+export function docsOf(folder) {
+  return readDocsTree(room(`inputs/${folder}`));
+}
+
+function readDocsTree(dir) {
+  return readdirSync(dir)
+    .sort()
+    .flatMap((name) => {
+      const p = join(dir, name);
+      return statSync(p).isDirectory() ? readDocsTree(p) : [new Uint8Array(readFileSync(p))];
+    });
+}

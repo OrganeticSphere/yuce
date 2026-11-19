@@ -1,5 +1,6 @@
-// Self-check on the control vectors (task statement, section 4, acceptance A1).
-// Checks every vector delivery 1 can compute and names the ones it skips.
+// Self-check on the control vectors (TZ v4 section 4; acceptance A1 and B1).
+// Checks every vector this delivery can compute (V1-V4, V7, V9-V16, and the
+// settings hash of V8) and names the ones it skips.
 
 import type { HashAdapter } from "./hash.ts";
 import { fromHex, toHex, utf8 } from "./hash.ts";
@@ -7,6 +8,8 @@ import type { JsonObject, JsonValue } from "./json.ts";
 import { isObject, jcs, parseJson } from "./json.ts";
 import { DOMAIN, LogTree, domainHash, recordLeaf, recordsRoot } from "./trees.ts";
 import { verifyJournal } from "./verify.ts";
+import { CDC_MAX_CHUNK, CDC_WINDOW, anchorBytes, documentChunks, gearHex, occurrences, segmentsOf } from "./cdc.ts";
+import { gitDocumentId, requestHash } from "./j2.ts";
 
 export interface VectorOutcome {
   name: string;
@@ -14,9 +17,12 @@ export interface VectorOutcome {
   detail: string;
 }
 
-/** Vectors of formulas this verifier does not recompute (SPEC section 12). */
+/** Vectors of formulas this verifier does not recompute (SPEC section 12, P3-13). */
 const NOT_RECOMPUTED = /^(V5_|V6_|V8_)/;
-const NOT_RECOMPUTED_REASON = "state-root, projection and session-root formulas are not recomputed by levels J0-J1";
+const NOT_RECOMPUTED_REASON = "state-root, projection and session-root formulas are not recomputed by levels J0-J3";
+
+/** The settings hash: H("R2R-SETTINGS/2", JCS(settings)) (P3-3). Checked by the vectors only. */
+const SETTINGS_DOMAIN = "R2R-SETTINGS/2";
 
 /** Vector entries read as inputs of the checks above (not results of their own). */
 const INPUTS = new Set([
@@ -29,6 +35,22 @@ const INPUTS = new Set([
   "V9_seal_frame_index",
   "V9_line_frame_n_minus_1",
   "V9_line_seal_frame_n",
+  "V10_request_actor",
+  "V10_request_command_jcs",
+  "V10_request_preimage_jcs",
+  "V11_gear_index",
+  "V13_record_author",
+  "V13_record_directive",
+  "V13_record_ordinal",
+  "V13_record_body_jcs",
+  "V13_record_preimage_jcs",
+  "V14_journal",
+  "V14_documents",
+  "V14_frames",
+  "V15_settings_jcs",
+  "V16_git_document_text",
+  "V16_git_identity",
+  "V16_git_id_preimage_jcs",
 ]);
 
 export async function checkVectors(file: JsonValue, adapter: HashAdapter): Promise<VectorOutcome[]> {
@@ -52,8 +74,9 @@ export async function checkVectors(file: JsonValue, adapter: HashAdapter): Promi
     if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new VectorShapeError(`${name} is not a list of strings`);
     return v as string[];
   };
-  const check = async (name: string, run: () => Promise<string | null>): Promise<void> => {
-    if (!vectors.has(name)) return;
+  const check = async (name: string, run: () => Promise<string | null>, key: string = name): Promise<void> => {
+    if (!vectors.has(key)) return;
+    used.add(key);
     try {
       const problem = await run();
       out.push({ name, status: problem === null ? "PASS" : "FAIL", detail: problem ?? "" });
@@ -133,9 +156,12 @@ export async function checkVectors(file: JsonValue, adapter: HashAdapter): Promi
     ]);
     const p = eq("JCS({body, hash, header}) + LF", JSON.stringify(jcs(built) + "\n"), JSON.stringify(line));
     if (p !== null) return p;
-    // The line is a whole one-frame journal: run levels J0-J1 on it.
+    // The line is a whole one-frame journal for J0-J1. It is a hashing vector, not a
+    // real genesis record (SPEC section 12), so J2 is expected to refuse it.
     const report = await verifyJournal([utf8(line)], {}, adapter);
-    if (report.verdict !== "PASS") return `the verifier does not accept V3_line: ${JSON.stringify(report.first_failure)}`;
+    if (report.levels.J0.result !== "PASS" || report.levels.J1.result !== "PASS") {
+      return `levels J0-J1 do not accept V3_line: ${JSON.stringify(report.first_failure)}`;
+    }
     return null;
   });
   await check("V3_line_sha256", async () => eq("SHA-256(V3_line)", toHex(await adapter.sha256(utf8(str("V3_line")))), str("V3_line_sha256")));
@@ -194,6 +220,192 @@ export async function checkVectors(file: JsonValue, adapter: HashAdapter): Promi
       else if (!(await run(p, adapter))) problems.push(`fails: ${name}`);
     }
     return problems.length === 0 ? null : problems.join("; ");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Delivery 2 (amendment 3, P3-13)
+  // ---------------------------------------------------------------------------
+
+  // V10: request_hash.
+  await check("V10_request_hash", async () => {
+    const command = parseObject(str("V10_request_command_jcs"));
+    const actor = str("V10_request_actor");
+    const preimage = jcs(["r2r-audit-request/1", actor, command]);
+    return (
+      eq("the request preimage", JSON.stringify(preimage), JSON.stringify(str("V10_request_preimage_jcs"))) ??
+      eq("request_hash", await requestHash(adapter, actor, command), str("V10_request_hash"))
+    );
+  });
+
+  // V11: the GEAR table, chunks and versions.
+  await check("V11_gear_hex", async () => {
+    const idx = get("V11_gear_index");
+    const want = strList("V11_gear_hex");
+    if (!Array.isArray(idx) || idx.length !== want.length) return "V11_gear_index and V11_gear_hex differ in length";
+    for (let k = 0; k < idx.length; k++) {
+      const p = eq(`GEAR[${String(idx[k])}]`, gearHex(idx[k] as number), want[k]!);
+      if (p !== null) return p;
+    }
+    return null;
+  });
+  await check("V11_cdc", async () => {
+    const cdc = get("V11_cdc");
+    if (!isObject(cdc)) return "V11_cdc is not an object";
+    return eq("window w", String(cdc.get("window_w")), String(CDC_WINDOW)) ?? eq("maximum chunk", String(cdc.get("max_chunk")), String(CDC_MAX_CHUNK));
+  });
+  const docs = get("V11_documents");
+  const v11Texts = new Map<string, string>();
+  if (Array.isArray(docs)) {
+    for (let k = 0; k < docs.length; k++) {
+      const d = docs[k];
+      const docId = isObject(d) && typeof d.get("doc_id") === "string" ? (d.get("doc_id") as string) : String(k);
+      await check(
+        `V11_documents[${docId}]`,
+        async () => {
+          if (!isObject(d) || typeof d.get("text") !== "string") return "not an object with a text";
+          const text = d.get("text") as string;
+          v11Texts.set(docId, text);
+          const bytes = utf8(text);
+          const c = await documentChunks(adapter, bytes);
+          const ranges = JSON.stringify(c.chunks.map((x) => [x.start, x.end]));
+          return (
+            eq("bytes", String(bytes.length), String(d.get("bytes"))) ??
+            eq("raw_sha256", toHex(await adapter.sha256(bytes)), String(d.get("raw_sha256"))) ??
+            eq("chunk_ranges", ranges, jcs(d.get("chunk_ranges") ?? null)) ??
+            eq("chunk_hashes", jcs(c.hashes.map(toHex)), jcs(d.get("chunk_hashes") ?? null)) ??
+            eq("version", toHex(c.version), String(d.get("version")))
+          );
+        },
+        "V11_documents",
+      );
+    }
+  }
+  await check("V11_version_empty_document", async () =>
+    eq("version of the empty document", toHex((await documentChunks(adapter, new Uint8Array(0))).version), str("V11_version_empty_document")),
+  );
+  // Amendment 4, P4-1: two short documents, of two chunks and of one.
+  const shorts = get("V11_short_documents");
+  if (Array.isArray(shorts)) {
+    for (let k = 0; k < shorts.length; k++) {
+      await check(
+        `V11_short_documents[${k}]`,
+        async () => {
+          const d = shorts[k];
+          if (!isObject(d) || typeof d.get("text") !== "string") return "not an object with a text";
+          const c = await documentChunks(adapter, utf8(d.get("text") as string));
+          return (
+            eq("chunk_ranges", JSON.stringify(c.chunks.map((x) => [x.start, x.end])), jcs(d.get("chunk_ranges") ?? null)) ??
+            eq("chunk_hashes", jcs(c.hashes.map(toHex)), jcs(d.get("chunk_hashes") ?? null)) ??
+            eq("version", toHex(c.version), String(d.get("version")))
+          );
+        },
+        "V11_short_documents",
+      );
+    }
+  }
+  // The vectors file of 19.11 before amendment 4 had this key instead.
+  await check("V11_version_one_chunk", async () => {
+    const v = get("V11_version_one_chunk");
+    if (!isObject(v) || typeof v.get("text") !== "string") return "not an object with a text";
+    // Only the version is compared: by P3-8 this text is cut into two chunks, not one,
+    // and the kernel's version is that of two chunks (SPEC-DEFECT-16).
+    const c = await documentChunks(adapter, utf8(v.get("text") as string));
+    return eq("version", toHex(c.version), String(v.get("version")));
+  });
+
+  // V12: evidence anchors on vector-a.txt of V11.
+  const evidence = get("V12_evidence");
+  if (Array.isArray(evidence)) {
+    for (let k = 0; k < evidence.length; k++) {
+      await check(
+        `V12_evidence[${k}]`,
+        async () => {
+          const e = evidence[k];
+          if (!isObject(e)) return "not an object";
+          const docId = e.get("doc_id") as string;
+          const text = v11Texts.get(docId);
+          if (text === undefined) return `no V11 document ${docId}`;
+          const bytes = utf8(text);
+          const q = utf8(e.get("quote") as string);
+          const span = e.get("span") as number[];
+          const found = occurrences(bytes, q, 2);
+          if (found.length !== 1 || found[0] !== span[0] || found[0]! + q.length !== span[1]) return `the quote occurs at ${JSON.stringify(found)}, span is ${JSON.stringify(span)}`;
+          const c = await documentChunks(adapter, bytes);
+          const segs = segmentsOf(c, span[0]!, span[1]!);
+          const segJcs = jcs(segs.map((x) => [toHex(x.hash), x.from, x.to]));
+          const node = await anchorBytes(adapter, docId, q, segs);
+          return (
+            eq("segments", segJcs, jcs(e.get("segments") ?? null)) ??
+            eq("node bytes", toHex(node), String(e.get("node_bytes_hex"))) ??
+            eq("evidence id", toHex(await adapter.sha256(node)), String(e.get("evidence_id")))
+          );
+        },
+        "V12_evidence",
+      );
+    }
+  }
+
+  // V13: the record id.
+  await check("V13_record_id", async () => {
+    const body = parseObject(str("V13_record_body_jcs"));
+    const preimage = jcs(["r2r.audit.record.v1", str("V13_record_author"), str("V13_record_directive"), get("V13_record_ordinal") ?? null, body]);
+    return (
+      eq("the record preimage", JSON.stringify(preimage), JSON.stringify(str("V13_record_preimage_jcs"))) ??
+      eq("record id", toHex(await adapter.sha256(utf8(preimage))), str("V13_record_id"))
+    );
+  });
+
+  // V14: leaves of the records of kinds-batch-put.wal and the records root of every frame.
+  const byFrame = new Map<number, Uint8Array[]>();
+  await check("V14_records", async () => {
+    const recs = get("V14_records");
+    if (!Array.isArray(recs)) return "not an array";
+    for (let k = 0; k < recs.length; k++) {
+      const r = recs[k];
+      if (!isObject(r) || typeof r.get("L_jcs") !== "string") return `V14_records[${k}] has no L_jcs`;
+      const L = r.get("L_jcs") as string;
+      const c = canonicalProblem(L, `V14_records[${k}].L_jcs`);
+      if (c !== null) return c;
+      const leaf = await recordLeaf(adapter, utf8(L));
+      const p = eq(`V14_records[${k}].leaf`, toHex(leaf), String(r.get("leaf")));
+      if (p !== null) return p;
+      const frame = r.get("frame") as number;
+      byFrame.set(frame, [...(byFrame.get(frame) ?? []), leaf]);
+    }
+    return null;
+  });
+  await check("V14_records_roots", async () => {
+    const roots = strList("V14_records_roots");
+    if (get("V14_frames") !== roots.length) return "V14_frames is not the number of roots";
+    if (byFrame.size === 0) return "V14 leaves unavailable";
+    for (let i = 0; i < roots.length; i++) {
+      const p = eq(`records root of frame ${i}`, toHex(await recordsRoot(adapter, byFrame.get(i) ?? [])), roots[i]!);
+      if (p !== null) return p;
+    }
+    return null;
+  });
+
+  // V15 (and V8): the settings hash.
+  await check("V15_settings_hash", async () => {
+    const settingsJcs = str("V15_settings_jcs");
+    return canonicalProblem(settingsJcs, "V15_settings_jcs") ?? eq("settings hash", await H(SETTINGS_DOMAIN, utf8(settingsJcs)), str("V15_settings_hash"));
+  });
+  await check("V15_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V15_settings_hash_empty")));
+  await check("V8_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V8_settings_hash_empty")));
+
+  // V16: the doc_id of a git_manifest description.
+  await check("V16_git_document_id", async () => {
+    const identity = get("V16_git_identity");
+    if (!isObject(identity)) return "V16_git_identity is not an object";
+    const bytes = utf8(str("V16_git_document_text"));
+    const s = (k: string): string => String(identity.get(k));
+    const preimage = jcs(["R2R-AUDIT-GIT-DOCUMENT/1", s("repo"), s("commit"), s("path"), s("raw_sha256")]);
+    return (
+      eq("raw_sha256 of the text", toHex(await adapter.sha256(bytes)), s("raw_sha256")) ??
+      eq("size_bytes", String(bytes.length), s("size_bytes")) ??
+      eq("the identity preimage", JSON.stringify(preimage), JSON.stringify(str("V16_git_id_preimage_jcs"))) ??
+      eq("doc_id", await gitDocumentId(adapter, s("repo"), s("commit"), s("path"), s("raw_sha256")), str("V16_git_document_id"))
+    );
   });
 
   // Names of everything else: skipped, with the reason.

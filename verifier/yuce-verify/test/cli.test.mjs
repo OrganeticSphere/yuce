@@ -1,4 +1,4 @@
-// The command line (task statement, section 4): commands, output forms, exit codes.
+// The command line (the task statement section 4): commands, output forms, exit codes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -17,7 +17,7 @@ const HEAD = "3431d070a4345a4b9e3b8973ce526621408c2921a5d100c00956c5ceac4d34bc";
 test("journal: the human line for a pass, exit 0", () => {
   const r = run("journal", SMALL);
   assert.equal(r.code, 0);
-  assert.equal(r.out, `J0-J1 PASS. Frames: 8. Seals: 2. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED}\n`);
+  assert.equal(r.out, `J0-J2 PASS. Frames: 8. Seals: 2. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED}\n`);
   assert.equal(r.err, "");
 });
 
@@ -56,10 +56,12 @@ test("journal --json: the report is JCS, deterministic, without paths", () => {
   assert.ok(!text.includes(".wal") && !text.includes("inputs") && !text.includes("\\"));
   const report = JSON.parse(text);
   assert.deepEqual(Object.keys(report).sort(), ["anchor", "computed", "first_failure", "input", "levels", "not_verified", "verdict", "verifier"]);
-  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/4", version: "0.1.3" });
+  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/6", version: "0.2.1" });
   assert.deepEqual(report.anchor, { head: { given: false, matched: null }, seal: { given: false, matched: null } });
   assert.deepEqual(report.not_verified, ["quotes_against_sources", "withdrawal_cascade", "signatures"]);
-  assert.deepEqual(report.levels.J2, { result: "NOT_CHECKED" });
+  assert.deepEqual(report.levels.J2, { result: "PASS", documents: 2, settings_hash: "a13963df2e41d383b808f40f7405e012cfd2568ec7154b7b992dc1cd4e081a8b" });
+  assert.deepEqual(report.levels.J3, { result: "NOT_CHECKED" });
+  assert.deepEqual(report.input.sources, { given: false });
 });
 
 test("journal --json for a failure carries first_failure with level, frame, code, detail", () => {
@@ -103,13 +105,13 @@ test("journal --expect-seal not found: exit 1, ANCHOR_NOT_FOUND", () => {
 test("journal: the anchor sentence when both a seal and the head are given", () => {
   const r = run("journal", SMALL, "--expect-seal", SEAL6, "--expect-head", HEAD);
   assert.equal(r.code, 0);
-  assert.equal(r.out, `J0-J1 PASS. Frames: 8. Seals: 2. Tail: closed. Anchor: matched seal at n=6 and head at n=8. ${NOT_VERIFIED}\n`);
+  assert.equal(r.out, `J0-J2 PASS. Frames: 8. Seals: 2. Tail: closed. Anchor: matched seal at n=6 and head at n=8. ${NOT_VERIFIED}\n`);
 });
 
 test("journal --json prints only the report, without the human line", () => {
   const r = run("journal", SMALL, "--json", "--expect-head", HEAD);
   assert.equal(r.out.split("\n").length, 2);
-  assert.ok(!r.out.includes("J0-J1 PASS"));
+  assert.ok(!r.out.includes("J0-J2 PASS"));
   assert.deepEqual(JSON.parse(r.out).anchor.head, { given: true, matched: true });
 });
 
@@ -146,7 +148,7 @@ test("call errors: exit 2 with a message on stderr", () => {
     ["journal", "inputs"],
     ["vectors", "missing.json"],
     ["vectors", SMALL],
-    ["vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261110.json", "--expect-seal", SEAL6],
+    ["vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261119_v2.json", "--expect-seal", SEAL6],
   ];
   for (const args of cases) {
     const r = run(...args);
@@ -157,16 +159,16 @@ test("call errors: exit 2 with a message on stderr", () => {
 });
 
 test("vectors: checks, names the skipped ones, exit 0", () => {
-  const r = run("vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261110.json");
+  const r = run("vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261119_v2.json");
   assert.equal(r.code, 0);
   const lines = r.out.trim().split("\n");
-  assert.equal(lines.at(-1), "Vectors: 21 passed, 0 failed, 15 skipped.");
+  assert.equal(lines.at(-1), "Vectors: 39 passed, 0 failed, 14 skipped.");
   for (const v of ["PASS V7_seal_hash", "PASS V9_frame_hash_n_minus_1", "PASS V9_frame_hash_n", "PASS V9_seal_hash", "PASS V9_checks"]) {
     assert.ok(lines.includes(v), v);
   }
   assert.ok(!lines.some((l) => l.startsWith("SKIP V9")));
   assert.ok(lines.some((l) => l.startsWith("SKIP V5_root_empty_state: ")));
-  const j = JSON.parse(run("vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261110.json", "--json").out);
+  const j = JSON.parse(run("vectors", "spec/VECTORS_INDEPENDENT_VERIFIER_20261119_v2.json", "--json").out);
   assert.equal(j.failed, 0);
 });
 
@@ -174,4 +176,68 @@ test("--help prints the usage", () => {
   const r = run("--help");
   assert.equal(r.code, 0);
   assert.match(r.out, /yuce-verify journal <file>/);
+});
+
+// ---------------------------------------------------------------------------
+// --docs (the task statement, section 4; amendment 3, P3-2 and P3-10)
+// ---------------------------------------------------------------------------
+const KBP = "inputs/valid/kinds-batch-put.wal";
+const KBP_DOCS = "inputs/valid/kinds-batch-put.docs";
+const NOT_VERIFIED_J3 = "Not verified: withdrawal cascade, signatures.";
+
+test("journal --docs: J0-J3 PASS line, exit 0", () => {
+  const r = run("journal", KBP, "--docs", KBP_DOCS);
+  assert.equal(r.code, 0);
+  assert.equal(r.out, `J0-J3 PASS. Frames: 8. Seals: 1. Records: 13. Quotes: 5. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED_J3}\n`);
+});
+
+test("journal --docs --json: sources, J2, J3, not_verified", () => {
+  const r = run("journal", KBP, "--docs", KBP_DOCS, "--json");
+  assert.equal(r.code, 0);
+  const report = JSON.parse(r.out);
+  assert.deepEqual(report.input.sources, { given: true, files: 3 });
+  assert.deepEqual(report.levels.J2, { result: "PASS", documents: 3, settings_hash: "c3fd19b720d1418ca1e016ad97046c973a7d0994e9eab46b9de48fefd44bfa46" });
+  assert.deepEqual(report.levels.J3, { result: "PASS", records: 13, quotes: 5 });
+  assert.deepEqual(report.not_verified, ["withdrawal_cascade", "signatures"]);
+  assert.equal(report.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
+});
+
+test("journal --docs with a document missing: INCOMPLETE, exit 3, the doc_id named", () => {
+  const r = run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a");
+  assert.equal(r.code, 3);
+  assert.equal(
+    r.out,
+    `J0-J2 PASS. Frames: 8. Seals: 1. J3 not checkable: document vector-a.txt not supplied. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED}\n`,
+  );
+  const report = JSON.parse(run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a", "--json").out);
+  assert.equal(report.verdict, "INCOMPLETE");
+  assert.deepEqual(report.levels.J3, { result: "NOT_CHECKABLE", reason: "document vector-a.txt not supplied" });
+  assert.deepEqual(report.input.sources, { given: true, files: 2 });
+  assert.equal(run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a", "--quiet").code, 3);
+});
+
+test("journal --docs: a J3 failure, exit 1", () => {
+  const r = run("journal", "inputs/corrupt/quote-not-in-source.wal", "--docs", KBP_DOCS);
+  assert.equal(r.code, 1);
+  assert.equal(r.out, `FAIL at J3, frame 1: QUOTE_NOT_IN_SOURCE. ${NOT_VERIFIED}\n`);
+});
+
+test("journal: a J2 failure without --docs, exit 1", () => {
+  const r = run("journal", "inputs/boundary/nested-seal.wal");
+  assert.equal(r.code, 1);
+  assert.equal(r.out, `FAIL at J2, frame 2: KERNEL_OP_IN_BATCH. ${NOT_VERIFIED}\n`);
+});
+
+test("journal --docs: a folder that cannot be read is exit 2", () => {
+  for (const args of [
+    ["journal", KBP, "--docs", "no-such-folder"],
+    ["journal", KBP, "--docs", KBP],
+    ["journal", KBP, "--docs"],
+    ["journal", KBP, "--docs", KBP_DOCS, "--docs", KBP_DOCS],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.code, 2, args.join(" "));
+    assert.equal(r.out, "");
+    assert.match(r.err, /^yuce-verify: /);
+  }
 });

@@ -12,6 +12,17 @@
    "kernel": {
     "exit": 0,
     "status": "VERIFIED"
+   },
+   "docs": "valid/gap-primary-exhausted.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 1,
+    "settings_hash": "291ff41d9b1ae567c0ebb94f527229f347471e50e0b521988c962bbabffe1f41"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 0,
+    "quotes": 0
    }
   },
   "gap-second-exhausted.wal": {
@@ -31,6 +42,17 @@
    "kernel": {
     "exit": 0,
     "status": "VERIFIED"
+   },
+   "docs": "valid/gap-second-exhausted.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 1,
+    "settings_hash": "291ff41d9b1ae567c0ebb94f527229f347471e50e0b521988c962bbabffe1f41"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 1,
+    "quotes": 1
    }
   },
   "k017-oracle-v3.wal": {
@@ -186,6 +208,17 @@
    "kernel": {
     "exit": 0,
     "status": "VERIFIED"
+   },
+   "docs": "valid/k017-oracle-v3.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 22,
+    "settings_hash": "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 2314,
+    "quotes": 1163
    }
   },
   "live-server-unsealed-tail.wal": {
@@ -205,6 +238,17 @@
    "kernel": {
     "exit": 0,
     "status": "VERIFIED"
+   },
+   "docs": "valid/live-server-unsealed-tail.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 1,
+    "settings_hash": "6d529af55d503b8837abac4b0d7f195c05dc26937b90dafc84acaeda03eb12c4"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 4,
+    "quotes": 2
    }
   },
   "withdrawal-version-close.wal": {
@@ -228,6 +272,112 @@
    "kernel": {
     "exit": 0,
     "status": "VERIFIED"
+   },
+   "docs": "valid/withdrawal-version-close.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 2,
+    "settings_hash": "a13963df2e41d383b808f40f7405e012cfd2568ec7154b7b992dc1cd4e081a8b"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 6,
+    "quotes": 4
+   }
+  },
+  "baicalin-n3-shard1.wal": {
+   "frames": 106,
+   "wal_head": "aa83ff79eedc0bbf62858f098522adde46f76f324a78964819585b31bceefe73",
+   "seals": [
+    {
+     "n": 104,
+     "seal_hash": "90e8b811e12240f1a2ec076099c95cdfac7f0b01e1968655b3d1bbd1bcd7ac72"
+    }
+   ],
+   "tail": {
+    "frames_after_last_seal": 1,
+    "kind": "closed"
+   },
+   "sha256": "c343787127f29c26730f04ba8d203a240a036a0dfb92e7f9ae64494bf835f17a",
+   "kernel": {
+    "exit": 0,
+    "status": "VERIFIED"
+   },
+   "docs": "valid/baicalin-n3-shard1.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 3,
+    "settings_hash": "2eff7747591a2320ba407e20104c5aa466e5518a162d3100c42468f297204a4b"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 529,
+    "quotes": 232
+   }
+  },
+  "kinds-batch-put.wal": {
+   "frames": 8,
+   "wal_head": "fa2b721b4cf8a6be8ba9dab489954eb159771b63198d7d557a90f44e665707e3",
+   "seals": [
+    {
+     "n": 6,
+     "seal_hash": "684ce406d5828e853c01e78808c29342e1b9d12a035f57e3ba70167241633da3"
+    }
+   ],
+   "tail": {
+    "frames_after_last_seal": 1,
+    "kind": "closed"
+   },
+   "sha256": "2c4df79bb7645c9a488f95c872eb6d75eb3684cc128403ca6e5efab9e26a8f64",
+   "kernel": {
+    "exit": 0,
+    "status": "VERIFIED"
+   },
+   "docs": "valid/kinds-batch-put.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 3,
+    "settings_hash": "c3fd19b720d1418ca1e016ad97046c973a7d0994e9eab46b9de48fefd44bfa46"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 13,
+    "quotes": 5
+   }
+  },
+  "four-eyes-arbitration.wal": {
+   "frames": 8,
+   "wal_head": "18fcb412b9e65797828ad61a8bed1f486f93f98292e5783e3971f6fab0365c3d",
+   "seals": [
+    {
+     "n": 7,
+     "seal_hash": "a4c5fc5cf012b334435ae97dd210e24bc41bc4d649d742f08173a43a6744769e"
+    }
+   ],
+   "tail": {
+    "frames_after_last_seal": 0,
+    "kind": "sealed"
+   },
+   "sha256": "a5f6d7ab9dc6b87fbbc32486e0f6be6f161746bc4b4dfd00225b9734b68ef64a",
+   "kernel": {
+    "exit": 0,
+    "status": "VERIFIED"
+   },
+   "kernel_0_2_2": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "semantic replay diverged from the committed outcome/roots"
+   },
+   "docs": "valid/four-eyes-arbitration.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 2,
+    "settings_hash": "1e3cdcc539665d6d7e3fb09bf8ce93a1e7b29029e95265b596031c69c554ca51"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 4,
+    "quotes": 2
    }
   }
  },
@@ -300,6 +450,91 @@
     "status": "REFUSED",
     "message": "audit WAL frame 1: a number that is not an integer from 0 to 2^53-1"
    }
+  },
+  "genesis-rules-version.wal": {
+   "level": "J2",
+   "code": "GENESIS_FORMAT",
+   "frame": 0,
+   "what": "the genesis names r2r-audit-rules/2; every frame hash and the seal made whole",
+   "docs": "valid/kinds-batch-put.docs",
+   "sha256": "eac3b3ab1c1588969bd71ec269a2a9872feade4b9c8500a375af4da2c5787d34",
+   "kernel": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "this kernel replays r2r-audit-rules/3; the journal names another"
+   },
+   "delivery1": {
+    "exit": 0,
+    "verdict": "PASS"
+   }
+  },
+  "forger-no-request-hash.wal": {
+   "level": "J2",
+   "code": "REQUEST_HASH_MISMATCH",
+   "frame": 1,
+   "what": "the forger of delivery 1: a claim's text changed, every frame hash and the seal made whole, the request hash left",
+   "docs": "valid/kinds-batch-put.docs",
+   "sha256": "b7994ebff507dbe2703509931abdcf369d82e9ba385ae9628f1d482c9723cb9e",
+   "kernel": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "request hash mismatch"
+   },
+   "delivery1": {
+    "exit": 0,
+    "verdict": "PASS"
+   }
+  },
+  "batch-wrong-records-root.wal": {
+   "level": "J3",
+   "code": "RECORDS_ROOT_MISMATCH",
+   "frame": 4,
+   "what": "a batch frame names the records root of two of its three accepted records; every frame hash and the seal made whole",
+   "docs": "valid/kinds-batch-put.docs",
+   "sha256": "142b108751d01a5e400fd4fd0018db76bf8739a974c1905db09f3a982ef7cb76",
+   "kernel": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "the records root of a frame does not match the records it accepted"
+   },
+   "delivery1": {
+    "exit": 0,
+    "verdict": "PASS"
+   }
+  },
+  "quote-not-in-source.wal": {
+   "level": "J3",
+   "code": "QUOTE_NOT_IN_SOURCE",
+   "frame": 1,
+   "what": "a quote changed to text no source holds, its request hash made whole, the record ids and the records root left",
+   "docs": "valid/kinds-batch-put.docs",
+   "sha256": "d135e0bb29bf5e5bc4f2c7c7a8e955d9a71952368fe6924a4f71b87181bc9576",
+   "kernel": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "semantic replay diverged from the committed outcome/roots"
+   },
+   "delivery1": {
+    "exit": 0,
+    "verdict": "PASS"
+   }
+  },
+  "forger-full-rehash.wal": {
+   "level": "J3",
+   "code": "QUOTE_NOT_IN_SOURCE",
+   "frame": 52,
+   "what": "acceptance A6 on a real run: one quote falsified (\"confers protection\" -> \"confers no protection\"); the request hash, the records root of its frame over the falsified leaf, every frame hash and the seal made whole",
+   "docs": "valid/baicalin-n3-shard1.docs",
+   "sha256": "ab6ba32ff6ff3c1b4df24b7d0f19fb2fd4972fdc130df8b35744d58674bd86e8",
+   "kernel": {
+    "exit": 1,
+    "status": "REFUSED",
+    "message": "semantic replay diverged from the committed outcome/roots"
+   },
+   "delivery1": {
+    "exit": 0,
+    "verdict": "PASS"
+   }
   }
  },
  "boundary": {
@@ -309,6 +544,12 @@
     "exit": 1,
     "status": "REFUSED",
     "message": "a frame takes an id of the kernel's own: the ids seal-<n> belong to the kernel's seal of the first n frames"
+   },
+   "docs": "boundary/auto-seal-ack.docs",
+   "delivery2": {
+    "level": "J1",
+    "code": "KERNEL_ID_MISUSE",
+    "frame": 1
    }
   },
   "nested-seal.wal": {
@@ -317,7 +558,15 @@
     "exit": 1,
     "status": "REFUSED",
     "message": "semantic replay diverged from the committed outcome/roots"
+   },
+   "docs": "boundary/nested-seal.docs",
+   "delivery2": {
+    "level": "J2",
+    "code": "KERNEL_OP_IN_BATCH",
+    "frame": 2
    }
   }
- }
+ },
+ "_note_delivery2": "Added 19.11.2026 for delivery 2 (TZ v4, amendment 3). Nothing above was changed; keys were added. valid/: every journal names its folder of source documents (docs, a path under inputs/) and what J2 and J3 must find (J3: records accepted, quotes checked). The documents of the five journals received earlier were taken from their genesis containers by the kernel. Two new journals: baicalin-n3-shard1.wal (a real run of sbgk 0.2.2, 7950a811..., three open-access papers) and kinds-batch-put.wal (written by the kernel for the vectors: every record kind, a batch with a submit and a new document version, a failed line). corrupt/: entries with level J2 or J3 are new; their docs name the folder to check them with; delivery1 is what delivery 1 (0.1.3) answers. boundary/: docs and delivery2, the outcome levels J0-J3 must give now. kernel: sbgk audit-verify of sbgk 0.2.2 (7950a811...).",
+ "_note_amendment4": "Added for amendment 4. valid/four-eyes-arbitration.wal: a journal of 0.2.3 (dev 1a88f0d3, PR 59-61 merged). The server started the run with four_eyes pinned in its settings; records of the owner and of an agent were added by the kernel library; the builder proposed a link between their claims; the owner, an author of one end, was refused without the mark (an error outcome in the journal), then decided with arbitration: true over the wire, then sealed. kernel: sbgk audit-verify of dev 1a88f0d3, which accepts it; kernel_0_2_2: the same check by sbgk 0.2.2 (7950a811...), which refuses it, as its replay knows no four eyes. The 21 earlier inputs get the same answer from both kernels. Nothing above was changed."
 }

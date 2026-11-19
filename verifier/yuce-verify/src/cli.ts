@@ -1,5 +1,5 @@
-// Command line (task statement, section 4):
-//   yuce-verify journal <file> [--expect-seal <hex>] [--expect-head <hex>]
+// Command line (TZ v4, section 4):
+//   yuce-verify journal <file> [--docs <folder>] [--expect-seal <hex>] [--expect-head <hex>]
 //                              [--max-line-bytes <n>] [--max-depth <n>] [--json] [--quiet]
 //   yuce-verify vectors <file.json> [--json] [--quiet]
 
@@ -17,11 +17,13 @@ export interface CliIo {
   readFile(path: string): Promise<Uint8Array>;
   /** Streaming read of a journal. May throw; errors become exit code 2. */
   openJournal(path: string): Promise<ByteSource>;
+  /** Every regular file of a folder and its subfolders (`--docs`). May throw; errors become exit code 2. */
+  readDocs(path: string): Promise<Uint8Array[]>;
 }
 
 export const USAGE = [
   "usage:",
-  "  yuce-verify journal <file> [--expect-seal <hex>] [--expect-head <hex>]",
+  "  yuce-verify journal <file> [--docs <folder>] [--expect-seal <hex>] [--expect-head <hex>]",
   "                             [--max-line-bytes <n>] [--max-depth <n>] [--json] [--quiet]",
   "  yuce-verify vectors <file.json> [--json] [--quiet]",
 ].join("\n");
@@ -31,6 +33,7 @@ class UsageError extends Error {}
 interface ParsedArgs {
   command: "journal" | "vectors";
   file: string;
+  docs?: string;
   expectSeal?: string;
   expectHead?: string;
   maxLineBytes?: number;
@@ -39,7 +42,7 @@ interface ParsedArgs {
   quiet: boolean;
 }
 
-const VALUE_FLAGS = new Set(["--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth"]);
+const VALUE_FLAGS = new Set(["--docs", "--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth"]);
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const [command, ...rest] = argv;
@@ -75,6 +78,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   if (positional.length !== 1) throw new UsageError(`expected exactly one file, got ${positional.length}`);
 
   const parsed: ParsedArgs = { command, file: positional[0]!, json: switches.has("--json"), quiet: switches.has("--quiet") };
+  const docs = values.get("--docs");
+  if (docs !== undefined) {
+    if (docs === "") throw new UsageError("--docs needs a folder");
+    parsed.docs = docs;
+  }
   const seal = values.get("--expect-seal");
   if (seal !== undefined) parsed.expectSeal = hashArg("--expect-seal", seal);
   const head = values.get("--expect-head");
@@ -126,6 +134,16 @@ export async function runCli(argv: readonly string[], io: CliIo, adapter: HashAd
 
   if (args.command === "vectors") return runVectors(args, io, adapter, say, complain);
 
+  let documents: Uint8Array[] | undefined;
+  if (args.docs !== undefined) {
+    try {
+      documents = await io.readDocs(args.docs);
+    } catch (e) {
+      complain(`cannot read the documents folder ${args.docs}: ${(e as Error).message}`);
+      return EXIT.usage;
+    }
+  }
+
   let report;
   try {
     const source = await io.openJournal(args.file);
@@ -136,6 +154,7 @@ export async function runCli(argv: readonly string[], io: CliIo, adapter: HashAd
         expectHead: args.expectHead,
         maxLineBytes: args.maxLineBytes,
         maxDepth: args.maxDepth,
+        documents,
       },
       adapter,
     );
