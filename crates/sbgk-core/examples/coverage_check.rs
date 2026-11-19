@@ -33,15 +33,16 @@ fn check(path: &Path) -> Value {
     let mut dispatcher = Dispatcher::new(config, Vec::new());
     dispatcher.recover(&state);
     let report = dispatcher.gap_pass_report(&state);
-    // without a pass the table gives the units read, quoted and left, and the dispatcher counts the same three
+    // without a pass the table gives the units read, quoted and left (and those of a given-up first reading, when there are any),
+    // and the dispatcher counts the same
     let same = if table.gap_pass.is_some() {
         table.summary == report
     } else {
-        ["units_read", "units_quoted", "gap_units"].iter().all(|k| table.summary[*k] == report[*k])
+        ["units_read", "units_quoted", "gap_units", "units_reading_given_up"].iter().all(|k| table.summary.get(*k) == report.get(*k))
     };
-    // and the counts by status add up to the units read
+    // and the counts by status add up to the units read: all but those not read and those of a given-up first reading
     let counts = by_status(&table.units);
-    let read_units: usize = counts.iter().filter(|(status, _)| status.as_str() != "unread").map(|(_, n)| n).sum();
+    let read_units: usize = counts.iter().filter(|(status, _)| !matches!(status.as_str(), "unread" | "reading_given_up")).map(|(_, n)| n).sum();
     out["table"] = table.summary;
     out["report"] = report.clone();
     out["same"] = json!(same && json!(read_units) == report["units_read"]);

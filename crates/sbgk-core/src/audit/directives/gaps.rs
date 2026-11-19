@@ -60,26 +60,6 @@ fn item(line: &str) -> bool {
 ///   the rest;
 /// - in any other text: a paragraph, up to a blank line.
 ///
-/// Whether the gap pass covered every read unit: none left by the budget, none of a pack that ran out of attempts, none whose second
-/// reading did not happen and none whose second reading is still owed (Codex's COV-01 of fe0ac7af: an owed second reading was
-/// counted as covered). The report of the pass and the coverage table say it with these words.
-pub(crate) fn coverage_complete(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize) -> bool {
-    left + pack_failed + second_failed + second_pending == 0
-}
-
-/// What `coverage_complete` means, in words.
-pub(crate) fn coverage_meaning(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize) -> String {
-    if coverage_complete(left, pack_failed, second_failed, second_pending) {
-        "every read unit is quoted or answered empty".to_string()
-    } else {
-        format!(
-            "incomplete coverage: every read unit is quoted or answered empty, except {left} the budget left, {pack_failed} whose pack \
-             ran out of attempts, {second_failed} whose second reading did not happen and {second_pending} whose second reading is \
-             still owed"
-        )
-    }
-}
-
 /// A range covers the unit's lines without the line break after its last line.
 pub(crate) fn units(doc: &str, text: &str) -> Vec<(usize, usize)> {
     let markdown = super::has_headings(doc);
@@ -212,6 +192,40 @@ fn context_lines(doc: &str, text: &str, start: usize) -> Vec<(&'static str, usiz
 
 fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
     a.0 < b.1 && b.0 < a.1
+}
+
+/// Whether the coverage is complete: no reading was given up with nothing recorded, and the gap pass covered every read unit, with
+/// none left by the budget, none of a pack that ran out of attempts, none whose second reading did not happen and none whose second
+/// reading is still owed (Codex's COV-01 of fe0ac7af: an owed second reading was counted as covered). The report of the pass and
+/// the coverage table say it with these words. `given_up` counts the units of sections whose reading was given up with nothing recorded
+/// (`coverage::FirstReadings`), under no standing quote and no withdrawn text: they are not read units (the dispatch table check
+/// of 18.11.2026 found them counted as read).
+pub(crate) fn coverage_complete(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize, given_up: usize) -> bool {
+    left + pack_failed + second_failed + second_pending + given_up == 0
+}
+
+/// What `coverage_complete` means, in words. With no reading given up with nothing recorded, the words are those of 0.2.2.
+pub(crate) fn coverage_meaning(left: usize, pack_failed: usize, second_failed: usize, second_pending: usize, given_up: usize) -> String {
+    let read = if left + pack_failed + second_failed + second_pending == 0 {
+        "every read unit is quoted or answered empty".to_string()
+    } else {
+        format!(
+            "every read unit is quoted or answered empty, except {left} the budget left, {pack_failed} whose pack ran out of attempts, \
+             {second_failed} whose second reading did not happen and {second_pending} whose second reading is still owed"
+        )
+    };
+    if coverage_complete(left, pack_failed, second_failed, second_pending, given_up) {
+        read
+    } else if given_up == 0 {
+        format!("incomplete coverage: {read}")
+    } else {
+        format!("incomplete coverage: {read}; {}", given_up_meaning(given_up))
+    }
+}
+
+/// The words for the units of sections whose reading was given up with nothing recorded.
+pub(crate) fn given_up_meaning(given_up: usize) -> String {
+    format!("{given_up} more units lie in sections whose reading was given up with nothing recorded, and are not counted as read")
 }
 
 /// The gaps of one document (SPEC_V02_GAP_PASS section 3): the units that lie wholly in sections whose first reading is over
@@ -511,16 +525,35 @@ impl Dispatcher {
         let (mut pack_failed, mut second_failed) = (0usize, 0usize);
         // and units whose second reading is still owed: no final answer yet either (Codex's COV-01 of fe0ac7af)
         let mut second_pending = 0usize;
+        // and units of a section whose reading was given up with nothing recorded, under no standing quote and no withdrawn text:
+        // not read, whatever a pack of the pass answered for them (the dispatch table check of 18.11.2026; `FirstReadings`); the
+        // packs are issued over them as before
+        let mut given_up = 0usize;
+        let readings = super::coverage::FirstReadings::new(s);
         for doc in s.docs() {
             let text = s.doc_text(&doc).unwrap_or_default();
             let secs = sections(&doc, &text, self.cfg.section_bytes);
             let done = |k: usize| self.handled.contains(&format!("doc:{doc}#{k}")) || self.unresolved.contains(&format!("doc:{doc}#{k}"));
+            let gave_up: Vec<bool> = (0..secs.len())
+                .map(|k| {
+                    let key = format!("doc:{doc}#{k}");
+                    done(k) && readings.given_up(&key, secs[k], self.unresolved.contains(&key))
+                })
+                .collect();
+            let abandoned = |u: (usize, usize)| secs.iter().zip(&gave_up).any(|(sec, g)| *g && overlaps(u, *sec));
             let read_units = gaps(&units(&doc, &text), &secs, done, &[], &[]);
-            let quotes = s.quoted_spans(&doc);
-            read += read_units.len();
-            quoted += read_units.iter().filter(|u| quotes.iter().any(|q| u.0 < q.1 && q.0 < u.1)).count();
+            let (quotes, closed) = (s.quoted_spans(&doc), s.closed_spans(&doc));
+            for u in &read_units {
+                let is_quoted = quotes.iter().any(|q| overlaps(*u, *q));
+                quoted += usize::from(is_quoted);
+                if !is_quoted && !closed.iter().any(|c| overlaps(*u, *c)) && abandoned(*u) {
+                    given_up += 1;
+                } else {
+                    read += 1;
+                }
+            }
             let label = s.document_label(&doc);
-            for (a, b) in self.gap_units(s, &doc) {
+            for (a, b) in self.gap_units(s, &doc).into_iter().filter(|u| !abandoned(*u)) {
                 gaps_now += 1;
                 let tier = self.cfg.gap.tier(&label, &text[a..b]);
                 let spanning =
@@ -544,15 +577,21 @@ impl Dispatcher {
         let primary: Vec<&String> = self.handled.iter().filter(|k| k.starts_with("gap:")).collect();
         let second: Vec<&String> = self.handled.iter().filter(|k| k.starts_with("gap2:")).collect();
         let gap_recorded = primary.iter().filter(|k| recorded(k)).count();
-        json!({"units_read": read, "units_quoted": quoted, "gap_units": gaps_now, "gap_tasks": primary.len(), "gap_recorded": gap_recorded,
+        let mut out = json!({"units_read": read, "units_quoted": quoted, "gap_units": gaps_now, "gap_tasks": primary.len(), "gap_recorded": gap_recorded,
         "gap_empty": primary.len() - gap_recorded, "gap_exhausted": count(&self.unresolved, "gap:"),
         "second_reader_tasks": second.len(), "empty_overturned": second.iter().filter(|k| recorded(k)).count(),
         "second_reader_exhausted": count(&self.unresolved, "gap2:"),
         "gap_left_by_budget": left, "gap_units_unanswered": pack_failed + second_failed,
         "gap_units_pack_failed": pack_failed, "gap_units_second_reading_failed": second_failed,
         "gap_units_second_reading_pending": second_pending,
-        "complete": coverage_complete(left, pack_failed, second_failed, second_pending),
-        "meaning": coverage_meaning(left, pack_failed, second_failed, second_pending)})
+        "complete": coverage_complete(left, pack_failed, second_failed, second_pending, given_up),
+        "meaning": coverage_meaning(left, pack_failed, second_failed, second_pending, given_up)});
+        // named only when there are any: a run with no reading given up with nothing recorded gets the report of 0.2.2, byte for
+        // byte (the end attestation of a run carries it)
+        if given_up > 0 {
+            out["units_reading_given_up"] = json!(given_up);
+        }
+        out
     }
 
     /// `gap_report` for a check from outside this crate (`examples/coverage_check.rs`): the totals a recovered dispatcher gives
@@ -614,6 +653,26 @@ mod tests {
 
     fn texts<'a>(text: &'a str, units: &[(usize, usize)]) -> Vec<&'a str> {
         units.iter().map(|(a, b)| &text[*a..*b]).collect()
+    }
+
+    #[test]
+    fn the_words_of_the_coverage_are_those_of_0_2_2_while_no_first_reading_was_given_up() {
+        assert!(coverage_complete(0, 0, 0, 0, 0));
+        assert_eq!(coverage_meaning(0, 0, 0, 0, 0), "every read unit is quoted or answered empty");
+        assert_eq!(
+            coverage_meaning(1, 2, 3, 4, 0),
+            "incomplete coverage: every read unit is quoted or answered empty, except 1 the budget left, 2 whose pack ran out of \
+             attempts, 3 whose second reading did not happen and 4 whose second reading is still owed"
+        );
+        // a given-up first reading alone makes the coverage incomplete, and is named apart from the read units
+        assert!(!coverage_complete(0, 0, 0, 0, 1));
+        assert_eq!(
+            coverage_meaning(0, 0, 0, 0, 2),
+            "incomplete coverage: every read unit is quoted or answered empty; 2 more units lie in sections whose reading was given up \
+             with nothing recorded, and are not counted as read"
+        );
+        assert!(coverage_meaning(1, 0, 0, 0, 2)
+            .ends_with("still owed; 2 more units lie in sections whose reading was given up with nothing recorded, and are not counted as read"));
     }
 
     #[test]

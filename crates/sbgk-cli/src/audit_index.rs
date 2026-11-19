@@ -70,9 +70,14 @@ fn is_index(db: &Path) -> bool {
 
 /// What is said of an index of an earlier format: its tables are not this format's, so it is neither updated nor compared.
 fn earlier_format(db: &Path) -> Option<String> {
-    format_of(db)
-        .filter(|f| EARLIER_FORMATS.contains(&f.as_str()))
-        .map(|f| format!("the index has the earlier format {f}, without the tables of the coverage: build it again with --rebuild"))
+    format_of(db).filter(|f| EARLIER_FORMATS.contains(&f.as_str())).map(|f| {
+        let what = if f == "yuce-index/1" {
+            "without the tables of the coverage"
+        } else {
+            "whose coverage counted the units of a reading given up with nothing recorded as read"
+        };
+        format!("the index has the earlier format {f}, {what}: build it again with --rebuild")
+    })
 }
 
 fn refuse(db: &Path, wal: &str, error: &str) -> ! {

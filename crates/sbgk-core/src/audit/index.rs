@@ -12,11 +12,13 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 /// The format of an index. `yuce-index/2` (0.2.1) adds the two tables of the coverage to the six of `yuce-index/1`; its
-/// `index_hash` covers them, so an index of the earlier format is built again, not updated.
-pub const FORMAT: &str = "yuce-index/2";
+/// `index_hash` covers them, so an index of the earlier format is built again, not updated. `yuce-index/3` (0.2.3) has the same
+/// tables, and its `coverage_units` know the status `reading_given_up`: an index of `yuce-index/2` counted those units as read,
+/// so it is built again too, rather than checked against coverage it never had.
+pub const FORMAT: &str = "yuce-index/3";
 
 /// The formats before this one: an index of one of them is replaced by a rebuild, and neither updated nor checked.
-pub const EARLIER_FORMATS: [&str; 1] = ["yuce-index/1"];
+pub const EARLIER_FORMATS: [&str; 2] = ["yuce-index/1", "yuce-index/2"];
 
 /// One table: its name, its columns (the key first, `key` of them) and the SQL type of each.
 pub struct Table {

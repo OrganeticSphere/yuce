@@ -113,13 +113,18 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   claims reached the window (BENCHMARKS.md).
 * **The packs of the gap pass go to documents in the order of their ids,** not by version or reading order: on the A2A corpus all
   12 packs of each run went to the v0.3.0 specification, and the pass added material on an older version only.
-* **What the coverage table says.** That a quote touches the bytes of a unit, or that a pack was answered with no quote of it:
-  not that the quote records what matters there, nor that an empty answer was right. A unit is cut by the lines of the text (a
-  list item, a paragraph, a table row), not by its meaning. The table is the state of now: a unit under withdrawn text is
-  `withdrawn` whatever it was before, and what a unit was at an earlier frame is in the table of that prefix. `pack` names the
-  pack of the unit's tier whose bytes span it: a unit quoted before the pass can lie between a pack's targets without having
-  been one. A document read as a zone, not by sections, has its units `unread`. A journal that pins no section size (a run the
-  library started without `audit-serve`), or a journal of 0.1, whose sections were cut by the earlier rule, gives no table.
+* **What the coverage table says.** That a quote touches the bytes of a unit, or that a pack was answered with no quote of it: not
+  that the quote records what matters there, nor that an empty answer was right. A unit is cut by the lines of the text (a list
+  item, a paragraph, a table row), not by its meaning. The table is the state of now: a unit under withdrawn text is `withdrawn`
+  whatever it was before, and what a unit was at an earlier frame is in the table of that prefix. `pack` names the pack of the
+  unit's tier whose bytes span it: a unit quoted before the pass can lie between a pack's targets without having been one. A unit
+  of a section whose reading was given up with nothing recorded is `reading_given_up`, not read: its first reading was closed
+  unresolved, ran out of attempts, or was closed by an answer abandoned after refused ones, and neither it nor a loss reread of
+  the section stored a record. That holds even where a pack of the gap pass answered empty over the unit; only a quote that stands
+  on it makes it `quoted`. A reading that stored records, or a reread that did, counts as reading the section, whatever it lost.
+  Before 0.2.3 such units were counted as read. A document read as a zone, not by sections, has its units `unread`. A journal that
+  pins no section size (a run the library started without `audit-serve`), or a journal of 0.1, whose sections were cut by the
+  earlier rule, gives no table.
 * **What a signed checkpoint proves.** Only that the holder of the key claimed that the journal of that many frames has that
   root. A key file next to the journal, or a checkpoint kept in the operator's own repository, does not protect against the
   operator: an anchor out of the writer's reach does, and a third-party witness is not in this version. Without a trusted keys file

@@ -27,9 +27,10 @@ kernel itself finds its bytes in the section the agent was leased.
 * **A journal anyone can check.** The server seals the journal as it goes, and the seals are signed as C2SP checkpoints (Ed25519).
   `sbgk audit-verify` checks a journal against a receipt or a checkpoint kept elsewhere. Checking is always free.
 * **Nothing skipped in silence.** `sbgk audit-read coverage` says, from the journal and with no model, what each list item,
-  paragraph and table row of the documents came to: quoted, and by which records, left by the reading budget, withdrawn, or not
-  read. The gap pass (`--gap-pass`, off by default) can hand the parts no quote covers back to the agents as narrow tasks; it hands
-  them out in the order of the documents' ids, and no run has shown it to improve the answers (BENCHMARKS.md, LIMITATIONS.md).
+  paragraph and table row of the documents came to: quoted, and by which records, left by the reading budget, withdrawn, given up
+  by its readers, or not read. The gap pass (`--gap-pass`, off by default) can hand the parts no quote covers back to the agents
+  as narrow tasks; it hands them out in the order of the documents' ids, and no run has shown it to improve the answers
+  (BENCHMARKS.md, LIMITATIONS.md).
 * **An index beside the journal.** `sbgk audit-index` builds a SQLite file any tool reads, rebuilt from the journal at any time.
 * **Provenance in the W3C standard.** `sbgk audit-prov` writes the journal as W3C PROV-O, one JSON-LD file any RDF tool reads,
   rebuilt from the journal at any time: who wrote each record, on which bytes of which document version it stands, what it rests
@@ -347,7 +348,7 @@ that the checkpoint names this journal's frames. Keep the checkpoint where the j
 `--doc-id`), `active-claims`, `diff --from <n> [--to <n>]`, `record --record <id>`, `fallen [--since <n>]` and `coverage
 [--doc-id] [--unit-status <status>]`, where a point `<n>` is a number of frames, as in a seal. They answer as the owner's tools of
 the live server do. `coverage` says what each list item, paragraph and table row of the documents came to: quoted, answered empty
-by a pack of the gap pass, left by its budget, or not read.
+by a pack of the gap pass, left by its budget, given up by its first readers, or not read.
 
 An MCP client joins as one agent through the bridge, for example with this `.mcp.json` entry:
 

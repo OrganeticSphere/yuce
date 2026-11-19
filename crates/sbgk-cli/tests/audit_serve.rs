@@ -2248,6 +2248,19 @@ fn the_coverage_table_is_read_on_the_wire_over_the_journal_and_from_the_index() 
     assert!(checked["error"].as_str().unwrap().contains("earlier format"), "{checked}");
     let (code, rebuilt) = index(&["--db", &at_once, "--rebuild"]);
     assert_eq!((code, rebuilt["mode"].as_str(), &rebuilt["index_hash"]), (Some(0), Some("built"), &updated["index_hash"]), "{rebuilt}");
+    // an index of 0.2.1 or 0.2.2 counted the units of a given-up first reading as read: it is built again too, not compared
+    let conn = rusqlite::Connection::open(&at_once).unwrap();
+    conn.execute("UPDATE meta SET value = 'yuce-index/2' WHERE key = 'format'", []).unwrap();
+    drop(conn);
+    let (code, refused) = index(&["--db", &at_once]);
+    assert_eq!((code, refused["status"].as_str()), (Some(1), Some("REFUSED")), "{refused}");
+    let error = refused["error"].as_str().unwrap();
+    assert!(
+        error.contains("earlier format yuce-index/2") && error.contains("reading given up with nothing recorded") && error.contains("--rebuild"),
+        "{refused}"
+    );
+    let (code, rebuilt) = index(&["--db", &at_once, "--rebuild"]);
+    assert_eq!((code, rebuilt["mode"].as_str(), &rebuilt["index_hash"]), (Some(0), Some("built"), &updated["index_hash"]), "{rebuilt}");
 
     // a run without a gap pass: the units with what the first readings left of them, no packs, and no claim of a pass
     let plain = Fixture::new("coverageplain");

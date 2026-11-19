@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+* **A reading given up is no reading in the coverage table.** A section whose first reading was given up with nothing recorded was
+  counted as read: closed by an answer abandoned after refused ones, or closed unresolved, or out of attempts, and no loss reread
+  of it stored a record either. Its units came out `left_by_budget`, or `empty` under a pack of the gap pass, and `complete` could
+  say every read unit was covered. They now have their own status, `reading_given_up`, unless a quote stands on them (`quoted`) or
+  withdrawn text touches them (`withdrawn`); the row still names a pack that spans them. `units_read` leaves them out, the totals
+  name them as `units_reading_given_up`, and the coverage is not complete while there are any. The report of the gap pass counts
+  the same. A reading or a reread that stored a record counts as reading its section, as before. On two recorded runs where an
+  offline check found such sections, 29 units (one section) and 57 units (two sections, both of one report) change from
+  `left_by_budget` to `reading_given_up`; every other row is the same. A run with no such section gets the same table and the same
+  report as before, byte for byte; in a run with one, the report a server writes into its end attestation (`--unattested-at-end`
+  with a gap pass) carries the new count. The packs the pass hands out, the rules and the journal format do not change. The index
+  is `yuce-index/3`: an index of `yuce-index/2` counted those units as read, and is built again with `--rebuild`. YuCe Live and
+  `sbgk audit-watch` show them as a cell of their own, "reading given up".
 * **YuCe Live: a recorded run, played back frame by frame as one page** (`examples/live-journal/`). `make_page.py --wal run.wal
   --out page.html` turns a journal into one offline HTML page: what the kernel accepted, what each claim rests on, what fell when
   a text was withdrawn and why, the coverage of the documents, and the seals, with a slider and a play button. The states come

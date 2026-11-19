@@ -34,9 +34,9 @@ from urllib.parse import unquote
 HERE = pathlib.Path(__file__).resolve().parent
 TEMPLATE = HERE / "page.html"
 FORMAT = "yuce-live-journal/1"
-# the kernel's eight coverage statuses, folded into six cells on the page
+# the kernel's nine coverage statuses, folded into seven cells on the page
 COVERAGE = {"quoted": "q", "empty": "e", "second_reading_pending": "p", "second_reading_failed": "p", "pack_failed": "p",
-            "left_by_budget": "b", "withdrawn": "w", "unread": "n"}
+            "left_by_budget": "b", "withdrawn": "w", "unread": "n", "reading_given_up": "g"}
 LABEL = {"observe": "q", "claim": "c", "hypothesis": "h", "done": "A"}
 SMALL = 200  # up to this many frames and records a journal is short: checked, and its coverage taken, at every frame
 
