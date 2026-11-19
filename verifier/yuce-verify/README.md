@@ -1,95 +1,120 @@
-# yuce-verify (delivery 1.1 with amendments 1 and 2: levels J0, J1)
+# yuce-verify (delivery 2 with amendment 4: levels J0, J1, J2, J3)
 
-An independent verifier of YuCe journals in the format `sbgk-session-log/3`: a standalone implementation of the specification, sharing no code and no dependencies with the kernel. [`../spec/`](../spec/) holds that specification (`SPEC_INDEPENDENT_VERIFIER/4`: version 3 with its amendments 1 and 2, in an English translation of the original), and [`../inputs/`](../inputs/) the test journals with the results expected of them.
+An independent verifier of YuCe journals in the format `sbgk-session-log/3`: a standalone implementation of the specification, sharing no code and no dependencies with the kernel. [`../spec/`](../spec/) holds that specification (`SPEC_INDEPENDENT_VERIFIER/6`: version 3 with its amendments 1, 2, 3 and 4, in an English translation of the original), and [`../inputs/`](../inputs/) the test journals with their source documents and the results expected of them.
 
-It answers one question: **is this file a well-formed YuCe journal, and does it match a seal or a head I was given separately?**
+It answers two questions:
+- is this file a well-formed YuCe journal whose accepted quotes are, byte for byte, in their source documents?
+- does it match a seal or a head I was given separately?
 
 ## What it does not establish
 
 Read these before you trust a PASS.
 
-1. **Without an external anchor, J0-J1 say only "the file is internally consistent".** Anyone who can recompute the hashes passes this check. `test/forge.mjs` does exactly that, and its journals pass (acceptance A6).
-2. **No level checks the meaning of the records.**
+1. **Without an external anchor, J0-J3 say only "the file is internally consistent".** Anyone who can recompute the hashes passes J0-J2. `test/forge.mjs` does exactly that, and its journals pass (acceptances A6, B4).
+2. **No level checks the meaning of the records.** J3 checks the bytes of quotes, record ids and records roots. It does not repeat the kernel's rules of acceptance (amendment 3, P3-9), for example:
+   - whether a basis is still active;
+   - whether a reference is visible to its task;
+   - whether a relation is declared in the ontology or was decided by four eyes;
+   - limits of values.
 3. **Levels J0-J3 and J5 confirm the integrity of the journal, the seals and the bytes of the quotes in their sources. They do not recompute the projections of statuses and dependencies, that is, the withdrawal cascade.** The withdrawal cascade stays checked by the kernel only.
+4. **The honest boundary of J3.** A quote replaced by **another phrase that also occurs exactly once in the same document**, with every hash, id, root and seal recomputed, passes J0-J3. Only an external seal or head kept out of the writer's reach shows it. `test/fixtures/forged/forged-records-same-document.wal` is such a journal.
 
-Every human line ends with `Not verified: quotes against sources, withdrawal cascade, signatures.`, and every JSON report has `not_verified`.
+Every human line ends with `Not verified: …`: `withdrawal cascade, signatures` when J3 passed; otherwise `quotes against sources, withdrawal cascade, signatures`. Every JSON report has `not_verified`.
 
 ## Levels
 
-| level | in delivery 1.1 | what it checks |
+| level | in delivery 2 | what it checks |
 |---|---|---|
-| **J0** | yes | The file and its lines, read as a stream: not empty; line length and nesting limits; every frame ends with LF (no torn tail); valid UTF-8; strict JSON object; integers only from 0 to 2^53-1; canonical form (RFC 8785, byte for byte); the format `sbgk-session-log/3`; exactly the keys of a frame and its header; the types; `seq = position`; `wal_op` (`genesis` only at 0); the chain `previous`; `body_hash = H("R2R-FRAME-BODY/2", JCS(body))`; `hash = H("R2R-FRAME-HDR/2", JCS(header))`. Last, optionally: the head equals `--expect-head`. |
-| **J1** | yes | Per frame, in this order: no frame after the close frame (J1-14); a seal or close only from `kernel` (J1-13); for a seal candidate (J1-1 … J1-9), the form and types of the seal frame, `P` the same in command and outcome, `r2r-seal/2`, `log_size = position ≥ 1`, `wal_head` = hash of the frame before, `log_root` = RFC 6962 root over the frames before, `audit_root` and `engine_root` equal those of the frame before, `seal_hash = H("R2R-SEAL/2", JCS(P))`, `run_id` = `body.run_id` of frame 0; then the kernel ids (J1-10 … J1-12): on a kernel frame any `submission_id` starting with `seal-` (exact, case-sensitive) only on a seal, `audit-close` exactly with `{"kind":"close"}`, a close frame only right after a seal. The tail: `closed`, `sealed`, `unsealed` (K frames), `no_seals`. Last, optionally: `--expect-seal` must be one of the computed seal hashes. |
-| J2 | no | genesis record, batches (seal or close inside a batch) |
-| J3 | no | records tree of a frame, quote bytes against sources (the records-tree code is here already and passes vectors V1, V2) |
+| **J0** | yes | The file and its lines, read as a stream: not empty; line length and nesting limits; every frame ends with LF; valid UTF-8; strict JSON object; integers only from 0 to 2^53-1; canonical form (RFC 8785, byte for byte); the format `sbgk-session-log/3`; exactly the keys of a frame and its header; types; `seq`; `wal_op`; the chain `previous`; `body_hash`; `hash`. Last, optionally: the head equals `--expect-head`. |
+| **J1** | yes | Seals (form, `P` in command and outcome, `log_size`, `wal_head`, `log_root`, root continuity, `seal_hash`, `run_id` of frame 0), kernel ids (`seal-…` only on a seal, `audit-close` only on the close frame), close right after a seal, nothing after the close, seal and close only from `kernel`. The tail kind. Last, optionally: `--expect-seal`. |
+| **J2** | yes, always | The genesis record: exactly 15 keys, the formats `r2r-audit-genesis/3`, `r2r-audit-rules/3`, `r2r-state-root/2`, `r2r-seal/2`, the kind of every field, `operator_meta` ≤ 4096 bytes in JCS, the document descriptions (exact keys, identifier keys, `revision_refs` an object) and the `git_manifest` doc_id formula, an empty records root on frame 0. Every later frame: exactly 7 body keys, identifiers `actor` and `submission_id`, three outcome forms (`records` only on a submit, a submit only `records` or `error`), `request_hash = hex(SHA256(JCS(["r2r-audit-request/1", actor, command])))`, no repeated `(actor, submission_id)`. Batches: the outcome form; no executed seal, close or batch inside a batch. |
+| **J3** | yes, with `--docs` | Documents are found by the SHA-256 of their bytes (`raw_sha256`); file names do not matter. New versions come from `put_document`. For every accepted record: the line form (`local_id` present, `exact_quote` at most 16 384 bytes), a local name used once per author and task (`DUPLICATE_LOCAL_ID`), references (by local name, or `@` and 16-64 hex digits), the quote occurs **exactly once** in the current bytes of its document and inside the task's scope, the anchor (content-defined chunks, document version, evidence id), the value `L`, the record id against the outcome, and the records root of every frame against `header.records_root`. |
 | J5 | no | seal signature, anchor, receipt |
 
-What each level catches (SPEC section 4):
+What each level catches (SPEC section 4, amendment 2 P2-1, amendment 3 P3-12):
 
 | what happened | caught by |
 |---|---|
-| a byte, a line, the key order or a number damaged | J0 |
-| a frame removed, inserted or moved in the middle | J0 |
-| a seal naming the wrong prefix of the journal | J1 |
-| a command under a kernel id; a seal or close not from the kernel; a close without a seal; a frame after the close | J1 |
-| the tail of the journal cut off | only an **external** seal of a later point (J1) or an external head (J0) |
-| the whole journal rewritten with all hashes recomputed | only an external seal or head kept out of the writer's reach |
+| a byte, a line, the key order or a number damaged; a frame removed, inserted or moved | J0 |
+| a seal naming the wrong prefix; a kernel id misused; a seal or close not from the kernel; a close without a seal; a frame after the close | J1 |
+| a missing or extra genesis key, other formats or rules | J2 |
+| a frame body changed without recomputing `request_hash` (the forger of delivery 1) | J2 |
+| a seal or close executed inside a batch | J2 |
+| a record of a frame changed or hidden, the records root not recomputed | J3 |
+| a quote whose bytes are not in its source, even with every hash recomputed | J3 |
+| the tail of the journal cut off | only an external seal of a later point (J1) or an external head (J0) |
+| a quote replaced by another phrase of the same document, everything recomputed | only an external seal or head |
 | the withdrawal cascade computed wrongly | **no level of this verifier** |
 
-The 13 questions of delivery 1 are answered in SPEC v3, appendix A; SPEC-DEFECT-14 and 15 in amendment 2. No question is open now.
+Known differences with the kernel are listed in SPEC section 10 and amendment 3, P3-12. Examples:
+- without `--docs` J3 is not checked;
+- a missing document gives `INCOMPLETE`, not `FAIL`;
+- the kernel's acceptance rules are not repeated.
+
+The questions raised while delivery 2 was written, SPEC-DEFECT-16 … 21, are answered by amendment 4; none is open.
 
 ## Use
 
 Node.js (tested on 24). No install: the delivery is the single file `dist/yuce-verify.mjs`.
 
 ```
-node dist/yuce-verify.mjs journal <file> [--expect-seal <hex>] [--expect-head <hex>]
+node dist/yuce-verify.mjs journal <file> [--docs <folder>] [--expect-seal <hex>] [--expect-head <hex>]
                                          [--max-line-bytes <n>] [--max-depth <n>] [--json] [--quiet]
 node dist/yuce-verify.mjs vectors <file.json> [--json] [--quiet]
 ```
 
-- Without `--json`: one line for a human (SPEC 8.3). With `--json`: only the report (SPEC 8.1) as canonical JSON. `--quiet`: only the exit code.
-- Exit codes: `0` all levels of the delivery passed; `1` a check failed; `2` a call error or the file cannot be read; `3` reserved for delivery 2 (does not occur in delivery 1).
+- `--docs <folder>`: every regular file of the folder and its subfolders is read. A document is the file whose SHA-256 is the `raw_sha256` of its description; other files are counted in `input.sources.files` and otherwise ignored.
+- Without `--json`: one line for a human. With `--json`: only the report, as canonical JSON. `--quiet`: only the exit code.
+- Exit codes: `0` PASS; `1` FAIL; `2` a call error, or the file or the documents folder cannot be read; `3` INCOMPLETE (J3 asked for, a document of the genesis record not in the folder).
 - An unsealed tail or an open run is not a failure: it is reported, and the exit code stays 0.
-- Defaults equal the bounds of the journal format (amendment 1): `--max-line-bytes 67108863` (a frame line with its LF is at most 64 MiB; the flag counts bytes without the LF) and `--max-depth 64` (a frame nests at most 64 levels of JSON; the outermost object is 1, brackets inside strings do not count). Values must be integers ≥ 1.
+- Defaults equal the bounds of the journal format (amendment 1): `--max-line-bytes 67108863` and `--max-depth 64`. Values must be integers ≥ 1.
 - **If you raise `--max-line-bytes` or `--max-depth` above its default, the verifier may accept a line that cannot occur in a correct journal.** Lowering them only makes the check stricter.
 
 Examples, from the folder `verifier/` of the repository:
 
 ```
-$ node yuce-verify/dist/yuce-verify.mjs journal inputs/valid/withdrawal-version-close.wal
-J0-J1 PASS. Frames: 8. Seals: 2. Tail: closed. Anchor: not given - journal is internally consistent; authenticity not established. Not verified: quotes against sources, withdrawal cascade, signatures.
+$ node yuce-verify/dist/yuce-verify.mjs journal inputs/valid/kinds-batch-put.wal --docs inputs/valid/kinds-batch-put.docs
+J0-J3 PASS. Frames: 8. Seals: 1. Records: 13. Quotes: 5. Tail: closed. Anchor: not given - journal is internally consistent; authenticity not established. Not verified: withdrawal cascade, signatures.
 
-$ node yuce-verify/dist/yuce-verify.mjs journal inputs/valid/withdrawal-version-close.wal \
-    --expect-seal 4c384f513689aafa314ca11505947186bf94a6dce0cffda0275a460c5de7ea1c \
-    --expect-head 3431d070a4345a4b9e3b8973ce526621408c2921a5d100c00956c5ceac4d34bc
-J0-J1 PASS. Frames: 8. Seals: 2. Tail: closed. Anchor: matched seal at n=6 and head at n=8. Not verified: quotes against sources, withdrawal cascade, signatures.
+$ node yuce-verify/dist/yuce-verify.mjs journal inputs/valid/kinds-batch-put.wal
+J0-J2 PASS. Frames: 8. Seals: 1. Tail: closed. Anchor: not given - journal is internally consistent; authenticity not established. Not verified: quotes against sources, withdrawal cascade, signatures.
 
-$ node yuce-verify/dist/yuce-verify.mjs journal inputs/corrupt/tampered-seal.wal
-FAIL at J1, frame 2: SEAL_LOG_ROOT. Not verified: quotes against sources, withdrawal cascade, signatures.
+$ node yuce-verify/dist/yuce-verify.mjs journal yuce-verify/test/fixtures/forged/forged-records-quote-not-in-source.wal --docs inputs/valid/withdrawal-version-close.docs
+FAIL at J3, frame 1: QUOTE_NOT_IN_SOURCE. Not verified: quotes against sources, withdrawal cascade, signatures.
+
+$ node yuce-verify/dist/yuce-verify.mjs journal inputs/valid/kinds-batch-put.wal --docs yuce-verify/test/fixtures/docs-without-vector-a
+J0-J2 PASS. Frames: 8. Seals: 1. J3 not checkable: document vector-a.txt not supplied. Tail: closed. Anchor: not given - journal is internally consistent; authenticity not established. Not verified: quotes against sources, withdrawal cascade, signatures.
 ```
 
 ### In a browser
 
-The same file loads as an ES module. Under Node.js it uses `node:crypto` (loaded lazily); elsewhere it uses `crypto.subtle`:
+The same file loads as an ES module. Under Node.js it uses `node:crypto` (loaded lazily); elsewhere it uses `crypto.subtle`. Documents are given as their bytes, like the journal:
 
 ```js
 import { verifyJournal, subtleHashAdapter, humanLine } from "./yuce-verify.mjs";
-const report = await verifyJournal(file.stream(), {}, subtleHashAdapter());
+const documents = await Promise.all([...docFiles].map(async (f) => new Uint8Array(await f.arrayBuffer())));
+const report = await verifyJournal(journalFile.stream(), { documents }, subtleHashAdapter());
 console.log(humanLine(report));
 ```
 
-WebCrypto has no incremental digest, so in a browser the SHA-256 of the whole file (`input.journal_sha256`) keeps the file in memory. Under Node.js the verifier holds one line and O(log n) hashes. Checked in a real browser on 13 November 2026 (Chromium 156, with no `process` and `crypto.subtle` as the hash): on the 14 journals of `../inputs/` and on the journal of `control02-run2-K` of release v0.2.0 (672 frames, 34 seals, in 0.2 s), the reports were byte for byte those of Node.js.
+Checked in a real browser on 20 November 2026 (Chromium 156, `crypto.subtle` as the hash), with this file unchanged: a journal of 455 frames, 1,186 records and 788 quotes with its 6 documents gave J0-J3 PASS in 0.25 s; the same journal with one byte of a quote changed in memory gave `FAIL at J0, frame 5: BODY_HASH_MISMATCH`; without its documents, J3 named the missing one (`INCOMPLETE`). The console showed no error.
 
 ## Report
 
-As SPEC v3 section 8 fixes it:
+As SPEC section 8 and amendment 3, P3-10 fix it:
 
-- One failure is reported: the first J0 failure anywhere in the file (torn tail and `HEAD_MISMATCH` included); otherwise the first J1 failure by frame position, `ANCHOR_NOT_FOUND` last (SPEC 9).
-- After a J0 failure, J1 is `{"result":"NOT_CHECKABLE","reason":"J0 failed"}`; after a J1 failure, `{"result":"FAIL"}`. A passing J1 has `seals` and `tail` only.
-- `anchor` has two parts, `seal` (`given`, `matched`, and `at_n`, `frames_after` when matched) and `head` (`given`, `matched`).
-- `input.frames` is the number of LF-terminated lines of the file, also on failure. `input.format` is `header.format` of frame 0.
-- The report has no time, paths or host names: the same input gives the same bytes. It is printed as JCS with one LF.
+- One failure is reported, by level: J0 anywhere in the file, then J1 (`ANCHOR_NOT_FOUND` last), then J2, then J3 (SPEC 9, P3-10). All levels run in one streaming pass; each keeps its first failure.
+- **J2** passed: `{"result":"PASS","documents":D,"settings_hash":"…"}`. **J3** passed: `{"result":"PASS","records":R,"quotes":Q}`.
+- **J3 not run:**
+  - `NOT_CHECKED` without `--docs`;
+  - `NOT_CHECKABLE` with the reason `"<level> failed"`, or `"document <doc_id> not supplied"`.
+- `input.sources` is `{"given":false}` or `{"given":true,"files":N}`.
+- Verdict: `FAIL` if any level failed; else `INCOMPLETE` if a document is missing; else `PASS`.
+- The report has no time, paths or host names: the same input gives the same bytes.
+
+## Memory and speed
+
+J0-J1 hold one line and O(log n) hashes. J2 adds the pairs `(actor, submission_id)`. J3 adds the documents and the ids, anchors and local names of accepted records (the task statement, section 5). The document chunking is O(n) with a sliding-window queue (P3-8). `k017-oracle-v3.wal` (3 MB, 695 frames, 2 314 records, 22 documents) takes about 0.4 s with `--docs`; the bound is 5 s.
 
 ## Development
 
@@ -100,26 +125,26 @@ npm install
 npm test
 ```
 
-`npm test` = type check + build + all tests (`node --test`). The tests run against the built delivery file:
+`npm test` = type check + build + all tests (`node --test`), against the built delivery file:
 
 | file | covers |
 |---|---|
-| `test/vectors.test.mjs` | A1: vectors V1-V4, V7, V9 (all equalities, `log_root` included) pass; V5, V6, V8 named as skipped |
-| `test/inputs.test.mjs` | A2: `inputs/valid/` against `expected.json`; A3: `inputs/corrupt/`; A6a: `inputs/boundary/` |
-| `test/matrix.test.mjs` | A3: the substitution matrix on a small journal (every header field, every outer field and one body byte in every frame; lines removed, repeated, swapped; torn tail, garbage, CR, BOM, key order, space, uppercase hash, `1.0`, `2^53`, lone surrogate raw and escaped, UTF-8, limits) |
-| `test/seal.test.mjs` | A4: substitutions in seals; A4a: kernel commands (J1-10 … J1-14); tail kinds; anchor; A5 |
-| `test/delivery11.test.mjs` | A9: one test per item of section 6 of the clean-room task statement, which is not published (items 1 and 10 as changed by amendment 1); results on all inputs unchanged since delivery 1 (`test/fixtures/delivery1-reports/`) except `anchor` and the removed fields |
-| `test/amendment1.test.mjs` | amendment 1, P1-6: defaults 67108863 and 64, the length bound at N and N + 1, depth 64 and 65, brackets in strings, the README warning |
-| `test/amendment2.test.mjs` | amendment 2, P2-3: J1-10 by the prefix `seal-` (`seal-`, `seal-x`, `seal-٣`, `seal-01` refused; `Seal-1`, `sealx-1` not under the rule; other actors not under the rule), J1-4 for such ids on a seal, J1-11 unchanged, spec id `/4` |
-| `test/forger.test.mjs` | A6: forged journals pass J0-J1; only `--expect-seal` or `--expect-head` catch them |
-| `test/json.test.mjs` | strict parser, JCS, depth, log tree against a recursive RFC 6962 root |
-| `test/stream.test.mjs` | chunking does not change the report, `ReadableStream`, `crypto.subtle` adapter, speed (3 MB < 2 s), bundle without Node.js globals |
-| `test/cli.test.mjs` | commands, human line, JSON report, `--quiet`, exit codes 0/1/2 |
+| `test/vectors.test.mjs` | A1/B1: V1-V4, V7, V9-V16 (with `V11_short_documents` of amendment 4) and the settings hash of V8 pass; V5, V6, V8 otherwise named as skipped |
+| `test/inputs.test.mjs` | A2/B2: `valid/` with documents (J2 and J3 values of `expected.json`); B6 without documents and with a missing document; A3/B3: `corrupt/` by `level`; A6a: `boundary/`; B5: accept/refuse equals the kernel on all 20 inputs of this copy (for the 0.2.3 journal, the kernel 0.2.3) |
+| `test/matrix23.test.mjs` | B3: the J2/J3 matrix on `kinds-batch-put.wal` (and `k017-oracle-v3.wal` for git descriptions). It covers: every genesis key removed, extra or of a wrong kind; every body key; `request_hash`; repeated pairs; batches with executed and refused seal, close, batch; every key of every kind of line; references (names, `@` 15/16/64/65 digits, case, ambiguous prefix); quotes (not in source, twice, empty, unknown document, outside docs, outside ranges, 16 384/16 385 bytes); repeated `local_id`; `submit` with `value`; identifier keys and `put_document` doc_id; `put_document` version; record ids; records roots |
+| `test/forger.test.mjs` | A6/B4: forged journals pass J0-J2; J3 catches a quote not in its source; the same-document replacement passes J0-J3 and only an anchor catches it |
+| `test/matrix.test.mjs`, `test/seal.test.mjs` | A3/A4/A4a/A5: J0 and J1 matrices |
+| `test/delivery11.test.mjs`, `test/amendment1.test.mjs`, `test/amendment2.test.mjs` | delivery 1.1 and amendments 1, 2; A9 (J0-J1 results unchanged since delivery 1) |
+| `test/json.test.mjs` | strict parser, JCS, depth, log tree |
+| `test/stream.test.mjs` | chunking, `ReadableStream`, `crypto.subtle` adapter (also with documents), speed (3 MB < 2 s; k017 with documents < 5 s), O(n) chunking, bundle without Node.js globals |
+| `test/cli.test.mjs` | commands, human lines (J0-J2, J0-J3, INCOMPLETE, failures), JSON report, `--docs`, exit codes 0/1/2/3 |
 
-The forger (`test/forge.mjs`) changes one value and recomputes the frame hashes and the seals. It does not recompute `request_hash` or `records_root`: their formulas are not in delivery 1. Its journals are in `test/fixtures/forged/`; `npm run make-forged` rewrites them, and a test checks that they are reproducible.
+### The forger
+
+`test/forge.mjs` changes one value and recomputes the frame hashes, `request_hash` and the seals. With `--docs` it also recomputes the record ids, the `@` references, `put_document` versions and the records roots, by the formulas of amendment 3. Its journals are in `test/fixtures/forged/`; `npm run make-forged` rewrites them, and a test checks that they are reproducible.
 
 ```
-node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value>
+node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value> [--docs <folder>]
 ```
 
-See `BOUNDARY_RESULTS.md` for the observed results on `inputs/boundary/`.
+See `BOUNDARY_RESULTS.md` for the results on `inputs/boundary/`.

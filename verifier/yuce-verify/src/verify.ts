@@ -1,21 +1,27 @@
-// Levels J0 and J1 (SPEC sections 5 and 6), in one streaming pass.
+// Levels J0 ... J3 (SPEC sections 5 and 6; amendment 3, P3-5 and P3-10), in
+// one streaming pass.
 //
-// Order of failures (SPEC 5.0, 9). J0 is checked over the whole file first; a
-// J1 failure is reported only when J0 passes for every frame and for the head.
-// Inside J0 lines run in file order and the checks of a line in their numbered
-// order; the first failure stops J0. Inside J1 frames run in order, the checks
-// of one frame in the order of SPEC 6.2, and ANCHOR_NOT_FOUND comes last.
+// Order of failures (SPEC 5.0, 9; amendment 3, P3-10). One failure is
+// reported: the first J0 failure anywhere in the file; otherwise the first J1
+// failure (ANCHOR_NOT_FOUND last); otherwise the first J2 failure; otherwise,
+// with --docs, the first J3 failure. Every level runs frame by frame in the
+// same pass and keeps its first failure; a level stops once an earlier level
+// has failed, since its result is then not reported.
 //
-// Memory: one line, the O(log n) log-tree stack, and the list of seals that
-// the report must name anyway.
+// Memory: J0 and J1 hold one line, the O(log n) log-tree stack and the list of
+// seals. J2 holds the pairs (actor, submission_id); J3 the documents and the
+// ids, anchors and local names of accepted records (TZ v4, section 5).
 
 import type { HashAdapter } from "./hash.ts";
 import { concatBytes, fromHex, toHex, utf8 } from "./hash.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { depthExceeds, hasExactKeys, isHashText, isObject, jcs, parseJson } from "./json.ts";
-import type { Anchor, Failure, HeadAnchor, J1Level, Report, SealAnchor, SealEntry, Tail } from "./report.ts";
-import { NOT_VERIFIED, SPEC_ID, VERIFIER_NAME, VERIFIER_VERSION, computeVerdict } from "./report.ts";
+import type { Anchor, Failure, HeadAnchor, J1Level, J2Level, J3Level, Report, SealAnchor, SealEntry, Tail } from "./report.ts";
+import { NOT_VERIFIED, NOT_VERIFIED_AFTER_J3, SPEC_ID, VERIFIER_NAME, VERIFIER_VERSION } from "./report.ts";
 import { DOMAIN, LogTree, domainHash } from "./trees.ts";
+import { J2Checker } from "./j2.ts";
+import type { DocumentFiles } from "./j3.ts";
+import { RecordEngine } from "./j3.ts";
 
 export const JOURNAL_FORMAT = "sbgk-session-log/3";
 export const SEAL_FORMAT_ID = "r2r-seal/2";
@@ -50,6 +56,18 @@ export interface VerifyOptions {
   expectHead?: string | undefined;
   maxLineBytes?: number | undefined;
   maxDepth?: number | undefined;
+  /**
+   * The files of the documents folder (`--docs`), as bytes; names do not
+   * matter (amendment 3, P3-2). Absent: J3 is NOT_CHECKED.
+   */
+  documents?: readonly Uint8Array[] | undefined;
+}
+
+/** Indexes document files by the SHA-256 of their bytes (P3-6). */
+export async function indexDocuments(files: readonly Uint8Array[], adapter: HashAdapter): Promise<DocumentFiles> {
+  const map: DocumentFiles = new Map();
+  for (const f of files) map.set(toHex(await adapter.sha256(f)), f);
+  return map;
 }
 
 /** A failure to read the input (exit code 2), as opposed to a verification failure. */
@@ -65,7 +83,8 @@ export type ByteSource = AsyncIterable<Uint8Array> | Iterable<Uint8Array> | Read
 export async function verifyJournal(source: ByteSource, options: VerifyOptions, adapter: HashAdapter): Promise<Report> {
   const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   const fileHash = adapter.createSha256();
-  const v = new FrameVerifier(adapter, options);
+  const files = options.documents === undefined ? null : await indexDocuments(options.documents, adapter);
+  const v = new FrameVerifier(adapter, options, files);
   let bytes = 0;
   let lines = 0;
   let pending: Uint8Array[] = [];
@@ -114,7 +133,7 @@ export async function verifyJournal(source: ByteSource, options: VerifyOptions, 
       v.failJ0(v.position, "TORN_TAIL", `${pendingLen} bytes after the last LF are not a frame`);
     }
   }
-  return v.finish(toHex(await fileHash.digest()), bytes, lines);
+  return v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === undefined ? null : options.documents.length);
 }
 
 function toAsyncIterator(source: ByteSource): AsyncIterator<Uint8Array> | Iterator<Uint8Array> {
@@ -156,12 +175,24 @@ class FrameVerifier {
   private closedAt = -1;
   private lastIsClose = false;
 
+  // J2 state
+  private j2Failure: Failure | null = null;
+  private readonly j2: J2Checker;
+
+  // J3 state (only with --docs)
+  private j3Failure: Failure | null = null;
+  private j3NotSupplied: string | null = null;
+  private readonly j3: RecordEngine | null;
+
   constructor(
     private readonly adapter: HashAdapter,
     private readonly options: VerifyOptions,
+    files: DocumentFiles | null,
   ) {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.tree = new LogTree(adapter);
+    this.j2 = new J2Checker(adapter);
+    this.j3 = files === null ? null : new RecordEngine(adapter, files);
   }
 
   get j0Stopped(): boolean {
@@ -264,6 +295,17 @@ class FrameVerifier {
 
     // Level J1 for this frame, until its first failure.
     if (this.j1Failure === null) await this.j1Frame(i, body, hash, this.prevHash);
+    // Level J2, while J1 has not failed.
+    if (this.j1Failure === null && this.j2Failure === null) {
+      const f = i === 0 ? await this.j2.frame0(header, body) : await this.j2.frame(body);
+      if (f !== null) this.j2Failure = { level: "J2", frame: i, code: f.code, detail: f.detail };
+    }
+    // Level J3, with --docs, while J1 and J2 have not failed.
+    if (this.j3 !== null && this.j1Failure === null && this.j2Failure === null && this.j3Failure === null && this.j3NotSupplied === null) {
+      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body);
+      if (r !== null && "notSupplied" in r) this.j3NotSupplied = r.notSupplied;
+      else if (r !== null) this.j3Failure = { level: "J3", frame: i, code: r.code, detail: r.detail };
+    }
 
     this.prevHash = hash;
     this.i++;
@@ -410,7 +452,7 @@ class FrameVerifier {
   // End of file
   // -------------------------------------------------------------------------
 
-  finish(journalSha256: string, bytes: number, lines: number): Report {
+  finish(journalSha256: string, bytes: number, lines: number, documentFiles: number | null): Report {
     const n = this.i;
     const { expectSeal, expectHead } = this.options;
 
@@ -450,15 +492,40 @@ class FrameVerifier {
     }
     const anchor: Anchor = { seal, head };
 
+    // Amendment 3, P3-10: J2 and J3.
+    const j2Pass = j1Pass && this.j2Failure === null;
+    let j2: J2Level;
+    if (!j0Pass) j2 = { result: "NOT_CHECKABLE", reason: "J0 failed" };
+    else if (!j1Pass) j2 = { result: "NOT_CHECKABLE", reason: "J1 failed" };
+    else if (!j2Pass) j2 = { result: "FAIL" };
+    else j2 = { result: "PASS", documents: this.j2.genesis!.documents, settings_hash: this.j2.genesis!.settingsHash };
+
+    let j3: J3Level;
+    if (this.j3 === null) j3 = { result: "NOT_CHECKED" };
+    else if (!j0Pass) j3 = { result: "NOT_CHECKABLE", reason: "J0 failed" };
+    else if (!j1Pass) j3 = { result: "NOT_CHECKABLE", reason: "J1 failed" };
+    else if (!j2Pass) j3 = { result: "NOT_CHECKABLE", reason: "J2 failed" };
+    else if (this.j3Failure !== null) j3 = { result: "FAIL" };
+    else if (this.j3NotSupplied !== null) j3 = { result: "NOT_CHECKABLE", reason: `document ${this.j3NotSupplied} not supplied` };
+    else j3 = { result: "PASS", records: this.j3.recordCount, quotes: this.j3.quotes };
+
     const j0Result = j0Pass ? "PASS" : "FAIL";
+    const results = [j0Result, j1.result, j2.result, j3.result];
+    const verdict = results.includes("FAIL") ? "FAIL" : this.j3NotSupplied !== null && j3.result === "NOT_CHECKABLE" ? "INCOMPLETE" : "PASS";
     return {
       verifier: { name: VERIFIER_NAME, version: VERIFIER_VERSION, spec: SPEC_ID },
-      input: { journal_sha256: journalSha256, bytes, frames: lines, format: this.format },
+      input: {
+        journal_sha256: journalSha256,
+        bytes,
+        frames: lines,
+        format: this.format,
+        sources: documentFiles === null ? { given: false } : { given: true, files: documentFiles },
+      },
       levels: {
         J0: { result: j0Result },
         J1: j1,
-        J2: { result: "NOT_CHECKED" },
-        J3: { result: "NOT_CHECKED" },
+        J2: j2,
+        J3: j3,
         J5: { result: "NOT_CHECKED" },
       },
       anchor,
@@ -466,9 +533,9 @@ class FrameVerifier {
         wal_head: j0Pass ? this.prevHash : null,
         closed: tail === null ? null : tail.kind === "closed",
       },
-      not_verified: [...NOT_VERIFIED],
-      verdict: computeVerdict([j0Result, j1.result]),
-      first_failure: this.j0Failure ?? this.j1Failure,
+      not_verified: j3.result === "PASS" ? [...NOT_VERIFIED_AFTER_J3] : [...NOT_VERIFIED],
+      verdict,
+      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null),
     };
   }
 

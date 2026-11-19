@@ -12,7 +12,8 @@ declare module "node:crypto" {
 declare module "node:fs" {
   export const promises: {
     readFile(path: string): Promise<Uint8Array>;
-    stat(path: string): Promise<{ isFile(): boolean }>;
+    stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean }>;
+    readdir(path: string, options: { withFileTypes: true }): Promise<{ name: string; isFile(): boolean; isDirectory(): boolean }[]>;
   };
   export function createReadStream(path: string, options?: { highWaterMark?: number }): AsyncIterable<Uint8Array>;
   export function realpathSync(path: string): string;

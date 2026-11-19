@@ -1,5 +1,5 @@
 // SHA-256 through an adapter: node:crypto under Node.js, crypto.subtle in a
-// browser (task statement, section 2.4). The verifier core only sees HashAdapter.
+// browser (TZ section 2.4). The verifier core only sees HashAdapter.
 
 export interface Sha256Stream {
   update(data: Uint8Array): void;

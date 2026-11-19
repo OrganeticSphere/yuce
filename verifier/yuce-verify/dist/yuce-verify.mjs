@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// yuce-verify 0.1.3: independent verifier of YuCe journals, delivery 1 (levels J0, J1).
+// yuce-verify 0.2.1: independent verifier of YuCe journals, delivery 1 (levels J0, J1).
 // Built from src/ by scripts/build.mjs. No runtime dependencies.
 
 // src/json.ts
@@ -374,32 +374,32 @@ function fromPlain(v) {
 
 // src/report.ts
 var VERIFIER_NAME = "yuce-verify";
-var VERIFIER_VERSION = "0.1.3";
-var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/4";
+var VERIFIER_VERSION = "0.2.1";
+var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/6";
 var NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"];
-function computeVerdict(results) {
-  if (results.includes("FAIL")) return "FAIL";
-  if (results.includes("NOT_CHECKABLE")) return "INCOMPLETE";
-  return "PASS";
-}
+var NOT_VERIFIED_AFTER_J3 = ["withdrawal_cascade", "signatures"];
 function reportToJcs(report) {
   return jcs(fromPlain(report));
 }
 var NOT_VERIFIED_SENTENCE = "Not verified: quotes against sources, withdrawal cascade, signatures.";
+var NOT_VERIFIED_AFTER_J3_SENTENCE = "Not verified: withdrawal cascade, signatures.";
 function humanLine(report) {
   const parts = [];
   const f = report.first_failure;
+  const { J1: j1, J3: j3 } = report.levels;
   if (report.verdict === "FAIL" && f !== null) {
     parts.push(f.frame === null ? `FAIL at ${f.level}: ${f.code}.` : `FAIL at ${f.level}, frame ${f.frame}: ${f.code}.`);
-  } else if (report.levels.J1.result === "PASS") {
-    const j1 = report.levels.J1;
-    parts.push(`J0-J1 PASS. Frames: ${report.input.frames}. Seals: ${j1.seals.length}.`);
+  } else if (j1.result === "PASS") {
+    const head = `Frames: ${report.input.frames}. Seals: ${j1.seals.length}.`;
+    if (j3.result === "PASS") parts.push(`J0-J3 PASS. ${head} Records: ${j3.records}. Quotes: ${j3.quotes}.`);
+    else if (j3.result === "NOT_CHECKABLE") parts.push(`J0-J2 PASS. ${head} J3 not checkable: ${j3.reason}.`);
+    else parts.push(`J0-J2 PASS. ${head}`);
     parts.push(tailSentence(j1.tail));
     parts.push(anchorSentence(report.anchor, report.input.frames));
   } else {
     parts.push(`${report.verdict}.`);
   }
-  parts.push(NOT_VERIFIED_SENTENCE);
+  parts.push(j3.result === "PASS" ? NOT_VERIFIED_AFTER_J3_SENTENCE : NOT_VERIFIED_SENTENCE);
   return parts.join(" ");
 }
 function tailSentence(tail) {
@@ -422,11 +422,11 @@ function anchorSentence(anchor, frames) {
   if (head) return `Anchor: matched head at n=${frames}.`;
   return "Anchor: not given - journal is internally consistent; authenticity not established.";
 }
-var EXIT = { pass: 0, fail: 1, usage: 2, notCheckable: 3 };
+var EXIT = { pass: 0, fail: 1, usage: 2, incomplete: 3 };
 function exitCodeFor(verdict) {
   if (verdict === "PASS") return EXIT.pass;
   if (verdict === "FAIL") return EXIT.fail;
-  return EXIT.notCheckable;
+  return EXIT.incomplete;
 }
 
 // src/hash.ts
@@ -596,6 +596,683 @@ async function recordsRoot(adapter, leaves) {
   );
 }
 
+// src/j2.ts
+var EMPTY_RECORDS_ROOT = "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41";
+var GENESIS_FORMATS = {
+  format: "r2r-audit-genesis/3",
+  rules_version: "r2r-audit-rules/3",
+  state_root_format: "r2r-state-root/2",
+  seal_format: "r2r-seal/2"
+};
+var GENESIS_KEYS = [
+  "format",
+  "rules_version",
+  "state_root_format",
+  "seal_format",
+  "run_id",
+  "source_mode",
+  "source_documents",
+  "questions",
+  "operator_meta",
+  "settings_hash",
+  "manifest_hash",
+  "engine_root",
+  "audit_root",
+  "engine_container_hex",
+  "base_ontology"
+];
+var BODY_KEYS = ["actor", "submission_id", "command", "request_hash", "outcome", "engine_root", "audit_root"];
+var OPAQUE_KEYS = ["doc_id", "kind", "raw_sha256"];
+var GIT_KEYS = ["commit", "kind", "path", "raw_sha256", "repo", "size_bytes", "revision_refs"];
+var GIT_OPTIONAL_KEYS = ["date"];
+var OPERATOR_META_MAX_BYTES = 4096;
+var BATCH_MAX_OPERATIONS = 256;
+var WHITESPACE = /* @__PURE__ */ new Set([
+  9,
+  10,
+  11,
+  12,
+  13,
+  32,
+  133,
+  160,
+  5760,
+  8192,
+  8193,
+  8194,
+  8195,
+  8196,
+  8197,
+  8198,
+  8199,
+  8200,
+  8201,
+  8202,
+  8232,
+  8233,
+  8239,
+  8287,
+  12288
+]);
+function isIdentifier(v) {
+  if (typeof v !== "string") return false;
+  const n = utf8(v).length;
+  if (n < 1 || n > 1024) return false;
+  let visible = false;
+  for (const ch of v) {
+    const c = ch.codePointAt(0);
+    if (c <= 31 || c >= 127 && c <= 159) return false;
+    if (!WHITESPACE.has(c)) visible = true;
+  }
+  return visible;
+}
+function commandKind(command) {
+  if (!isObject(command)) return void 0;
+  const k = command.get("kind");
+  return typeof k === "string" ? k : void 0;
+}
+function isSubmitResult(r) {
+  if (!isObject(r) || !hasExactKeys(r, ["accepted", "error", "failed_index"])) return false;
+  const accepted = r.get("accepted");
+  const error = r.get("error");
+  const failed = r.get("failed_index");
+  return Array.isArray(accepted) && accepted.every((x) => isHashText(x)) && (error === null || isObject(error)) && (failed === null || typeof failed === "number");
+}
+function isOutcomeForm(o) {
+  if (!isObject(o)) return false;
+  switch (o.get("kind")) {
+    case "records":
+      return hasExactKeys(o, ["kind", "result"]) && isSubmitResult(o.get("result"));
+    case "value":
+      return hasExactKeys(o, ["kind", "result"]);
+    case "error":
+      return hasExactKeys(o, ["kind", "error"]);
+    default:
+      return false;
+  }
+}
+async function gitDocumentId(adapter, repo, commit, path, rawSha256) {
+  const preimage = jcs(["R2R-AUDIT-GIT-DOCUMENT/1", repo, commit, path, rawSha256]);
+  return "d_" + toHex(await adapter.sha256(utf8(preimage)));
+}
+async function requestHash(adapter, actor, command) {
+  return toHex(await adapter.sha256(utf8(jcs(["r2r-audit-request/1", actor, command]))));
+}
+var J2Checker = class {
+  constructor(adapter) {
+    this.adapter = adapter;
+  }
+  adapter;
+  pairs = /* @__PURE__ */ new Set();
+  genesis = null;
+  /** J2-1 ... J2-5 on frame 0. */
+  async frame0(header, body) {
+    const fail = (code, detail) => ({ code, detail });
+    if (header.get("records_root") !== EMPTY_RECORDS_ROOT) return fail("GENESIS_RECORDS_ROOT", "header.records_root of frame 0 is not the empty records root");
+    if (!hasExactKeys(body, GENESIS_KEYS)) return fail("GENESIS_KEYS", "the genesis record must have exactly its 15 keys");
+    for (const [k, v] of Object.entries(GENESIS_FORMATS)) {
+      if (body.get(k) !== v) return fail("GENESIS_FORMAT", `${k} is not "${v}"`);
+    }
+    const field = (k, ok, what) => ok ? null : fail("GENESIS_FIELD", `${k} is not ${what}`);
+    const mode = body.get("source_mode");
+    const docs = body.get("source_documents");
+    const meta = body.get("operator_meta");
+    const container = body.get("engine_container_hex");
+    const problem = field("run_id", isIdentifier(body.get("run_id")), "an identifier") ?? field("source_mode", mode === "opaque" || mode === "git_manifest", '"opaque" or "git_manifest"') ?? field("source_documents", isObject(docs), "an object") ?? field("questions", Array.isArray(body.get("questions")), "an array") ?? field("operator_meta", meta === null || isObject(meta) && utf8(jcs(meta)).length <= OPERATOR_META_MAX_BYTES, `null or an object of at most ${OPERATOR_META_MAX_BYTES} bytes in JCS`) ?? field("settings_hash", isHashText(body.get("settings_hash")), "a hash") ?? field("manifest_hash", isHashText(body.get("manifest_hash")), "a hash") ?? field("engine_root", isHashText(body.get("engine_root")), "a hash") ?? field("audit_root", isHashText(body.get("audit_root")), "a hash") ?? field("engine_container_hex", typeof container === "string" && /^(?:[0-9a-fA-F]{2})*$/.test(container), "an even number of hex digits") ?? field("base_ontology", isObject(body.get("base_ontology")), "an object");
+    if (problem !== null) return problem;
+    const sources = docs;
+    for (const key of [...sources.keys()].sort()) {
+      const desc = sources.get(key);
+      const formProblem = this.descriptionForm(mode, key, desc);
+      if (formProblem !== null) return fail("GENESIS_FIELD", `source_documents[${JSON.stringify(key)}]: ${formProblem}`);
+      const d = desc;
+      const id = mode === "opaque" ? d.get("doc_id") : await gitDocumentId(this.adapter, d.get("repo"), d.get("commit"), d.get("path"), d.get("raw_sha256"));
+      if (id !== key) return fail("SOURCE_ID_MISMATCH", `source_documents[${JSON.stringify(key)}] describes the document ${JSON.stringify(id)}`);
+    }
+    this.genesis = { documents: sources.size, settingsHash: body.get("settings_hash") };
+    return null;
+  }
+  /** P3-6 and amendment 4, P4-3: the form of one description and its key; null when it is right. */
+  descriptionForm(mode, key, desc) {
+    if (!isIdentifier(key)) return "the key is not an identifier";
+    if (!isObject(desc)) return "not an object";
+    if (desc.get("kind") !== mode) return "its kind is not the source_mode";
+    if (mode === "opaque") {
+      if (!hasExactKeys(desc, OPAQUE_KEYS)) return "an opaque description has exactly the keys doc_id, kind, raw_sha256";
+      if (typeof desc.get("doc_id") !== "string") return "doc_id is not a string";
+      if (!isHashText(desc.get("raw_sha256"))) return "raw_sha256 is not a hash";
+      return null;
+    }
+    for (const k of desc.keys()) {
+      if (!GIT_KEYS.includes(k) && !GIT_OPTIONAL_KEYS.includes(k)) return `unknown key ${JSON.stringify(k)}`;
+    }
+    for (const k of GIT_KEYS) if (!desc.has(k)) return `missing key ${k}`;
+    const commit = desc.get("commit");
+    if (typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit)) return "commit is not 40 characters [0-9a-f]";
+    if (typeof desc.get("path") !== "string") return "path is not a string";
+    if (!isHashText(desc.get("raw_sha256"))) return "raw_sha256 is not a hash";
+    if (typeof desc.get("repo") !== "string") return "repo is not a string";
+    if (typeof desc.get("size_bytes") !== "number") return "size_bytes is not a number";
+    if (!isObject(desc.get("revision_refs"))) return "revision_refs is not an object";
+    return null;
+  }
+  /** J2-6 ... J2-11 on a frame at position i >= 1. */
+  async frame(body) {
+    const fail = (code, detail) => ({ code, detail });
+    if (!hasExactKeys(body, BODY_KEYS)) return fail("BODY_KEYS", "the body must have exactly the keys actor, submission_id, command, request_hash, outcome, engine_root, audit_root");
+    const actor = body.get("actor");
+    const sid = body.get("submission_id");
+    const command = body.get("command");
+    const outcome = body.get("outcome");
+    if (!isIdentifier(actor)) return fail("BODY_FIELD", "actor is not an identifier");
+    if (!isIdentifier(sid)) return fail("BODY_FIELD", "submission_id is not an identifier");
+    for (const k of ["request_hash", "engine_root", "audit_root"]) {
+      if (!isHashText(body.get(k))) return fail("BODY_FIELD", `${k} is not a hash`);
+    }
+    if (!isOutcomeForm(outcome)) return fail("BODY_FIELD", "outcome is not one of the three forms");
+    const kind = commandKind(command);
+    if (outcome.get("kind") === "records" && kind !== "submit") return fail("BODY_FIELD", 'an outcome "records" on a command that is not submit');
+    if (kind === "submit" && outcome.get("kind") === "value") return fail("BODY_FIELD", 'an outcome "value" on a submit');
+    if (body.get("request_hash") !== await requestHash(this.adapter, actor, command)) {
+      return fail("REQUEST_HASH_MISMATCH", 'request_hash is not hex(SHA256(JCS(["r2r-audit-request/1", actor, command])))');
+    }
+    const pair = jcs([actor, sid]);
+    if (this.pairs.has(pair)) return fail("DUPLICATE_SUBMISSION", "the pair (actor, submission_id) is used by an earlier frame");
+    this.pairs.add(pair);
+    if (kind === "batch" && outcome.get("kind") === "value") return batchProblem(command, outcome.get("result"));
+    return null;
+  }
+};
+function batchProblem(command, result) {
+  const form = (detail) => ({ code: "BATCH_FORM", detail });
+  for (const k of command.keys()) if (k !== "kind" && k !== "operations" && k !== "checkpoint") return form(`unknown key ${JSON.stringify(k)} in the batch`);
+  const ops = command.get("operations");
+  if (!Array.isArray(ops)) return form("operations is not an array");
+  if (ops.length > BATCH_MAX_OPERATIONS) return form(`more than ${BATCH_MAX_OPERATIONS} operations`);
+  if (!isObject(result)) return form("outcome.result is not an object");
+  const results = result.get("results");
+  if (!Array.isArray(results)) return form("outcome.result.results is not an array");
+  if (result.get("accepted_operations") !== results.length) return form("accepted_operations is not the length of results");
+  if (results.length > ops.length) return form("more results than operations");
+  for (let k = 0; k < results.length; k++) {
+    if (commandKind(ops[k]) === "submit" && !isSubmitResult(results[k])) return form(`results[${k}] is not the result of a submit`);
+  }
+  for (let k = 0; k < results.length; k++) {
+    const kind = commandKind(ops[k]);
+    if (kind === "batch" || kind === "seal" || kind === "close") {
+      return { code: "KERNEL_OP_IN_BATCH", detail: `operation ${k} (${kind}) was executed inside a batch` };
+    }
+  }
+  return null;
+}
+
+// src/cdc.ts
+var CDC_WINDOW = 512;
+var CDC_MAX_CHUNK = 2048;
+var MASK64 = (1n << 64n) - 1n;
+var GEAR_HI = new Uint32Array(256);
+var GEAR_LO = new Uint32Array(256);
+(() => {
+  let st = 0x5342474b43444301n;
+  for (let i = 0; i < 256; i++) {
+    st = st + 0x9e3779b97f4a7c15n & MASK64;
+    let z = st;
+    z = (z ^ z >> 30n) * 0xbf58476d1ce4e5b9n & MASK64;
+    z = (z ^ z >> 27n) * 0x94d049bb133111ebn & MASK64;
+    z = z ^ z >> 31n;
+    GEAR_HI[i] = Number(z >> 32n);
+    GEAR_LO[i] = Number(z & 0xffffffffn);
+  }
+})();
+function gearHex(i) {
+  return GEAR_HI[i].toString(16).padStart(8, "0") + GEAR_LO[i].toString(16).padStart(8, "0");
+}
+function cutPoints(bytes, w = CDC_WINDOW) {
+  const n = bytes.length;
+  if (n === 0) return [];
+  const hi = new Uint32Array(n);
+  const lo = new Uint32Array(n);
+  let fh = 0;
+  let fl = 0;
+  for (let p = 0; p < n; p++) {
+    const b = bytes[p];
+    let l = fl * 2 + GEAR_LO[b];
+    const carry = l >= 4294967296 ? l >= 8589934592 ? 2 : 1 : 0;
+    l -= carry * 4294967296;
+    const h = (fh << 1 >>> 0) + GEAR_HI[b] + carry >>> 0;
+    fh = h;
+    fl = l;
+    hi[p] = h;
+    lo[p] = l;
+  }
+  const greater = (a, b) => hi[a] > hi[b] || hi[a] === hi[b] && lo[a] > lo[b];
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+  let next = 0;
+  const cuts = [];
+  for (let c = 0; c < n; c++) {
+    const right = Math.min(n - 1, c + w);
+    while (next <= right) {
+      while (tail > head && greater(next, queue[tail - 1])) tail--;
+      queue[tail++] = next;
+      next++;
+    }
+    const left = c - w;
+    while (queue[head] < left) head++;
+    if (queue[head] === c) cuts.push(c + 1);
+  }
+  if (cuts[cuts.length - 1] !== n) cuts.push(n);
+  return cuts;
+}
+function chunksOf(bytes, w = CDC_WINDOW, max = CDC_MAX_CHUNK) {
+  const out = [];
+  let start = 0;
+  for (const t of cutPoints(bytes, w)) {
+    while (t - start > max) {
+      out.push({ start, end: start + max });
+      start += max;
+    }
+    if (t > start) {
+      out.push({ start, end: t });
+      start = t;
+    }
+  }
+  return out;
+}
+var VERSION_PREFIX = utf8("SBGK-DOCVER-v1");
+async function documentChunks(adapter, bytes) {
+  const chunks = chunksOf(bytes);
+  const hashes = [];
+  for (const c of chunks) hashes.push(await adapter.sha256(bytes.subarray(c.start, c.end)));
+  const version = await adapter.sha256(concatBytes([VERSION_PREFIX, ...hashes]));
+  return { chunks, hashes, version };
+}
+function segmentsOf(doc, start, end) {
+  const out = [];
+  doc.chunks.forEach((c, k) => {
+    if (c.start < end && c.end > start) {
+      out.push({ hash: doc.hashes[k], from: Math.max(start, c.start) - c.start, to: Math.min(end, c.end) - c.start });
+    }
+  });
+  return out;
+}
+function u16le(n) {
+  return new Uint8Array([n & 255, n >>> 8 & 255]);
+}
+function u32le(n) {
+  return new Uint8Array([n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24 & 255]);
+}
+var AnchorEncodingError = class extends Error {
+};
+async function anchorBytes(adapter, docId, quote, segments) {
+  const id = utf8(docId);
+  if (id.length > 65535) throw new AnchorEncodingError("doc_id longer than 65535 bytes");
+  if (segments.length > 255) throw new AnchorEncodingError("quote crosses more than 255 chunks");
+  if (quote.length > 4294967295) throw new AnchorEncodingError("quote longer than 2^32 - 1 bytes");
+  const parts = [new Uint8Array([1]), u16le(id.length), id, await adapter.sha256(quote), u32le(quote.length), new Uint8Array([segments.length])];
+  for (const s of segments) parts.push(s.hash, u32le(s.from), u32le(s.to));
+  return concatBytes(parts);
+}
+function occurrences(bytes, q, limit) {
+  const out = [];
+  if (q.length === 0 || q.length > bytes.length) return out;
+  const first = q[0];
+  let p = bytes.indexOf(first, 0);
+  while (p >= 0 && p + q.length <= bytes.length) {
+    let k = 1;
+    while (k < q.length && bytes[p + k] === q[k]) k++;
+    if (k === q.length) {
+      out.push(p);
+      if (out.length >= limit) break;
+    }
+    p = bytes.indexOf(first, p + 1);
+  }
+  return out;
+}
+
+// src/j3.ts
+var LINE_KEYS = {
+  observe: ["kind", "local_id", "doc_id", "exact_quote", "terms"],
+  claim: ["kind", "local_id", "text", "subject", "predicate", "object", "stance", "as_of", "based_on"],
+  relation: ["kind", "local_id", "from", "rel", "to", "based_on"],
+  hypothesis: ["kind", "local_id", "text", "falsifier", "subject", "stance", "based_on"],
+  question: ["kind", "local_id", "text", "about", "needed"],
+  done: ["kind", "local_id", "rq_id", "directive_id", "answer_ids", "outcome", "text"]
+};
+var LINE_REQUIRED = {
+  observe: ["doc_id", "exact_quote"],
+  claim: ["text", "subject", "stance", "based_on"],
+  relation: ["from", "rel", "to", "based_on"],
+  hypothesis: ["text", "based_on"],
+  question: ["text", "about"],
+  done: ["answer_ids"]
+};
+var STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stance", "from", "rel", "to"];
+var MAX_QUOTE_BYTES = 16384;
+var STRING_ARRAY_FIELDS = ["terms", "based_on", "about", "answer_ids"];
+var RecordEngine = class {
+  constructor(adapter, files, rewrite = null) {
+    this.adapter = adapter;
+    this.files = files;
+    this.rewrite = rewrite;
+  }
+  adapter;
+  files;
+  rewrite;
+  current = /* @__PURE__ */ new Map();
+  records = [];
+  byId = /* @__PURE__ */ new Map();
+  byName = /* @__PURE__ */ new Map();
+  ordinals = /* @__PURE__ */ new Map();
+  /** Leaves of the last frame, in order (for the forger and the tests). */
+  lastFrameLeaves = [];
+  quotes = 0;
+  get recordCount() {
+    return this.records.length;
+  }
+  /** All records accepted so far, in order. */
+  get accepted() {
+    return this.records;
+  }
+  /** J3-0 on the genesis record (already checked by J2). */
+  async genesis(body) {
+    const sources = body.get("source_documents");
+    for (const docId of [...sources.keys()].sort()) {
+      const desc = sources.get(docId);
+      const bytes = this.files.get(desc.get("raw_sha256"));
+      if (bytes === void 0) return { notSupplied: docId };
+      if (desc.get("kind") === "git_manifest" && bytes.length !== desc.get("size_bytes")) {
+        return { code: "SOURCE_IDENTITY", detail: `the file of ${JSON.stringify(docId)} has ${bytes.length} bytes, size_bytes says ${String(desc.get("size_bytes"))}` };
+      }
+      this.current.set(docId, { bytes, chunks: null });
+    }
+    return null;
+  }
+  /** The steps of P3-7 for a frame at position i >= 1, then J3-9. */
+  async frame(header, body) {
+    this.lastFrameLeaves = [];
+    const leaves = [];
+    const actor = body.get("actor");
+    const command = body.get("command");
+    const outcome = body.get("outcome");
+    const outcomeKind = outcome.get("kind");
+    const kind = commandKind(command);
+    if (outcomeKind === "records") {
+      const result = outcome.get("result");
+      const f = await this.group({ actor, command, accepted: result.get("accepted") }, leaves);
+      if (f !== null) return f;
+    } else if (kind === "batch" && outcomeKind === "value") {
+      const ops = command.get("operations");
+      const results = outcome.get("result").get("results");
+      for (let k = 0; k < results.length; k++) {
+        const op = ops[k];
+        const opKind = commandKind(op);
+        let f = null;
+        if (opKind === "submit") {
+          f = await this.group({ actor, command: op, accepted: results[k].get("accepted") }, leaves);
+        } else if (opKind === "put_document") {
+          f = await this.putDocument(op, results[k], (v) => this.setVersion(results[k], v));
+        }
+        if (f !== null) return f;
+      }
+    } else if (kind === "put_document" && outcomeKind === "value") {
+      const f = await this.putDocument(command, outcome.get("result"), (v) => this.setVersion(outcome.get("result"), v));
+      if (f !== null) return f;
+    }
+    const root = toHex(await recordsRoot(this.adapter, leaves));
+    if (root !== header.get("records_root")) {
+      if (this.rewrite === null) return { code: "RECORDS_ROOT_MISMATCH", detail: "the records root of the frame's accepted records is not header.records_root" };
+      header.set("records_root", root);
+    }
+    return null;
+  }
+  setVersion(result, version) {
+    if (this.rewrite !== null && isObject(result)) result.set("document_version", version);
+  }
+  /** J3-8: a new version of a document. */
+  async putDocument(command, result, rewriteVersion) {
+    const docId = command.get("doc_id");
+    const text = command.get("text");
+    if (!isIdentifier(docId) || typeof text !== "string" || !isObject(result)) {
+      return { code: "DOCUMENT_VERSION_MISMATCH", detail: "put_document needs an identifier doc_id, a string text and an object result" };
+    }
+    const bytes = utf8(text);
+    const chunks = await documentChunks(this.adapter, bytes);
+    const version = toHex(chunks.version);
+    if (result.get("document_version") !== version) {
+      if (this.rewrite === null) return { code: "DOCUMENT_VERSION_MISMATCH", detail: `the version of the new bytes of ${JSON.stringify(docId)} is not document_version` };
+      rewriteVersion(version);
+    }
+    this.current.set(docId, { bytes, chunks });
+    return null;
+  }
+  async chunksOf(doc) {
+    doc.chunks ??= await documentChunks(this.adapter, doc.bytes);
+    return doc.chunks;
+  }
+  /** J3-1 ... J3-7 for the records of one group. */
+  async group(g, leaves) {
+    const fail = (code, detail) => ({ code, detail });
+    const directive = g.command.get("directive");
+    const scope = g.command.get("scope");
+    const lines = g.command.get("lines");
+    if (typeof directive !== "string") return fail("RECORD_FORM", "directive is not a string");
+    if (!isScope(scope)) return fail("RECORD_FORM", "scope is not an object with an array of strings docs and an array of [string, number, number] ranges");
+    if (!Array.isArray(lines)) return fail("RECORD_FORM", "lines is not an array");
+    if (g.accepted.length > lines.length) return fail("RECORD_FORM", "more accepted ids than lines");
+    for (let j = 0; j < g.accepted.length; j++) {
+      const f = await this.line(g, directive, scope, lines[j], j, leaves);
+      if (f !== null) return f;
+    }
+    return null;
+  }
+  async line(g, directive, scope, line, j, leaves) {
+    const fail = (code, detail) => ({ code, detail: `line ${j}: ${detail}` });
+    const form = lineFormProblem(line);
+    if (form !== null) return fail("RECORD_FORM", form);
+    const l = line;
+    const kind = l.get("kind");
+    if (this.byName.has(jcs([g.actor, directive, l.get("local_id")]))) {
+      return fail("DUPLICATE_LOCAL_ID", `local_id ${quoted(l.get("local_id"))} already names an accepted record of this actor and directive`);
+    }
+    const resolve = (name, where) => this.resolve(g.actor, directive, name, where);
+    const supports = [];
+    let from = null;
+    let to = null;
+    if (kind === "claim" || kind === "relation" || kind === "hypothesis") {
+      const arr = l.get("based_on");
+      for (let k = 0; k < arr.length; k++) {
+        const r = resolve(arr[k], (v) => arr[k] = v);
+        if (r === null) return fail("UNRESOLVED_REFERENCE", `based_on ${quoted(arr[k])} does not resolve`);
+        supports.push(r);
+      }
+    }
+    if (kind === "relation") {
+      from = resolve(l.get("from"), (v) => l.set("from", v));
+      if (from === null) return fail("UNRESOLVED_REFERENCE", `from ${quoted(l.get("from"))} does not resolve`);
+      to = resolve(l.get("to"), (v) => l.set("to", v));
+      if (to === null) return fail("UNRESOLVED_REFERENCE", `to ${quoted(l.get("to"))} does not resolve`);
+    }
+    if (kind === "done") {
+      const arr = l.get("answer_ids");
+      for (let k = 0; k < arr.length; k++) {
+        const r = resolve(arr[k], (v) => arr[k] = v);
+        if (r === null) return fail("UNRESOLVED_REFERENCE", `answer_ids ${quoted(arr[k])} does not resolve`);
+        supports.push(r);
+      }
+    }
+    let evidence = null;
+    if (kind === "observe") {
+      const docId = l.get("doc_id");
+      const doc = this.current.get(docId);
+      if (doc === void 0) return fail("UNKNOWN_DOCUMENT", `document ${quoted(docId)} is not among the current documents`);
+      const q = utf8(l.get("exact_quote"));
+      const found = occurrences(doc.bytes, q, 2);
+      let fallback;
+      if (found.length !== 1 && this.rewrite?.originalEvidence !== void 0) fallback = this.rewrite.originalEvidence.get(g.accepted[j]);
+      if (fallback !== void 0) {
+        evidence = fallback;
+      } else {
+        if (found.length === 0) return fail("QUOTE_NOT_IN_SOURCE", `the quote has no occurrence in the current bytes of ${quoted(docId)}`);
+        if (found.length > 1) return fail("QUOTE_AMBIGUOUS", `the quote occurs more than once in ${quoted(docId)}`);
+        const start = found[0];
+        const end = start + q.length;
+        if (!inScope(scope, docId, start, end, doc.bytes.length)) return fail("QUOTE_OUTSIDE_SCOPE", `the quote [${start}, ${end}) of ${quoted(docId)} is outside the scope of the task`);
+        const chunks = await this.chunksOf(doc);
+        let bytes;
+        try {
+          bytes = await anchorBytes(this.adapter, docId, q, segmentsOf(chunks, start, end));
+        } catch (e) {
+          if (e instanceof AnchorEncodingError) return fail("RECORD_ID_MISMATCH", `the evidence anchor cannot be written: ${e.message}`);
+          throw e;
+        }
+        evidence = /* @__PURE__ */ new Map([
+          ["id", toHex(await this.adapter.sha256(bytes))],
+          ["span", [start, end]],
+          ["version", toHex(chunks.version)]
+        ]);
+      }
+    }
+    const body = /* @__PURE__ */ new Map();
+    for (const [k, v] of l) if (k !== "local_id") body.set(k, v);
+    const at = (r) => "@" + r.id;
+    if (Array.isArray(l.get("based_on")) && l.get("based_on").length > 0 && kind !== "done") body.set("based_on", supports.map(at));
+    if (kind === "relation") {
+      body.set("from", at(from));
+      body.set("to", at(to));
+    }
+    if (kind === "done") body.set("answer_ids", supports.map(at));
+    if (evidence !== null) {
+      body.set("evidence_id", evidence.get("id"));
+      body.set("document_version", evidence.get("version"));
+    }
+    const ordinalKey = jcs([g.actor, directive]);
+    const ordinal = (this.ordinals.get(ordinalKey) ?? 0) + 1;
+    const id = toHex(await this.adapter.sha256(utf8(jcs(["r2r.audit.record.v1", g.actor, directive, ordinal, body]))));
+    const named = g.accepted[j];
+    if (id !== named) {
+      if (this.rewrite === null) return fail("RECORD_ID_MISMATCH", "the record id computed from the line is not the id in the outcome");
+      g.accepted[j] = id;
+    }
+    this.ordinals.set(ordinalKey, ordinal);
+    const record = { id, kind, evidence, originalId: named };
+    this.records.push(record);
+    this.byId.set(id, record);
+    this.byName.set(jcs([g.actor, directive, l.get("local_id")]), record);
+    if (kind === "observe") this.quotes++;
+    const L = recordValue(record, this.records.length, g.actor, directive, l, body, supports, from, to);
+    const leaf = await domainHash(this.adapter, DOMAIN.recordLeaf, utf8(jcs(L)));
+    leaves.push(leaf);
+    this.lastFrameLeaves.push({ L, leaf });
+    return null;
+  }
+  /** P3-7: a reference by local name, else by "@" and 16 to 64 hex digits. */
+  resolve(actor, directive, name, rewriteRef) {
+    const byName = this.byName.get(jcs([actor, directive, name]));
+    if (byName !== void 0) return byName;
+    const r = uniqueByPrefix(this.records, (x) => x.id, name);
+    if (r !== null || this.rewrite === null) return r;
+    const old = uniqueByPrefix(this.records, (x) => x.originalId, name);
+    if (old !== null) rewriteRef("@" + old.id);
+    return old;
+  }
+};
+function uniqueByPrefix(items, id, name) {
+  if (!/^@[0-9a-fA-F]{16,64}$/.test(name)) return null;
+  const prefix = name.slice(1).toLowerCase();
+  let found = null;
+  for (const item of items) {
+    if (id(item).startsWith(prefix)) {
+      if (found !== null) return null;
+      found = item;
+    }
+  }
+  return found;
+}
+function quoted(s) {
+  return JSON.stringify(s.length > 80 ? s.slice(0, 80) + "..." : s);
+}
+function isScope(v) {
+  if (!isObject(v)) return false;
+  const docs = v.get("docs");
+  const ranges = v.get("ranges");
+  return Array.isArray(docs) && docs.every((d) => typeof d === "string") && Array.isArray(ranges) && ranges.every((r) => Array.isArray(r) && r.length === 3 && typeof r[0] === "string" && typeof r[1] === "number" && typeof r[2] === "number");
+}
+function inScope(scope, docId, start, end, length) {
+  const docs = scope.get("docs");
+  if (!docs.includes(docId)) return false;
+  const ranges = scope.get("ranges");
+  if (ranges.length === 0) return true;
+  return ranges.some(([d, a, z]) => d === docId && a <= start && end <= z && a < z && z <= length);
+}
+function lineFormProblem(line) {
+  if (!isObject(line)) return "the line is not an object";
+  const kind = line.get("kind");
+  if (typeof kind !== "string" || !Object.hasOwn(LINE_KEYS, kind)) return "kind is not one of the six kinds";
+  const allowed = LINE_KEYS[kind];
+  for (const k of line.keys()) if (!allowed.includes(k)) return `key ${JSON.stringify(k)} is not allowed for ${kind}`;
+  if (typeof line.get("local_id") !== "string") return "local_id is not a string";
+  for (const k of STRING_FIELDS) if (line.has(k) && typeof line.get(k) !== "string") return `${k} is not a string`;
+  for (const k of STRING_ARRAY_FIELDS) {
+    if (!line.has(k)) continue;
+    const v = line.get(k);
+    if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) return `${k} is not an array of strings`;
+  }
+  for (const k of LINE_REQUIRED[kind]) if (!line.has(k)) return `${kind} needs ${k}`;
+  const quote = line.get("exact_quote");
+  if (typeof quote === "string" && utf8(quote).length > MAX_QUOTE_BYTES) return `exact_quote is longer than ${MAX_QUOTE_BYTES} bytes`;
+  return null;
+}
+function termsOf(kind, line) {
+  const raw = [];
+  if (kind === "observe") raw.push(...line.get("terms") ?? []);
+  else if (kind === "claim") {
+    raw.push(line.get("subject"));
+    if (line.has("object")) raw.push(line.get("object"));
+  } else if (kind === "hypothesis") {
+    if (line.has("subject")) raw.push(line.get("subject"));
+  } else if (kind === "question") raw.push(...line.get("about"));
+  return raw.filter((t, k) => raw.indexOf(t) === k);
+}
+function recordValue(record, seq, actor, directive, line, body, supports, from, to) {
+  const kind = record.kind;
+  const str = (k) => line.has(k) ? line.get(k) : null;
+  let text = null;
+  if (kind === "claim" || kind === "hypothesis" || kind === "question") text = line.get("text");
+  else if (kind === "done") text = str("text");
+  let stance = null;
+  if (kind === "claim") stance = line.get("stance");
+  else if (kind === "hypothesis") stance = str("stance");
+  const L = /* @__PURE__ */ new Map([
+    ["id", record.id],
+    ["seq", seq],
+    ["kind", kind],
+    ["author", actor],
+    ["directive", directive],
+    ["doc_id", kind === "observe" ? line.get("doc_id") : null],
+    ["quote", kind === "observe" ? line.get("exact_quote") : null],
+    ["terms", termsOf(kind, line)],
+    ["text", text],
+    ["stance", stance],
+    ["based_on", supports.map((s) => s.id)],
+    ["ends", kind === "relation" ? [from.id, line.get("rel"), to.id] : null],
+    ["body", body]
+  ]);
+  if (record.evidence !== null) L.set("evidence", record.evidence);
+  if (supports.length > 0) {
+    L.set(
+      "grounds",
+      supports.map((s) => {
+        const g = /* @__PURE__ */ new Map([["id", s.id]]);
+        if (s.kind === "observe" && s.evidence !== null) g.set("evidence", s.evidence);
+        return g;
+      })
+    );
+  }
+  return L;
+}
+
 // src/verify.ts
 var JOURNAL_FORMAT = "sbgk-session-log/3";
 var SEAL_FORMAT_ID = "r2r-seal/2";
@@ -616,12 +1293,18 @@ var SEAL_KEYS = [
 ];
 var SEAL_HASH_FIELDS = ["log_root", "wal_head", "audit_root", "engine_root"];
 var PROJECTION_KEYS = ["dependencies", "status"];
+async function indexDocuments(files, adapter) {
+  const map = /* @__PURE__ */ new Map();
+  for (const f of files) map.set(toHex(await adapter.sha256(f)), f);
+  return map;
+}
 var ReadError = class extends Error {
 };
 async function verifyJournal(source, options, adapter) {
   const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   const fileHash = adapter.createSha256();
-  const v = new FrameVerifier(adapter, options);
+  const files = options.documents === void 0 ? null : await indexDocuments(options.documents, adapter);
+  const v = new FrameVerifier(adapter, options, files);
   let bytes = 0;
   let lines = 0;
   let pending = [];
@@ -668,7 +1351,7 @@ async function verifyJournal(source, options, adapter) {
       v.failJ0(v.position, "TORN_TAIL", `${pendingLen} bytes after the last LF are not a frame`);
     }
   }
-  return v.finish(toHex(await fileHash.digest()), bytes, lines);
+  return v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === void 0 ? null : options.documents.length);
 }
 function toAsyncIterator(source) {
   const s = source;
@@ -686,11 +1369,13 @@ function toAsyncIterator(source) {
   throw new TypeError("the journal source is not iterable");
 }
 var FrameVerifier = class {
-  constructor(adapter, options) {
+  constructor(adapter, options, files) {
     this.adapter = adapter;
     this.options = options;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.tree = new LogTree(adapter);
+    this.j2 = new J2Checker(adapter);
+    this.j3 = files === null ? null : new RecordEngine(adapter, files);
   }
   adapter;
   options;
@@ -712,6 +1397,13 @@ var FrameVerifier = class {
   lastSealPos = -1;
   closedAt = -1;
   lastIsClose = false;
+  // J2 state
+  j2Failure = null;
+  j2;
+  // J3 state (only with --docs)
+  j3Failure = null;
+  j3NotSupplied = null;
+  j3;
   get j0Stopped() {
     return this.j0Failure !== null;
   }
@@ -752,7 +1444,7 @@ var FrameVerifier = class {
       const fmt = header.get("format");
       if (i === 0 && typeof fmt === "string") this.format = fmt;
       if (typeof fmt === "string" && fmt !== JOURNAL_FORMAT) {
-        return i === 0 ? fail("UNSUPPORTED_FORMAT", `header.format is ${quoted(fmt)}`) : fail("MIXED_FORMAT", `header.format is ${quoted(fmt)}, frame 0 is ${quoted(this.format)}`);
+        return i === 0 ? fail("UNSUPPORTED_FORMAT", `header.format is ${quoted2(fmt)}`) : fail("MIXED_FORMAT", `header.format is ${quoted2(fmt)}, frame 0 is ${quoted2(this.format)}`);
       }
     }
     if (!hasExactKeys(frame, OUTER_KEYS)) return fail("OUTER_KEYS", "the frame must have exactly the keys body, hash, header");
@@ -775,7 +1467,7 @@ var FrameVerifier = class {
     if (!isObject(body)) return fail("BAD_TYPE", "body is not an object");
     if (seq !== i) return fail("SEQ_MISMATCH", `header.seq is ${seq}, expected ${i}`);
     const expectedOp = i === 0 ? "genesis" : "audit";
-    if (walOp !== expectedOp) return fail("WAL_OP_MISMATCH", `header.wal_op is ${quoted(walOp)}, expected "${expectedOp}"`);
+    if (walOp !== expectedOp) return fail("WAL_OP_MISMATCH", `header.wal_op is ${quoted2(walOp)}, expected "${expectedOp}"`);
     const expectedPrevious = i === 0 ? ZERO_HASH : this.prevHash;
     if (previous !== expectedPrevious) {
       return fail(
@@ -788,6 +1480,15 @@ var FrameVerifier = class {
     const computedHash = toHex(await domainHash(this.adapter, DOMAIN.frameHeader, utf8(jcs(header))));
     if (hash !== computedHash) return fail("FRAME_HASH_MISMATCH", `hash is not H("${DOMAIN.frameHeader}", JCS(header))`);
     if (this.j1Failure === null) await this.j1Frame(i, body, hash, this.prevHash);
+    if (this.j1Failure === null && this.j2Failure === null) {
+      const f = i === 0 ? await this.j2.frame0(header, body) : await this.j2.frame(body);
+      if (f !== null) this.j2Failure = { level: "J2", frame: i, code: f.code, detail: f.detail };
+    }
+    if (this.j3 !== null && this.j1Failure === null && this.j2Failure === null && this.j3Failure === null && this.j3NotSupplied === null) {
+      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body);
+      if (r !== null && "notSupplied" in r) this.j3NotSupplied = r.notSupplied;
+      else if (r !== null) this.j3Failure = { level: "J3", frame: i, code: r.code, detail: r.detail };
+    }
     this.prevHash = hash;
     this.i++;
   }
@@ -812,7 +1513,7 @@ var FrameVerifier = class {
       return this.failJ1(
         i,
         "KERNEL_COMMAND_NOT_FROM_KERNEL",
-        `a ${kind} command from the actor ${typeof actor === "string" ? quoted(actor) : "(missing or not a string)"}`
+        `a ${kind} command from the actor ${typeof actor === "string" ? quoted2(actor) : "(missing or not a string)"}`
       );
     }
     let isSeal = false;
@@ -824,7 +1525,7 @@ var FrameVerifier = class {
     if (isKernel) {
       const sid = body.get("submission_id");
       if (typeof sid === "string" && sid.startsWith("seal-") && !isSeal) {
-        return this.failJ1(i, "KERNEL_ID_MISUSE", `a kernel frame takes the id ${quoted(sid)} but is not a seal`);
+        return this.failJ1(i, "KERNEL_ID_MISUSE", `a kernel frame takes the id ${quoted2(sid)} but is not a seal`);
       }
       isClose = kind === "close";
       if (isClose && command.size !== 1) {
@@ -901,7 +1602,7 @@ var FrameVerifier = class {
   // -------------------------------------------------------------------------
   // End of file
   // -------------------------------------------------------------------------
-  finish(journalSha256, bytes, lines) {
+  finish(journalSha256, bytes, lines, documentFiles) {
     const n = this.i;
     const { expectSeal, expectHead } = this.options;
     if (this.j0Failure === null && expectHead !== void 0 && expectHead !== this.prevHash) {
@@ -933,15 +1634,37 @@ var FrameVerifier = class {
       head = { given: true, matched: j0Pass ? true : this.j0Failure?.code === "HEAD_MISMATCH" ? false : null };
     }
     const anchor = { seal, head };
+    const j2Pass = j1Pass && this.j2Failure === null;
+    let j2;
+    if (!j0Pass) j2 = { result: "NOT_CHECKABLE", reason: "J0 failed" };
+    else if (!j1Pass) j2 = { result: "NOT_CHECKABLE", reason: "J1 failed" };
+    else if (!j2Pass) j2 = { result: "FAIL" };
+    else j2 = { result: "PASS", documents: this.j2.genesis.documents, settings_hash: this.j2.genesis.settingsHash };
+    let j3;
+    if (this.j3 === null) j3 = { result: "NOT_CHECKED" };
+    else if (!j0Pass) j3 = { result: "NOT_CHECKABLE", reason: "J0 failed" };
+    else if (!j1Pass) j3 = { result: "NOT_CHECKABLE", reason: "J1 failed" };
+    else if (!j2Pass) j3 = { result: "NOT_CHECKABLE", reason: "J2 failed" };
+    else if (this.j3Failure !== null) j3 = { result: "FAIL" };
+    else if (this.j3NotSupplied !== null) j3 = { result: "NOT_CHECKABLE", reason: `document ${this.j3NotSupplied} not supplied` };
+    else j3 = { result: "PASS", records: this.j3.recordCount, quotes: this.j3.quotes };
     const j0Result = j0Pass ? "PASS" : "FAIL";
+    const results = [j0Result, j1.result, j2.result, j3.result];
+    const verdict = results.includes("FAIL") ? "FAIL" : this.j3NotSupplied !== null && j3.result === "NOT_CHECKABLE" ? "INCOMPLETE" : "PASS";
     return {
       verifier: { name: VERIFIER_NAME, version: VERIFIER_VERSION, spec: SPEC_ID },
-      input: { journal_sha256: journalSha256, bytes, frames: lines, format: this.format },
+      input: {
+        journal_sha256: journalSha256,
+        bytes,
+        frames: lines,
+        format: this.format,
+        sources: documentFiles === null ? { given: false } : { given: true, files: documentFiles }
+      },
       levels: {
         J0: { result: j0Result },
         J1: j1,
-        J2: { result: "NOT_CHECKED" },
-        J3: { result: "NOT_CHECKED" },
+        J2: j2,
+        J3: j3,
         J5: { result: "NOT_CHECKED" }
       },
       anchor,
@@ -949,9 +1672,9 @@ var FrameVerifier = class {
         wal_head: j0Pass ? this.prevHash : null,
         closed: tail === null ? null : tail.kind === "closed"
       },
-      not_verified: [...NOT_VERIFIED],
-      verdict: computeVerdict([j0Result, j1.result]),
-      first_failure: this.j0Failure ?? this.j1Failure
+      not_verified: j3.result === "PASS" ? [...NOT_VERIFIED_AFTER_J3] : [...NOT_VERIFIED],
+      verdict,
+      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null)
     };
   }
   /** SPEC 6.5: the tail after the last seal. */
@@ -963,7 +1686,7 @@ var FrameVerifier = class {
     return { kind: "unsealed", frames_after_last_seal: k };
   }
 };
-function quoted(v) {
+function quoted2(v) {
   if (v === null) return "null";
   return JSON.stringify(v.length > 80 ? v.slice(0, 80) + "..." : v);
 }
@@ -975,7 +1698,8 @@ function firstDifference(a, b) {
 
 // src/vectors.ts
 var NOT_RECOMPUTED = /^(V5_|V6_|V8_)/;
-var NOT_RECOMPUTED_REASON = "state-root, projection and session-root formulas are not recomputed by levels J0-J1";
+var NOT_RECOMPUTED_REASON = "state-root, projection and session-root formulas are not recomputed by levels J0-J3";
+var SETTINGS_DOMAIN = "R2R-SETTINGS/2";
 var INPUTS = /* @__PURE__ */ new Set([
   "V2_L_jcs",
   "V2_real_leaf_value_jcs",
@@ -985,7 +1709,23 @@ var INPUTS = /* @__PURE__ */ new Set([
   "V9_real_seal_pair_source",
   "V9_seal_frame_index",
   "V9_line_frame_n_minus_1",
-  "V9_line_seal_frame_n"
+  "V9_line_seal_frame_n",
+  "V10_request_actor",
+  "V10_request_command_jcs",
+  "V10_request_preimage_jcs",
+  "V11_gear_index",
+  "V13_record_author",
+  "V13_record_directive",
+  "V13_record_ordinal",
+  "V13_record_body_jcs",
+  "V13_record_preimage_jcs",
+  "V14_journal",
+  "V14_documents",
+  "V14_frames",
+  "V15_settings_jcs",
+  "V16_git_document_text",
+  "V16_git_identity",
+  "V16_git_id_preimage_jcs"
 ]);
 async function checkVectors(file, adapter) {
   if (!isObject(file)) throw new Error("the vectors file is not a JSON object");
@@ -1007,8 +1747,9 @@ async function checkVectors(file, adapter) {
     if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new VectorShapeError(`${name} is not a list of strings`);
     return v;
   };
-  const check = async (name, run) => {
-    if (!vectors.has(name)) return;
+  const check = async (name, run, key = name) => {
+    if (!vectors.has(key)) return;
+    used.add(key);
     try {
       const problem = await run();
       out.push({ name, status: problem === null ? "PASS" : "FAIL", detail: problem ?? "" });
@@ -1081,7 +1822,9 @@ async function checkVectors(file, adapter) {
     const p = eq("JCS({body, hash, header}) + LF", JSON.stringify(jcs(built) + "\n"), JSON.stringify(line));
     if (p !== null) return p;
     const report = await verifyJournal([utf8(line)], {}, adapter);
-    if (report.verdict !== "PASS") return `the verifier does not accept V3_line: ${JSON.stringify(report.first_failure)}`;
+    if (report.levels.J0.result !== "PASS" || report.levels.J1.result !== "PASS") {
+      return `levels J0-J1 do not accept V3_line: ${JSON.stringify(report.first_failure)}`;
+    }
     return null;
   });
   await check("V3_line_sha256", async () => eq("SHA-256(V3_line)", toHex(await adapter.sha256(utf8(str("V3_line")))), str("V3_line_sha256")));
@@ -1134,6 +1877,146 @@ async function checkVectors(file, adapter) {
       else if (!await run(p, adapter)) problems.push(`fails: ${name}`);
     }
     return problems.length === 0 ? null : problems.join("; ");
+  });
+  await check("V10_request_hash", async () => {
+    const command = parseObject(str("V10_request_command_jcs"));
+    const actor = str("V10_request_actor");
+    const preimage = jcs(["r2r-audit-request/1", actor, command]);
+    return eq("the request preimage", JSON.stringify(preimage), JSON.stringify(str("V10_request_preimage_jcs"))) ?? eq("request_hash", await requestHash(adapter, actor, command), str("V10_request_hash"));
+  });
+  await check("V11_gear_hex", async () => {
+    const idx = get("V11_gear_index");
+    const want = strList("V11_gear_hex");
+    if (!Array.isArray(idx) || idx.length !== want.length) return "V11_gear_index and V11_gear_hex differ in length";
+    for (let k = 0; k < idx.length; k++) {
+      const p = eq(`GEAR[${String(idx[k])}]`, gearHex(idx[k]), want[k]);
+      if (p !== null) return p;
+    }
+    return null;
+  });
+  await check("V11_cdc", async () => {
+    const cdc = get("V11_cdc");
+    if (!isObject(cdc)) return "V11_cdc is not an object";
+    return eq("window w", String(cdc.get("window_w")), String(CDC_WINDOW)) ?? eq("maximum chunk", String(cdc.get("max_chunk")), String(CDC_MAX_CHUNK));
+  });
+  const docs = get("V11_documents");
+  const v11Texts = /* @__PURE__ */ new Map();
+  if (Array.isArray(docs)) {
+    for (let k = 0; k < docs.length; k++) {
+      const d = docs[k];
+      const docId = isObject(d) && typeof d.get("doc_id") === "string" ? d.get("doc_id") : String(k);
+      await check(
+        `V11_documents[${docId}]`,
+        async () => {
+          if (!isObject(d) || typeof d.get("text") !== "string") return "not an object with a text";
+          const text = d.get("text");
+          v11Texts.set(docId, text);
+          const bytes = utf8(text);
+          const c = await documentChunks(adapter, bytes);
+          const ranges = JSON.stringify(c.chunks.map((x) => [x.start, x.end]));
+          return eq("bytes", String(bytes.length), String(d.get("bytes"))) ?? eq("raw_sha256", toHex(await adapter.sha256(bytes)), String(d.get("raw_sha256"))) ?? eq("chunk_ranges", ranges, jcs(d.get("chunk_ranges") ?? null)) ?? eq("chunk_hashes", jcs(c.hashes.map(toHex)), jcs(d.get("chunk_hashes") ?? null)) ?? eq("version", toHex(c.version), String(d.get("version")));
+        },
+        "V11_documents"
+      );
+    }
+  }
+  await check(
+    "V11_version_empty_document",
+    async () => eq("version of the empty document", toHex((await documentChunks(adapter, new Uint8Array(0))).version), str("V11_version_empty_document"))
+  );
+  const shorts = get("V11_short_documents");
+  if (Array.isArray(shorts)) {
+    for (let k = 0; k < shorts.length; k++) {
+      await check(
+        `V11_short_documents[${k}]`,
+        async () => {
+          const d = shorts[k];
+          if (!isObject(d) || typeof d.get("text") !== "string") return "not an object with a text";
+          const c = await documentChunks(adapter, utf8(d.get("text")));
+          return eq("chunk_ranges", JSON.stringify(c.chunks.map((x) => [x.start, x.end])), jcs(d.get("chunk_ranges") ?? null)) ?? eq("chunk_hashes", jcs(c.hashes.map(toHex)), jcs(d.get("chunk_hashes") ?? null)) ?? eq("version", toHex(c.version), String(d.get("version")));
+        },
+        "V11_short_documents"
+      );
+    }
+  }
+  await check("V11_version_one_chunk", async () => {
+    const v = get("V11_version_one_chunk");
+    if (!isObject(v) || typeof v.get("text") !== "string") return "not an object with a text";
+    const c = await documentChunks(adapter, utf8(v.get("text")));
+    return eq("version", toHex(c.version), String(v.get("version")));
+  });
+  const evidence = get("V12_evidence");
+  if (Array.isArray(evidence)) {
+    for (let k = 0; k < evidence.length; k++) {
+      await check(
+        `V12_evidence[${k}]`,
+        async () => {
+          const e = evidence[k];
+          if (!isObject(e)) return "not an object";
+          const docId = e.get("doc_id");
+          const text = v11Texts.get(docId);
+          if (text === void 0) return `no V11 document ${docId}`;
+          const bytes = utf8(text);
+          const q = utf8(e.get("quote"));
+          const span = e.get("span");
+          const found = occurrences(bytes, q, 2);
+          if (found.length !== 1 || found[0] !== span[0] || found[0] + q.length !== span[1]) return `the quote occurs at ${JSON.stringify(found)}, span is ${JSON.stringify(span)}`;
+          const c = await documentChunks(adapter, bytes);
+          const segs = segmentsOf(c, span[0], span[1]);
+          const segJcs = jcs(segs.map((x) => [toHex(x.hash), x.from, x.to]));
+          const node = await anchorBytes(adapter, docId, q, segs);
+          return eq("segments", segJcs, jcs(e.get("segments") ?? null)) ?? eq("node bytes", toHex(node), String(e.get("node_bytes_hex"))) ?? eq("evidence id", toHex(await adapter.sha256(node)), String(e.get("evidence_id")));
+        },
+        "V12_evidence"
+      );
+    }
+  }
+  await check("V13_record_id", async () => {
+    const body = parseObject(str("V13_record_body_jcs"));
+    const preimage = jcs(["r2r.audit.record.v1", str("V13_record_author"), str("V13_record_directive"), get("V13_record_ordinal") ?? null, body]);
+    return eq("the record preimage", JSON.stringify(preimage), JSON.stringify(str("V13_record_preimage_jcs"))) ?? eq("record id", toHex(await adapter.sha256(utf8(preimage))), str("V13_record_id"));
+  });
+  const byFrame = /* @__PURE__ */ new Map();
+  await check("V14_records", async () => {
+    const recs = get("V14_records");
+    if (!Array.isArray(recs)) return "not an array";
+    for (let k = 0; k < recs.length; k++) {
+      const r = recs[k];
+      if (!isObject(r) || typeof r.get("L_jcs") !== "string") return `V14_records[${k}] has no L_jcs`;
+      const L = r.get("L_jcs");
+      const c = canonicalProblem(L, `V14_records[${k}].L_jcs`);
+      if (c !== null) return c;
+      const leaf = await recordLeaf(adapter, utf8(L));
+      const p = eq(`V14_records[${k}].leaf`, toHex(leaf), String(r.get("leaf")));
+      if (p !== null) return p;
+      const frame = r.get("frame");
+      byFrame.set(frame, [...byFrame.get(frame) ?? [], leaf]);
+    }
+    return null;
+  });
+  await check("V14_records_roots", async () => {
+    const roots = strList("V14_records_roots");
+    if (get("V14_frames") !== roots.length) return "V14_frames is not the number of roots";
+    if (byFrame.size === 0) return "V14 leaves unavailable";
+    for (let i = 0; i < roots.length; i++) {
+      const p = eq(`records root of frame ${i}`, toHex(await recordsRoot(adapter, byFrame.get(i) ?? [])), roots[i]);
+      if (p !== null) return p;
+    }
+    return null;
+  });
+  await check("V15_settings_hash", async () => {
+    const settingsJcs = str("V15_settings_jcs");
+    return canonicalProblem(settingsJcs, "V15_settings_jcs") ?? eq("settings hash", await H(SETTINGS_DOMAIN, utf8(settingsJcs)), str("V15_settings_hash"));
+  });
+  await check("V15_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V15_settings_hash_empty")));
+  await check("V8_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V8_settings_hash_empty")));
+  await check("V16_git_document_id", async () => {
+    const identity = get("V16_git_identity");
+    if (!isObject(identity)) return "V16_git_identity is not an object";
+    const bytes = utf8(str("V16_git_document_text"));
+    const s = (k) => String(identity.get(k));
+    const preimage = jcs(["R2R-AUDIT-GIT-DOCUMENT/1", s("repo"), s("commit"), s("path"), s("raw_sha256")]);
+    return eq("raw_sha256 of the text", toHex(await adapter.sha256(bytes)), s("raw_sha256")) ?? eq("size_bytes", String(bytes.length), s("size_bytes")) ?? eq("the identity preimage", JSON.stringify(preimage), JSON.stringify(str("V16_git_id_preimage_jcs"))) ?? eq("doc_id", await gitDocumentId(adapter, s("repo"), s("commit"), s("path"), s("raw_sha256")), str("V16_git_document_id"));
   });
   const covered = new Set(out.map((o) => o.name));
   for (const name of [...vectors.keys()].sort()) {
@@ -1212,13 +2095,13 @@ var V9_CHECKS = {
 // src/cli.ts
 var USAGE = [
   "usage:",
-  "  yuce-verify journal <file> [--expect-seal <hex>] [--expect-head <hex>]",
+  "  yuce-verify journal <file> [--docs <folder>] [--expect-seal <hex>] [--expect-head <hex>]",
   "                             [--max-line-bytes <n>] [--max-depth <n>] [--json] [--quiet]",
   "  yuce-verify vectors <file.json> [--json] [--quiet]"
 ].join("\n");
 var UsageError = class extends Error {
 };
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["--docs", "--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth"]);
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (command !== "journal" && command !== "vectors") {
@@ -1252,6 +2135,11 @@ function parseArgs(argv) {
   }
   if (positional.length !== 1) throw new UsageError(`expected exactly one file, got ${positional.length}`);
   const parsed = { command, file: positional[0], json: switches.has("--json"), quiet: switches.has("--quiet") };
+  const docs = values.get("--docs");
+  if (docs !== void 0) {
+    if (docs === "") throw new UsageError("--docs needs a folder");
+    parsed.docs = docs;
+  }
   const seal = values.get("--expect-seal");
   if (seal !== void 0) parsed.expectSeal = hashArg("--expect-seal", seal);
   const head = values.get("--expect-head");
@@ -1296,6 +2184,15 @@ ${USAGE}`);
     return EXIT.usage;
   }
   if (args.command === "vectors") return runVectors(args, io, adapter, say, complain);
+  let documents;
+  if (args.docs !== void 0) {
+    try {
+      documents = await io.readDocs(args.docs);
+    } catch (e) {
+      complain(`cannot read the documents folder ${args.docs}: ${e.message}`);
+      return EXIT.usage;
+    }
+  }
   let report;
   try {
     const source = await io.openJournal(args.file);
@@ -1305,7 +2202,8 @@ ${USAGE}`);
         expectSeal: args.expectSeal,
         expectHead: args.expectHead,
         maxLineBytes: args.maxLineBytes,
-        maxDepth: args.maxDepth
+        maxDepth: args.maxDepth,
+        documents
       },
       adapter
     );
@@ -1378,6 +2276,22 @@ async function nodeMain(proc2) {
         const st = await fs.promises.stat(path);
         if (!st.isFile()) throw new ReadError("not a regular file");
         return fs.createReadStream(path, { highWaterMark: 1 << 16 });
+      },
+      readDocs: async (path) => {
+        const st = await fs.promises.stat(path);
+        if (!st.isDirectory()) throw new ReadError("not a folder");
+        const out = [];
+        const walk = async (dir) => {
+          const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+          entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+          for (const e of entries) {
+            const full = dir + "/" + e.name;
+            if (e.isDirectory()) await walk(full);
+            else if (e.isFile()) out.push(await fs.promises.readFile(full));
+          }
+        };
+        await walk(path);
+        return out;
       }
     },
     adapter
@@ -1398,43 +2312,67 @@ if (proc?.versions?.node !== void 0 && proc.argv[1] !== void 0) {
   if (entry === import.meta.url) await nodeMain(proc);
 }
 export {
+  CDC_MAX_CHUNK,
+  CDC_WINDOW,
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_LINE_BYTES,
   DOMAIN,
+  EMPTY_RECORDS_ROOT,
   EXIT,
+  GENESIS_FORMATS,
+  J2Checker,
   JOURNAL_FORMAT,
+  LINE_KEYS,
+  LINE_REQUIRED,
   LogTree,
+  MAX_QUOTE_BYTES,
   NOT_VERIFIED,
+  NOT_VERIFIED_AFTER_J3,
   ReadError,
+  RecordEngine,
   SEAL_FORMAT_ID,
   SPEC_ID,
   USAGE,
   VERIFIER_VERSION,
   ZERO_HASH,
+  anchorBytes,
   checkVectors,
-  computeVerdict,
+  chunksOf,
+  commandKind,
+  cutPoints,
   defaultHashAdapter,
   depthExceeds,
+  documentChunks,
   domainHash,
   exitCodeFor,
   fromHex,
   fromPlain,
+  gearHex,
+  gitDocumentId,
   hasExactKeys,
   humanLine,
+  indexDocuments,
   isHashText,
+  isIdentifier,
   isObject,
+  isSubmitResult,
   jcs,
   jcsString,
+  lineFormProblem,
   logRootRecursive,
   nodeHashAdapter,
   nodeMain,
+  occurrences,
   parseJson,
   recordLeaf,
   recordsRoot,
   reportToJcs,
+  requestHash,
   runCli,
+  segmentsOf,
   subtleHashAdapter,
   toHex,
+  uniqueByPrefix,
   utf8,
   verifyJournal
 };

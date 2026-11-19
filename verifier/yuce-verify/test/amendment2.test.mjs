@@ -42,10 +42,12 @@ for (const sid of ["Seal-1", "sealx-1", "SEAL-3", "seal", "seal_3", " seal-3", "
   });
 }
 
-test("P2-2 / J1-10: a non-string submission_id is not under the rule", async () => {
+test("P2-2 / J1-10: a non-string submission_id is not under the rule (J1 passes; J2 then refuses it)", async () => {
   for (const sid of [5, null, ["seal-3"]]) {
     const r = await verify(await mutate(kernelFrame3(sid)));
-    assert.equal(r.verdict, "PASS", `${JSON.stringify(sid)}: ${JSON.stringify(r.first_failure)}`);
+    assert.equal(r.levels.J1.result, "PASS", `${JSON.stringify(sid)}: ${JSON.stringify(r.first_failure)}`);
+    // Amendment 3, J2-7: submission_id must be an identifier.
+    assert.deepEqual(outcome(r), { verdict: "FAIL", level: "J2", code: "BODY_FIELD", frame: 3 });
   }
 });
 
@@ -73,14 +75,16 @@ test("P2-2: J1-11 is unchanged, audit-close compared exactly, both ways", async 
   assert.deepEqual(outcome(await verify(await mutate(kernelFrame3("audit-close")))), j1("KERNEL_ID_MISUSE", 3));
 });
 
-test("P2-3: the report names SPEC_INDEPENDENT_VERIFIER/4", async () => {
-  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/4");
-  assert.equal((await verify(base)).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/4");
+// P2-3 asked for /4; amendment 3 replaces it with /5.
+test("P2-3: the report names the spec id of the latest amendment (/5)", async () => {
+  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/6");
+  assert.equal((await verify(base)).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
   const r = spawnSync(process.execPath, [BUNDLE, "journal", SMALL, "--json"], { cwd: ROOM, encoding: "utf8" });
-  assert.equal(JSON.parse(r.stdout).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/4");
+  assert.equal(JSON.parse(r.stdout).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
 });
 
 test("P2-3: results on the inputs do not change (boundary/auto-seal-ack.wal still KERNEL_ID_MISUSE at frame 1)", async () => {
   assert.deepEqual(outcome(await verify(readRoom("inputs/boundary/auto-seal-ack.wal"))), j1("KERNEL_ID_MISUSE", 1));
-  assert.equal((await verify(readRoom("inputs/boundary/nested-seal.wal"))).verdict, "PASS");
+  // J0-J1 still pass nested-seal.wal; J2 now refuses it (amendment 3, J2-11).
+  assert.equal((await verify(readRoom("inputs/boundary/nested-seal.wal"))).levels.J1.result, "PASS");
 });
