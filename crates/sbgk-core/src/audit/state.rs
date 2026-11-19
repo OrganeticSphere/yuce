@@ -1680,6 +1680,20 @@ impl AuditState {
         let payloads = &scan.payloads;
         let genesis = payloads.first().ok_or_else(|| bad("wal", "genesis is required"))?;
         let v3 = scan.format == FrameFormat::V3;
+        let mut state = Self::replay_genesis(genesis, v3, scan.records_roots.first())?;
+        for (n, payload) in payloads.iter().enumerate().skip(1) {
+            visit(n, &mut state, genesis)?;
+            state.replay_frame(n, payload, &scan.heads[..n], scan.records_roots.get(n), v3)?;
+        }
+        visit(payloads.len(), &mut state, genesis)?;
+        Ok(state)
+    }
+
+    /// The first step of a semantic replay: the state the genesis frame of a journal makes, with no journal attached.
+    /// `records_root` is the records root the genesis frame of a `/3` journal names. `replay` takes this step and then
+    /// `replay_frame` for each frame after the genesis; a reader that follows a growing journal (`follow.rs`) takes the same two
+    /// steps, a frame at a time.
+    pub(super) fn replay_genesis(genesis: &Value, v3: bool, records_root: Option<&Hash>) -> KResult<Self> {
         let known =
             if v3 { genesis["format"] == GENESIS_FORMAT_V3 } else { genesis["format"] == GENESIS_FORMAT || genesis["format"] == GENESIS_FORMAT_EXACT_SPAN };
         if !known {
@@ -1722,57 +1736,62 @@ impl AuditState {
         if let Some(meta) = meta {
             state.genesis = Some(meta);
             *state.core.state_tree.get_mut().expect("state tree poisoned") = Some(state_root::StateTree::build(&state.core.data));
-            if scan.records_roots[0] != super::trees::records_root(&[]) {
+            if records_root != Some(&super::trees::records_root(&[])) {
                 return Err(bad("wal", "the genesis frame accepts no record; its records root must be the empty root"));
             }
         }
         if kernel_hash(genesis, "engine_root", v3)? != state.engine_root() || kernel_hash(genesis, "audit_root", v3)? != state.audit_root() {
             return Err(bad("wal", "genesis roots do not match the recovered state"));
         }
-        for (n, payload) in payloads.iter().enumerate().skip(1) {
-            visit(n, &mut state, genesis)?;
-            let before = state.core.data.records.len();
-            let actor = string(payload, "actor")?;
-            let request_id = string(payload, "submission_id")?;
-            let request_hash = request_hash(actor, &payload["command"]);
-            if request_hash != kernel_hash(payload, "request_hash", v3)? {
-                return Err(bad("wal", "request hash mismatch"));
-            }
-            if state.core.data.receipts.contains_key(&(actor.into(), request_id.into())) {
-                return Err(bad("wal", "duplicate persisted submission"));
-            }
-            if v3 {
-                kernel_id(actor, request_id, &payload["command"]).map_err(|e| bad("wal", format!("a frame takes an id of the kernel's own: {}", e.message)))?;
-                if state.is_closed() {
-                    return Err(bad("wal", "a frame after the close: the close is the last frame of a journal"));
-                }
-            }
-            if v3 && payload["command"]["kind"] == "seal" {
-                check_seal_log(&payload["command"]["seal"], &scan.heads[..n])?;
-                // the frames up to and with the seal itself: the next one is due `k` frames after it
-                state.sealed_at = n + 1;
-                state.seal_pending = false;
-            } else if v3 && phase_changed(&payload["command"], &payload["outcome"]) {
-                // a circle's phase changed and no seal follows yet: the next command after the restart writes it
-                state.seal_pending = true;
-            }
-            let outcome = state.prepare_recorded(actor, request_id, payload)?;
-            if outcome.value() != payload["outcome"]
-                || state.engine_root() != kernel_hash(payload, "engine_root", v3)?
-                || state.audit_root() != kernel_hash(payload, "audit_root", v3)?
-            {
-                return Err(bad("wal", "semantic replay diverged from the committed outcome/roots"));
-            }
-            if v3 && state.records_root_since(before) != scan.records_roots[n] {
-                return Err(bad("wal", "the records root of a frame does not match the records it accepted"));
-            }
-            if v3 && payload["command"]["kind"] == "seal" && payload["outcome"]["kind"] != "error" {
-                state.seals.push((n, seal_hash(&payload["command"]["seal"])));
-            }
-            state.project_telemetry(payload);
-        }
-        visit(payloads.len(), &mut state, genesis)?;
         Ok(state)
+    }
+
+    /// One step of a semantic replay: frame `n` of the journal (its payload) applied to the state its first `n` frames made, and
+    /// checked against the outcome and the roots the frame committed. `heads` are the hashes of those first `n` frames, and
+    /// `records_root` is the records root frame `n` of a `/3` journal names. A state a step failed on holds a part of the frame
+    /// and is not used again.
+    pub(super) fn replay_frame(&mut self, n: usize, payload: &Value, heads: &[Hash], records_root: Option<&Hash>, v3: bool) -> KResult<()> {
+        let state = self;
+        let before = state.core.data.records.len();
+        let actor = string(payload, "actor")?;
+        let request_id = string(payload, "submission_id")?;
+        let request_hash = request_hash(actor, &payload["command"]);
+        if request_hash != kernel_hash(payload, "request_hash", v3)? {
+            return Err(bad("wal", "request hash mismatch"));
+        }
+        if state.core.data.receipts.contains_key(&(actor.into(), request_id.into())) {
+            return Err(bad("wal", "duplicate persisted submission"));
+        }
+        if v3 {
+            kernel_id(actor, request_id, &payload["command"]).map_err(|e| bad("wal", format!("a frame takes an id of the kernel's own: {}", e.message)))?;
+            if state.is_closed() {
+                return Err(bad("wal", "a frame after the close: the close is the last frame of a journal"));
+            }
+        }
+        if v3 && payload["command"]["kind"] == "seal" {
+            check_seal_log(&payload["command"]["seal"], heads)?;
+            // the frames up to and with the seal itself: the next one is due `k` frames after it
+            state.sealed_at = n + 1;
+            state.seal_pending = false;
+        } else if v3 && phase_changed(&payload["command"], &payload["outcome"]) {
+            // a circle's phase changed and no seal follows yet: the next command after the restart writes it
+            state.seal_pending = true;
+        }
+        let outcome = state.prepare_recorded(actor, request_id, payload)?;
+        if outcome.value() != payload["outcome"]
+            || state.engine_root() != kernel_hash(payload, "engine_root", v3)?
+            || state.audit_root() != kernel_hash(payload, "audit_root", v3)?
+        {
+            return Err(bad("wal", "semantic replay diverged from the committed outcome/roots"));
+        }
+        if v3 && Some(&state.records_root_since(before)) != records_root {
+            return Err(bad("wal", "the records root of a frame does not match the records it accepted"));
+        }
+        if v3 && payload["command"]["kind"] == "seal" && payload["outcome"]["kind"] != "error" {
+            state.seals.push((n, seal_hash(&payload["command"]["seal"])));
+        }
+        state.project_telemetry(payload);
+        Ok(())
     }
 
     fn project_telemetry(&mut self, payload: &Value) {

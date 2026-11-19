@@ -11,6 +11,19 @@
   kernel's states, at every frame of the demo in CI. A journal that does not verify gets no page. A long journal opens on what
   stopped standing and on the answers. The page makes no network requests. `demo.py` records a run of three scripted readers and
   an owner, with no model, and makes its page. The kernel, its rules and the journal format do not change.
+* **`sbgk audit-watch`: the YuCe Live page of a journal while it is written** (also `yuce watch`). `sbgk audit-watch --wal
+  run.wal` serves the page on this computer and follows the journal for as long as the command runs: the page stays on the latest
+  frame, draws each new frame as it is written, and says when it is behind, when a long journal is being caught up with, when no
+  writer holds the journal, when the run was closed and when a frame does not pass the checks. The command reads the journal and
+  nothing else: no token, no call to the server that writes it. It replays the journal from its start once and then reads only
+  the frames written since, up to the last complete frame; every frame gets the checks `sbgk audit-verify` gives it, and a frame
+  that does not pass stops the reading at the frames before it. The states are the ones `sbgk audit-prov` gives, built by the
+  same code. The server listens on a loopback address only, answers GET only, and writes nothing. In the kernel the replay of a
+  journal and the provenance export now go a frame at a time (`audit::follow`, `prov::Tracker`), so a whole read and a followed
+  one are the same steps; the rules, the journal format and what the reading commands print do not change.
+  `examples/live-journal/watch_demo.py` follows a scripted run with no model and compares the watched page with the journal and
+  with the recorded page of the same frames, in CI; `cargo run --release -p sbgk-core --example follow_check -- run.wal` compares
+  a journal read whole and in steps at every frame.
 * **A third corpus: RFC 4627 and RFC 7159, the JSON specification** (`benchmarks/corpora/json-rfc-4627-7159/`), byte for byte from
   the RFC Editor, with a reference fixed before any run: four sentences a later edition changed, each withdrawn in one step of
   the plan, and one control no edition changed. `benchmarks/PREREGISTRATION_JSON_RFC.md` fixes the run and what it measures

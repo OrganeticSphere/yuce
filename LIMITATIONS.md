@@ -33,7 +33,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   shows that nothing is missing.
 * A journal is read while its server runs, and what is read is that moment's. The server is the journal's one writer on every
   system; `audit-verify`, `audit-read`, `audit-index`, `audit-prov` and `audit-proof` read up to the last complete entry of that
-  moment and say so (`live`), and an entry the server has not finished is no torn tail then. The journal may have grown since: only a stopped
+  moment and say so (`live`), and an entry the server has not finished is no torn tail then. `audit-watch` goes on reading as
+  the journal grows; what it says of the journal (a writer holds it, none does, the run was closed) is a fact of the file at
+  that moment, not a check that the agents or their server are well. The journal may have grown since: only a stopped
   journal has an end to check, and `--at-end` on a live one holds for that moment alone. On Windows any program that holds the
   journal open for writing counts as its writer: no server starts on it, and a torn tail is taken for an entry in flight. Beside
   a server of 0.2.0 or earlier, which locks the whole file, a reading command on Windows stops with exit 2 and says so.

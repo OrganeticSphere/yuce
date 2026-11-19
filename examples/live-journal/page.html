@@ -30,6 +30,14 @@ p{margin:0 0 8px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12.5px;border:1px solid var(--line);background:var(--panel);color:var(--muted);min-height:28px}
 .chip.ok{background:var(--jade-bg);color:var(--jade);border-color:transparent;font-weight:600}
+.chip.live{background:var(--jade-bg);color:var(--jade);border-color:transparent;font-weight:600}
+.chip.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--jade);animation:beat 1.6s infinite}
+.chip.behind{background:var(--gold-bg);color:var(--gold);border-color:transparent;font-weight:600}
+.chip.bad{background:var(--red-bg);color:var(--red);border-color:transparent;font-weight:600}
+@keyframes beat{50%{opacity:.25}}
+.liveline{margin:0 0 10px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font-size:14px;max-width:100ch}
+.liveline.behind{border-color:var(--gold);background:var(--gold-bg)}
+.liveline.bad{border-color:var(--red);background:var(--red-bg)}
 .wrap{max-width:1320px;margin:0 auto;padding:14px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));display:grid;gap:14px}
 section,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
 .banner{border:1px solid var(--gold);background:var(--gold-bg);border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:14px;max-width:90ch}
@@ -162,7 +170,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 .trust ul{margin:0;padding-left:18px}
 .trust li{margin:0 0 6px}
 .mono{font:12.5px/1.5 ui-monospace,Consolas,monospace;color:var(--muted)}
-.film .read .lead,.film .read .legend,.film .counters,.film .cov,.film .trust,.film .events,.film .fine,.film .view,.film .top .chips{display:none}
+.film .read .lead,.film .read .legend,.film .counters,.film .cov,.film .trust,.film .events,.film .fine,.film .view,.film .top .chips,.film .liveline{display:none}
 @media (min-width:760px){
   .mapcols{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:14px 60px}
   #threads{display:block}
@@ -196,7 +204,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 <header class="top">
   <div class="brand"><h1>YuCe Live</h1><span class="sub">journal of the run <b id="runName"></b></span></div>
   <div class="chips">
-    <span class="chip">Recorded journal</span>
+    <span class="chip" id="chipMode">Recorded journal</span>
     <span class="chip" id="chipFrame"></span>
     <button class="chip ok" id="chipIntact" type="button"></button>
   </div>
@@ -205,7 +213,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 <div class="wrap">
   <section class="read" aria-label="How to read this page">
     <p class="banner" id="note" hidden></p>
-    <p class="lead">The journal of one run, played back frame by frame. A claim is accepted only with a quote: exact bytes of a document. When a text is withdrawn, everything that rested on it falls and stays here with the reason. What you see at a frame is what the kernel itself gives for that frame.</p>
+    <p class="lead" id="lead">The journal of one run, played back frame by frame. A claim is accepted only with a quote: exact bytes of a document. When a text is withdrawn, everything that rested on it falls and stays here with the reason. What you see at a frame is what the kernel itself gives for that frame.</p>
     <ul class="legend">
       <li><i class="sw"></i><span><b>Stands</b>: accepted, and every ground under it stands.</span></li>
       <li><i class="sw fell"></i><span><b>Fell</b>: lost a ground. It stays on the page with the reason.</span></li>
@@ -217,6 +225,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 
   <section class="journal" id="journal">
     <h2>The journal <small id="jn"></small></h2>
+    <p class="liveline" id="liveLine" hidden></p>
     <div class="strip" id="strip"><div class="rail" id="rail"><span class="wire" id="wire"></span></div></div>
     <p class="fine" id="stripNote"></p>
     <div class="transport" id="transport">
@@ -228,6 +237,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
         <button class="b" id="bPrev" type="button" title="One frame back" aria-label="One frame back">&#9664;</button>
         <button class="b" id="bNext" type="button" title="One frame forward" aria-label="One frame forward">&#9654;</button>
         <button class="b" id="bNextM" type="button" title="Next seal or withdrawal" aria-label="Next seal or withdrawal">&#9654;|</button>
+        <button class="b pri" id="bLive" type="button" hidden>Latest frame</button>
         <select class="b" id="selSpeed" aria-label="Speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
         <button class="b" id="bTour" type="button" aria-pressed="true">Captions</button>
         <button class="b" id="bHist" type="button" aria-pressed="false">Show historical text from the journal</button>
@@ -291,8 +301,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
       <h2>Not in the journal, so not on this page</h2>
       <ul>
         <li>A clock. Frames have an order, not a time.</li>
-        <li>Tasks handed out and not yet returned, and the texts of the tasks.</li>
-        <li>Hand-ins the kernel refused: a refused line stores nothing.</li>
+        <li>Anything but accepted records and what each rests on. The journal keeps no search and no draft that was not accepted.</li>
       </ul>
       <h2>What this page does not measure</h2>
       <ul>
@@ -308,12 +317,12 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 'use strict';
 const D = /*DATA*/null;
 const $ = (s) => document.querySelector(s);
-const DOCS = D.docs, Q = D.quotes, R = D.recs, P = D.periods, FR = D.frames, LAST = FR.length - 1;
-const QS = D.questions.map((q) => q.id), QT = Object.fromEntries(D.questions.map((q) => [q.id, q.text]));
-for (const r of Object.values(R)) {
-  if (r.k === 'answer' && !QS.includes(r.q)) { QS.push(r.q); QT[r.q] = r.q === '?' ? 'Answers whose question the journal does not name' : 'A question that is not in the list the run started with'; }
-}
-const BIG = !!D.big;
+// a watched page (sbgk audit-watch) has D.live: its data grows while the page is open, so what depends on the data is worked
+// out in derive(), once for a recorded page and again after each growth
+const LIVE = D.live || null;
+const Q = D.quotes, R = D.recs, P = D.periods, FR = D.frames;
+let DOCS = D.docs, LAST = FR.length - 1, BIG = !!D.big;
+const QS = [], QT = {};
 const MAXCOL = 160;
 const U = { dash: '\u2013', ell: '\u2026', lq: '\u201c', rq: '\u201d', no: '\u2298', x: '\u2715', dot: '\u25cf', ring: '\u25cb', dotc: '\u00b7' };
 const num = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');
@@ -355,21 +364,34 @@ const kindOf = (i) => {
   if (e.task) return 'task';
   return 'entry';
 };
-const answerFrames = new Set();
-FR.forEach((e, i) => { if ((e.made || []).some((id) => R[id] && R[id].k === 'answer')) answerFrames.add(i); });
-const endFrames = FR.map((e, i) => ((e.ended || []).length ? i : -1)).filter((i) => i >= 0);
+let answerFrames = new Set(), endFrames = [], keyFrames = [], CAPTIONS = {};
+const focus = new Set();
 const KEY = new Set(['withdraw', 'version', 'fall', 'seal', 'close', 'open', 'genesis']);
 const isKey = (i) => KEY.has(kindOf(i)) || answerFrames.has(i);
-const keyFrames = FR.map((_, i) => i).filter(isKey);
+function derive() {
+  DOCS = D.docs; LAST = FR.length - 1; BIG = !!D.big;
+  QS.length = 0;
+  D.questions.forEach((q) => { QS.push(q.id); QT[q.id] = q.text; });
+  for (const r of Object.values(R)) {
+    if (r.k === 'answer' && !QS.includes(r.q)) { QS.push(r.q); QT[r.q] = r.q === '?' ? 'Answers whose question the journal does not name' : 'A question that is not in the list the run started with'; }
+  }
+  answerFrames = new Set();
+  FR.forEach((e, i) => { if ((e.made || []).some((id) => R[id] && R[id].k === 'answer')) answerFrames.add(i); });
+  endFrames = FR.map((e, i) => ((e.ended || []).length ? i : -1)).filter((i) => i >= 0);
+  keyFrames = FR.map((_, i) => i).filter(isKey);
+  // the focused view of a long journal: what ever stopped standing, the answers, and what those rest on
+  focus.clear();
+  for (const id in P) for (const p of P[id]) if (p[1] !== null) focus.add(id);
+  const ground = (id, seen) => { if (seen.has(id)) return; seen.add(id); focus.add(id); ((R[id] && R[id].on) || []).forEach((g) => ground(g, seen)); };
+  { const seen = new Set(); Object.keys(R).filter((id) => R[id].k === 'answer').forEach((id) => ground(id, seen)); }
+  for (const id of [...focus]) if (R[id]) R[id].on.forEach((g) => focus.add(g));
+  captions();
+}
+derive();
 
-// the focused view of a long journal: what ever stopped standing, the answers, and what those rest on
-const focus = new Set();
-for (const id in P) for (const p of P[id]) if (p[1] !== null) focus.add(id);
-const ground = (id, seen) => { if (seen.has(id)) return; seen.add(id); focus.add(id); ((R[id] && R[id].on) || []).forEach((g) => ground(g, seen)); };
-{ const seen = new Set(); Object.keys(R).filter((id) => R[id].k === 'answer').forEach((id) => ground(id, seen)); }
-for (const id of [...focus]) if (R[id]) R[id].on.forEach((g) => focus.add(g));
-
-let F = LAST, sel = null, timer = null, tour = true, speed = 1, filter = BIG ? 'key' : 'all', view = BIG ? 'focus' : 'all';
+let F = LAST, sel = null, timer = null, tour = !LIVE, speed = 1, filter = BIG ? 'key' : 'all', view = BIG ? 'focus' : 'all';
+// whether the reader chose a view or a filter: a journal that grows long changes them only while they are the page's own choice
+let chose = false, lost = false;
 let S = stateAt(F);
 
 function levels(st, f) { // drawing only: 0 for a quote that went, one step more for each record whose ground fell in the same frame
@@ -426,8 +448,8 @@ function evText(i) {
   }
   return parts.join(' ') || `${who}: ${e.k}.`;
 }
-const CAPTIONS = {};
-{
+function captions() {
+  CAPTIONS = {};
   const first = (pred) => { for (let i = 1; i <= LAST; i++) if (pred(i)) return i; return -1; };
   CAPTIONS[0] = 'The journal of one run. Nothing is written yet.';
   const r = first((i) => (FR[i].made || []).some((id) => Q[id]));
@@ -444,7 +466,7 @@ const CAPTIONS = {};
   });
   const k = first((i) => FR[i].task && FR[i].task.kept && FR[i].task.kept.length);
   if (k > 0) CAPTIONS[k] = 'The kernel kept the part of the old answer that still stands and took only the new part from the agent.';
-  if (!CAPTIONS[LAST]) CAPTIONS[LAST] = `The last frame. audit-verify checked the whole journal when this page was made: ${D.verify.status}.`;
+  if (!CAPTIONS[LAST] && !LIVE) CAPTIONS[LAST] = `The last frame. audit-verify checked the whole journal when this page was made: ${D.verify.status}.`;
 }
 
 function shownIds() {
@@ -586,7 +608,68 @@ function render(anim) {
   $('#evs').innerHTML = ev || '<p class="none">Nothing yet.</p>';
   document.querySelectorAll('#filters .b').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.f === filter)));
   renderDetail(g);
+  renderLive();
   measure();
+}
+
+// a watched page says how far the reading of the journal is: the journal is open and held by a writer, the page is behind it,
+// it is caught up with, no writer holds it, the run was closed, a frame does not pass the checks, or the page's server is silent.
+// These are facts of the journal's file, not a check that the agents or their server are well
+function renderLive() {
+  if (!LIVE) return;
+  const st = LIVE.status, behind = LAST - F;
+  let cls = '', text, line, lineCls = '';
+  if (lost) {
+    cls = lineCls = 'bad'; text = 'No answer from the server';
+    line = `The server of this page does not answer: is <code>sbgk audit-watch</code> still running? The page shows the journal up to frame ${num(LAST)}.`;
+  } else if (st.mode === 'broken') {
+    cls = lineCls = 'bad'; text = 'The journal does not verify';
+    line = `Frame ${num(st.broken.frame)} does not pass the checks of the journal: ${esc(st.broken.message)}. The page shows the ${plural(LAST + 1, 'frame')} before it and reads no further.`;
+  } else if (st.unreadable) {
+    cls = lineCls = 'bad'; text = 'The journal cannot be read';
+    line = `The journal cannot be read at this moment: ${esc(st.unreadable)}. The page shows it up to frame ${num(LAST)} and asks again.`;
+  } else if (st.more) {
+    cls = 'behind'; text = 'Catching up';
+    line = `Catching up with the journal: ${plural(LAST + 1, 'frame')} read so far, and more are written.`;
+  } else if (st.mode === 'closed') {
+    text = 'The run was closed';
+    line = `The run was closed at frame ${num(LAST)}, and nothing follows a close: this is its whole journal.`;
+  } else if (st.mode === 'recorded') {
+    text = 'Recorded journal';
+    line = `The journal is not closed, and no writer holds its file now. It ends at frame ${num(LAST)}${st.pending ? `, and the ${plural(st.pending, 'byte')} after it are no complete frame` : ''}. The page goes on when frames are written again.`;
+  } else {
+    cls = 'live'; text = 'Live: the journal is open';
+    line = `The journal is not closed, and a writer holds its file. The page reads each frame once it is whole${st.pending ? '; one is being written now' : ''}.`;
+  }
+  if (behind > 0 && !lineCls) {
+    if (st.mode === 'live' || st.more) { cls = 'behind'; text = `Behind by ${plural(behind, 'frame')}`; }
+    lineCls = 'behind';
+    line = `You are at frame ${num(F)}, and the journal is at frame ${num(LAST)}. ${line}`;
+  }
+  const chip = $('#chipMode'), box = $('#liveLine');
+  chip.className = `chip ${cls}`; chip.textContent = text;
+  box.hidden = false; box.className = `liveline ${lineCls}`; box.innerHTML = line;
+  $('#bLive').hidden = behind <= 0;
+}
+
+// BEGIN merge: what a watched page takes from its server: the new frames, and the records, periods and coverage that changed
+function merge(data, d) {
+  for (const e of d.frames) data.frames.push(e);
+  Object.assign(data.quotes, d.quotes);
+  Object.assign(data.recs, d.recs);
+  Object.assign(data.periods, d.periods);
+  data.coverage = data.coverage.filter((c) => c.at < d.coverage_from).concat(d.coverage);
+  for (const k of ['run', 'kernel', 'note', 'big', 'verify', 'docs', 'docs_shown', 'docs_unchecked', 'questions', 'coverage_note', 'checked', 'not_shown']) data[k] = d[k];
+}
+// END merge
+function grow(d) {
+  const atHead = F >= LAST, had = FR.length, wasBig = BIG;
+  merge(D, d);
+  LIVE.status = d.status; lost = false;
+  if (FR.length === had) { renderLive(); return; }
+  derive(); strip(); trust();
+  if (BIG && !wasBig && !chose) { filter = 'key'; view = 'focus'; }
+  if (atHead && !timer) go(LAST, true); else render(false);
 }
 
 function drawThreads(shown, cone) {
@@ -637,7 +720,7 @@ function renderDetail(g) {
       (fa && fa.hide ? `<div class="box wd">${fa.st}.${hist ? ` It was: ${U.lq}${esc(q.hit)}${U.rq}.` : ' The text is hidden on this page.'} The journal still keeps it: a withdrawal is not an erasure.</div>`
         : fa ? `<p class="ctx">${ctx}</p><div class="box wd">${fa.st}.</div>`
         : `<p class="ctx">${ctx}</p><p class="kv">${U.dot} Stands. Quoted by ${esc(q.by)} at frame ${num(q.f)}. The quote is these bytes, not a retelling.</p>`) +
-      `<p class="dl"><b>Rests on it</b>${list(deps)}</p><p class="kv">Kernel id <span class="mono">${q.kid}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
+      `<p class="dl"><b>Rests on it</b>${list(deps)}</p><p class="kv">Kernel id <span class="mono">${esc(q.kid)}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
     return;
   }
   const r = R[sel], hidden = fa && fa.hide && !hist;
@@ -655,7 +738,7 @@ function renderDetail(g) {
     h += r.on.filter((q) => Q[q] && !S.gone[q]).slice(0, 4).map((q) => `<p class="ctx">${Q[q].pre !== undefined ? esc(Q[q].pre) : ''}<mark>${esc(Q[q].hit)}</mark>${Q[q].post !== undefined ? esc(Q[q].post) : ''}<br><span class="kv">${esc(docOf(Q[q].d).name)}, bytes ${num(Q[q].a)}${U.dash}${num(Q[q].b)}</span></p>`).join('');
     h += `<p class="dl"><b>Rests on it</b>${list(deps)}</p>`;
   } else if (r.note) h += `<p class="kv">What the answer leaves open, in the agent's words: ${esc(r.note)}</p>`;
-  h += `<p class="kv">Kernel id <span class="mono">${r.kid}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
+  h += `<p class="kv">Kernel id <span class="mono">${esc(r.kid)}</span></p><p class="dl"><b>The same from the journal</b></p>${cmds}`;
   d.innerHTML = h;
 }
 
@@ -688,9 +771,10 @@ function mark(dir) {
 
 // the strip: one slip a frame; a long journal keeps its key frames and folds the frames between them
 $('#runName').textContent = D.run || '';
-$('#chipIntact').textContent = `\u2713 audit-verify: ${D.verify.status}`;
 if (D.note) { $('#note').hidden = false; $('#note').textContent = D.note; }
-{
+if (LIVE) $('#lead').textContent = 'The journal of one run, followed while it is written. A claim is accepted only with a quote: exact bytes of a document. When a text is withdrawn, everything that rested on it falls and stays here with the reason. What you see at a frame is what the kernel itself gives for that frame.';
+function strip() {
+  $('#rail').querySelectorAll('.slip').forEach((x) => x.remove());
   let h = '';
   const slip = (i) => `<button type="button" class="slip k-${kindOf(i)}" data-i="${i}" title="Frame ${i}: ${esc(evText(i))}" aria-label="Frame ${i}"></button>`;
   if (!BIG) for (let i = 1; i <= LAST; i++) h += slip(i);
@@ -704,19 +788,26 @@ if (D.note) { $('#note').hidden = false; $('#note').textContent = D.note; }
   $('#stripNote').textContent = BIG ? `${num(LAST)} frames. Seals, withdrawals, falls and answers are slips of their own; the frames between them are folded into grey bars. Play steps from one key frame to the next. The journal keeps no clock: a position is a frame number, not a time.`
     : 'One slip is one frame; small grey slips are the kernel closing a task. The journal keeps no clock: a position is a frame number, not a time.';
 }
-{
+function trust() {
   const v = D.verify, ch = D.checked;
-  const compared = !ch.frames ? 'The comparison with <code>sbgk audit-prov --upto</code> was turned off when this page was made.'
+  $('#chipIntact').textContent = LIVE ? `\u2713 ${plural(v.entries, 'frame')} checked` : `\u2713 audit-verify: ${v.status}`;
+  const roots = `<br><span class="mono">audit root ${esc(String(v.audit_root).slice(0, 24))}${U.ell}<br>engine root ${esc(String(v.engine_root).slice(0, 24))}${U.ell}<br>journal head ${esc(String(v.wal_head).slice(0, 24))}${U.ell}</span>`;
+  const compared = LIVE ? 'The server of this page, <code>sbgk audit-watch</code>, makes them with the code of <code>sbgk audit-prov</code> as it reads the journal: at frame N they are what <code>sbgk audit-prov --upto N+1</code> gives.'
+    : !ch.frames ? 'The comparison with <code>sbgk audit-prov --upto</code> was turned off when this page was made.'
     : `When the page was made, this was compared with <code>sbgk audit-prov --upto N+1</code>, the export of the first frames alone, ${ch.all ? 'at every frame' : `at ${plural(ch.frames, 'frame')}: every seal, every frame where a record stopped standing, and the last frame`}, and found equal.`;
   $('#trustList').innerHTML = [
     `<b>The kernel</b> gives every state shown: what stands, what fell and why, at each frame. The page reads the records and the periods in which each stood from <code>sbgk audit-prov</code>. ${compared} The page works out only how to draw them: the steps of a fall, the focused view and the counters.`,
-    `<b>The journal</b> was checked by <code>sbgk audit-verify</code> when the page was made: ${esc(v.status)}, ${num(v.entries)} frames, ${num(v.records)} records.<br><span class="mono">audit root ${esc(String(v.audit_root).slice(0, 24))}${U.ell}<br>engine root ${esc(String(v.engine_root).slice(0, 24))}${U.ell}<br>journal head ${esc(String(v.wal_head).slice(0, 24))}${U.ell}</span>`,
-    D.coverage.length ? 'Coverage is <code>sbgk audit-read coverage</code> over the first frames of the journal.' : `No coverage table: ${esc(D.coverage_note)}.`,
+    LIVE ? `<b>The journal</b> is read from its start once, and after that only the frames written since. Each frame read got the checks <code>sbgk audit-verify</code> gives it: ${num(v.entries)} frames, ${num(v.records)} records so far.${roots}`
+      : `<b>The journal</b> was checked by <code>sbgk audit-verify</code> when the page was made: ${esc(v.status)}, ${num(v.entries)} frames, ${num(v.records)} records.${roots}`,
+    D.coverage.length ? (LIVE ? 'Coverage is the kernel\'s table at a frame, the one <code>sbgk audit-read coverage</code> gives.' : 'Coverage is <code>sbgk audit-read coverage</code> over the first frames of the journal.') : `No coverage table: ${esc(D.coverage_note)}.`,
     D.docs_shown ? 'Quotes are shown in their lines of the documents, after the SHA-256 of each document was checked against the journal.' : 'The documents were not given to the page: a quote is shown as its bytes alone.',
     'The question of each answer is the one the kernel named when it closed the answer task, or else the one handed in with the answer.',
-    `Made by ${esc(D.kernel)}. The page only reads: it cannot change the journal and makes no network request; its content security policy forbids them.`,
+    LIVE ? `Served by ${esc(D.kernel)} on this computer, from the journal alone. The page only reads: it cannot change the journal, and it asks nothing but its own server for new frames; its content security policy forbids every other request.`
+      : `Made by ${esc(D.kernel)}. The page only reads: it cannot change the journal and makes no network request; its content security policy forbids them.`,
   ].concat(D.not_shown && D.not_shown.question ? [`Not drawn: ${plural(D.not_shown.question, 'question')} the agents recorded as open; they never stand.`] : []).map((x) => `<li>${x}</li>`).join('');
 }
+strip();
+trust();
 
 document.addEventListener('click', (ev) => {
   const t = ev.target.closest('button');
@@ -729,8 +820,9 @@ document.addEventListener('click', (ev) => {
   if (t.dataset.id) { stop(); sel = sel === t.dataset.id && t.classList.contains('node') ? null : t.dataset.id; if (view === 'focus' && !focus.has(sel)) view = 'all'; render(false); }
   else if (t.dataset.i) { stop(); go(+t.dataset.i, false); }
   else if (t.dataset.go) { stop(); go(+t.dataset.go, false); }
-  else if (t.dataset.f) { filter = t.dataset.f; render(false); }
-  else if (t.dataset.view) { view = t.dataset.view; render(false); }
+  else if (t.dataset.f) { filter = t.dataset.f; chose = true; render(false); }
+  else if (t.dataset.view) { view = t.dataset.view; chose = true; render(false); }
+  else if (t.id === 'bLive') { stop(); go(LAST, true); }
   else if (t.id === 'chipIntact') { $('#trust').scrollIntoView({ behavior: 'smooth' }); }
   else if (t.id === 'bClose') { sel = null; render(false); }
   else if (t.id === 'bPlay') { if (timer) { stop(); render(false); } else play(); }
@@ -748,6 +840,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel) { s
 // the film view, for recording: the journal and the map only, with the historical text shown
 if (window.location.hash === '#film') { document.body.classList.add('film', 'hist'); $('#bHist').setAttribute('aria-pressed', 'true'); }
 render(false);
+// the hooks of a watched page: its server's script (not a part of this file) hands in what changed
+if (LIVE) window.yuceLive = { epoch: () => LIVE.epoch, frames: () => FR.length, every: () => LIVE.every, grow, lost: () => { lost = true; renderLive(); } };
 })();
 </script>
 </body>

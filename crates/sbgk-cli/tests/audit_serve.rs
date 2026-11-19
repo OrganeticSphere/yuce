@@ -2342,3 +2342,306 @@ fn the_reading_tools_leave_the_dispatchers_pending_entries_to_the_calls_that_coo
     let waited = waiting.join().unwrap();
     assert_eq!(waited["status"], "DIRECTIVE", "{waited}");
 }
+
+/// A running `sbgk audit-watch` and requests to it.
+struct Watch {
+    child: Child,
+    /// The address the command printed, as a request names it in `Host`.
+    host: String,
+    port: u16,
+}
+
+impl Watch {
+    fn start(wal: &str) -> Watch {
+        Watch::start_on(wal, "127.0.0.1:0")
+    }
+
+    fn start_on(wal: &str, listen: &str) -> Watch {
+        let mut child = Command::new(BIN)
+            .args(["audit-watch", "--wal", wal, "--listen", listen, "--every-ms", "20"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("start audit-watch");
+        let mut first = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut first).unwrap();
+        let hello: Value = serde_json::from_str(&first).unwrap_or_else(|e| panic!("first line {first:?}: {e}"));
+        assert_eq!(hello["status"], "WATCHING", "{hello}");
+        let host = hello["url"].as_str().unwrap().trim_start_matches("http://").trim_end_matches('/').to_string();
+        let port = host.rsplit(':').next().unwrap().parse().unwrap();
+        Watch { child, host, port }
+    }
+
+    /// The status code, the head and the body of the answer to a request given as its first line and its headers. `None` when
+    /// the server closed the connection without an answer.
+    fn ask(&self, first: &str, headers: &[&str]) -> Option<(u16, String, String)> {
+        let mut stream = TcpStream::connect(self.host.as_str()).unwrap();
+        let head: String = headers.iter().map(|h| format!("{h}\r\n")).collect();
+        write!(stream, "{first}\r\n{head}\r\n").unwrap();
+        let mut reply = String::new();
+        std::io::Read::read_to_string(&mut stream, &mut reply).ok()?;
+        let (head, body) = reply.split_once("\r\n\r\n")?;
+        Some((head.split(' ').nth(1)?.parse().ok()?, head.to_string(), body.to_string()))
+    }
+
+    /// The status code of a GET with these headers beside `Host`.
+    fn code(&self, path: &str, headers: &[&str]) -> u16 {
+        let host = format!("Host: {}", self.host);
+        let all: Vec<&str> = std::iter::once(host.as_str()).chain(headers.iter().copied()).collect();
+        self.ask(&format!("GET {path} HTTP/1.1"), &all).map_or(0, |(code, _, _)| code)
+    }
+
+    /// The status code and the body of a GET.
+    fn get(&self, path: &str) -> (u16, String) {
+        let (code, _, body) = self.ask(&format!("GET {path} HTTP/1.1"), &[&format!("Host: {}", self.host)]).expect("an answer");
+        (code, body)
+    }
+
+    fn json(&self, path: &str) -> Value {
+        let (code, body) = self.get(path);
+        assert_eq!(code, 200, "{path}: {body}");
+        serde_json::from_str(&body).unwrap_or_else(|e| panic!("{path}: {e}: {body}"))
+    }
+
+    /// The status once it passes `test`, asked for at most ten seconds.
+    fn until(&self, what: &str, test: impl Fn(&Value) -> bool) -> Value {
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = self.json("/status")["status"].clone();
+            if test(&status) {
+                return status;
+            }
+            assert!(Instant::now() < end, "the watch never came to {what}: {status}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// `audit-watch` follows the journal of a running server from another process: it has every frame the server wrote, it says a
+/// writer holds the journal, and what it shows stands as `audit-prov` and `audit-verify` say of the same frames. It reads only:
+/// the journal is byte for byte what the server wrote, and a server stopped and started again on the journal starts while the
+/// watch goes on asking for its file. A closed run is shown as closed.
+#[test]
+fn the_watch_follows_the_journal_of_a_running_server_and_stands_in_no_writers_way() {
+    let fx = Fixture::new("watch");
+    let wal = fx.p("run.wal");
+    // the watch starts before the journal is there, and waits for it
+    let watch = Watch::start(&wal);
+    assert_eq!(watch.json("/status")["status"]["mode"], "waiting");
+    let (code, waiting) = watch.get("/");
+    assert!(code == 200 && waiting.contains("Waiting for the first frame"), "{waiting}");
+    let frames_of = |fx: &Fixture| reading(fx, &["audit-verify"]).1["entries"].as_u64().unwrap();
+    let caught = |watch: &Watch, frames: u64, mode: &str| {
+        watch.until(&format!("{frames} frames, {mode}"), |s| s["frames"] == frames && s["mode"] == mode && s["more"] == false && s["pending"] == 0)
+    };
+
+    let server = Server::start(&fx.args(true));
+    let start = frames_of(&fx);
+    caught(&watch, start, "live");
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let mut gb = Client::connect(server.port, GB);
+    // the two readings, and after each the watch has the frames written
+    let mut first_report = Value::Null;
+    for agent in [&mut w1, &mut w2] {
+        catch_up(&mut gb);
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        assert_eq!(t["kind"], "EXTEND", "{t}");
+        let lines = answer(&t);
+        if lines[0]["exact_quote"] == "Topic A is reported." {
+            first_report = lines[0]["doc_id"].clone();
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}))["status"], "COMMITTED");
+        caught(&watch, frames_of(&fx), "live");
+    }
+    // a page that held the frames of the start is sent the frames since, and the records they made
+    let epoch = watch.json("/status")["epoch"].as_u64().unwrap();
+    let delta = watch.json(&format!("/delta?epoch={epoch}&frames={start}"))["delta"].clone();
+    assert_eq!(delta["from"], start, "{delta}");
+    assert_eq!(delta["frames"].as_array().unwrap().len() as u64, frames_of(&fx) - start, "{delta}");
+    assert_eq!((delta["quotes"].as_object().unwrap().len(), delta["recs"].as_object().unwrap().len()), (2, 2), "{delta}");
+    assert_eq!(delta["status"]["mode"], "live", "{delta}");
+
+    // the server is stopped and started again on the journal while the watch asks for its file every 20 ms: it starts
+    drop((w1, w2, gb));
+    drop(server);
+    let stopped = frames_of(&fx);
+    caught(&watch, stopped, "recorded");
+    let server = Server::start(&fx.args(false));
+    caught(&watch, frames_of(&fx), "live");
+    let (mut w1, mut gb, mut own) = (Client::connect(server.port, W1), Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    for _ in 0..20 {
+        catch_up(&mut gb);
+        let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    // the owner withdraws the quote of the first report: what rested on it falls on the page as in the export
+    let gone = own.call("audit_withdraw_text", json!({"doc_id": first_report, "exact_quote": "Topic A is reported."}));
+    assert_eq!(gone["status"], "REVOKED", "{gone}");
+    caught(&watch, frames_of(&fx), "live");
+    // the question it reached is answered again from what still stands, and the run is closed
+    for _ in 0..20 {
+        catch_up(&mut gb);
+        let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    let end = frames_of(&fx);
+    let status = caught(&watch, end, "closed");
+    assert_eq!(status["writer"], true, "the server still holds the journal of the closed run: {status}");
+
+    // what the watch shows of these frames is what audit-verify and audit-prov say of them
+    let data = watch.json("/data");
+    let (_, verified, _) = reading(&fx, &["audit-verify"]);
+    assert_eq!(data["frames"].as_array().unwrap().len() as u64, end);
+    for field in ["audit_root", "engine_root", "wal_head", "records"] {
+        assert_eq!(data["verify"][field], verified[field], "{field}");
+    }
+    let (code, exported, stderr) = reading(&fx, &["audit-prov", "--out", &fx.p("watch.prov.jsonld")]);
+    assert_eq!((code, exported["frames"].as_u64()), (Some(0), Some(end)), "{exported} {stderr}");
+    let export: Value = serde_json::from_slice(&std::fs::read(fx.p("watch.prov.jsonld")).unwrap()).unwrap();
+    let graph = export["@graph"].as_array().unwrap();
+    let is = |n: &Value, t: &str| n["@type"].as_array().unwrap().iter().any(|x| x == t);
+    let short = |iri: &Value| format!("@{}", &iri.as_str().unwrap().rsplit(':').next().unwrap()[..16]);
+    let labelled = |n: &&Value| is(n, "yuce:Record") && ["observe", "claim", "hypothesis", "done"].contains(&n["yuce:kind"].as_str().unwrap());
+    let mut exported_all: Vec<String> = graph.iter().filter(labelled).map(|n| format!("@{}", &n["yuce:recordId"].as_str().unwrap()[..16])).collect();
+    let mut exported_standing: Vec<String> = graph
+        .iter()
+        .filter(|n| is(n, "yuce:Standing") && n.get("prov:wasInvalidatedBy").is_none())
+        .map(|n| short(&n["prov:specializationOf"]))
+        .filter(|id| exported_all.contains(id))
+        .collect();
+    let (mut shown_all, mut shown_standing, mut fell) = (Vec::new(), Vec::new(), 0);
+    for group in ["quotes", "recs"] {
+        for (label, record) in data[group].as_object().unwrap() {
+            let id = record["kid"].as_str().unwrap().to_string();
+            let periods = data["periods"][label].as_array().unwrap();
+            if periods.iter().any(|p| p[1].is_null()) {
+                shown_standing.push(id.clone());
+            }
+            fell += usize::from(periods.iter().any(|p| p[2] == "basis"));
+            shown_all.push(id);
+        }
+    }
+    for list in [&mut exported_all, &mut exported_standing, &mut shown_all, &mut shown_standing] {
+        list.sort();
+    }
+    assert_eq!(shown_all, exported_all, "the records of the page and of the export");
+    assert_eq!(shown_standing, exported_standing, "what stands on the page and in the export");
+    assert!(fell >= 1 && shown_standing.len() < shown_all.len(), "the withdrawal made records fall: {fell} fell, {} stand", shown_standing.len());
+    // the watched page is served for these frames, and the journal is what the server wrote: the watch wrote nothing
+    let (code, page) = watch.get("/");
+    assert!(code == 200 && page.contains("\"live\":{") && page.contains("connect-src 'self'"), "{}", &page[..page.len().min(400)]);
+    drop((w1, gb, own));
+    drop(server);
+    let after = std::fs::read(&wal).unwrap();
+    assert_eq!(after.iter().filter(|b| **b == b'\n').count() as u64, end);
+    let (code, last, stderr) = reading(&fx, &["audit-verify"]);
+    assert_eq!((code, last["status"].as_str(), last["torn_tail_bytes"].as_u64()), (Some(0), Some("VERIFIED"), Some(0)), "{last} {stderr}");
+    assert_eq!(last["wal_head"], verified["wal_head"]);
+    let status = caught(&watch, end, "closed");
+    assert_eq!(status["writer"], false, "{status}");
+}
+
+/// The server of `audit-watch` answers its own page and no other: a request under another name, one a page of another site
+/// makes (the browser says so in `Sec-Fetch-Site` and `Origin`), or one that is no GET gets no data. A request whose head does
+/// not come in time is dropped. A journal with a damaged frame is shown up to the frame before it, and a journal whose file is
+/// gone says so. The address printed is the one the listener got.
+#[test]
+fn the_watch_answers_its_own_page_only_and_says_what_is_wrong_with_a_journal() {
+    let fx = Fixture::new("watchhttp");
+    let wal = fx.p("run.wal");
+    {
+        let server = Server::start(&fx.args(true));
+        let (mut w1, mut gb) = (Client::connect(server.port, W1), Client::connect(server.port, GB));
+        for _ in 0..2 {
+            catch_up(&mut gb);
+            let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+            assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+        }
+    }
+    let bytes = std::fs::read(&wal).unwrap();
+    let frames = bytes.iter().filter(|b| **b == b'\n').count() as u64;
+    let watch = Watch::start(&wal);
+    watch.until("the whole journal", |s| s["frames"] == frames && s["mode"] == "recorded");
+
+    // its own page: the reader's own navigation and the page's own requests
+    let own = format!("Origin: http://{}", watch.host);
+    assert_eq!(watch.code("/", &["Sec-Fetch-Site: none"]), 200);
+    assert_eq!(watch.code("/delta?epoch=0&frames=1", &["Sec-Fetch-Site: same-origin", &own]), 200);
+    assert_eq!(watch.code("/data", &[]), 200);
+    // another site's page, by whatever it says of itself, and another name for this port
+    for foreign in [&["Sec-Fetch-Site: cross-site"][..], &["Sec-Fetch-Site: same-site"], &["Origin: https://evil.example"], &["Origin: null"]] {
+        for path in ["/", "/data", "/delta?epoch=0&frames=1", "/status"] {
+            assert_eq!(watch.code(path, foreign), 403, "{path} {foreign:?}");
+        }
+    }
+    let other_name = watch.ask("GET /data HTTP/1.1", &[&format!("Host: evil.example:{}", watch.port)]).unwrap();
+    assert_eq!(other_name.0, 403, "{}", other_name.1);
+    assert!(!other_name.2.contains("frames"), "no data under another name");
+    // GET only, and only the four things it gives
+    let host = format!("Host: {}", watch.host);
+    assert_eq!(watch.ask("POST / HTTP/1.1", &[&host, "Content-Length: 0"]).unwrap().0, 405);
+    assert_eq!(watch.ask("DELETE /data HTTP/1.1", &[&host]).unwrap().0, 405);
+    assert_eq!(watch.code("/run.wal", &[]), 404);
+    assert_eq!(watch.code("/../run.wal", &[]), 404);
+    // every answer forbids a frame of another site and a read as another site's resource
+    let (_, head, _) = watch.ask("GET / HTTP/1.1", &[&host]).unwrap();
+    for header in ["Content-Security-Policy: frame-ancestors 'none'", "Cross-Origin-Resource-Policy: same-origin", "X-Content-Type-Options: nosniff"] {
+        assert!(head.contains(header), "{header} in {head}");
+    }
+    // a head that does not come in time: the connection is answered with a refusal within a few seconds, not held
+    let started = Instant::now();
+    let mut slow = TcpStream::connect(watch.host.as_str()).unwrap();
+    write!(slow, "GET / HTTP/1.1\r\nHost: {}\r\n", watch.host).unwrap();
+    let mut reply = String::new();
+    let _ = std::io::Read::read_to_string(&mut slow, &mut reply);
+    assert!(reply.starts_with("HTTP/1.1 400") && started.elapsed() < Duration::from_secs(8), "{reply:?} after {:?}", started.elapsed());
+    // the same page asked for again is the same bytes
+    assert_eq!(watch.get("/").1, watch.get("/").1);
+
+    // a journal with a changed byte in a frame: the frames before it are shown, and the page is told which frame does not pass
+    let mut lines: Vec<Vec<u8>> = bytes.split_inclusive(|b| *b == b'\n').map(<[u8]>::to_vec).collect();
+    let at = lines.len() / 2;
+    let place = lines[at].windows(9).position(|w| w == b"\"actor\":\"").unwrap() + 9;
+    lines[at][place] = if lines[at][place] == b'x' { b'y' } else { b'x' };
+    std::fs::write(fx.p("damaged.wal"), lines.concat()).unwrap();
+    let damaged = Watch::start(&fx.p("damaged.wal"));
+    let status = damaged.until("the damaged frame", |s| s["mode"] == "broken");
+    assert_eq!((status["frames"].as_u64(), status["broken"]["frame"].as_u64()), (Some(at as u64), Some(at as u64)), "{status}");
+    assert_eq!(damaged.json("/data")["frames"].as_array().unwrap().len(), at);
+    let delta = damaged.json(&format!("/delta?epoch=0&frames={at}"));
+    assert_eq!((delta["delta"]["status"]["mode"].as_str(), delta["delta"]["frames"].as_array().map(Vec::len)), (Some("broken"), Some(0)), "{delta}");
+    assert_eq!(damaged.get("/").0, 200);
+
+    // a journal whose file is taken away: the page keeps the frames read and says the file is gone
+    std::fs::write(fx.p("gone.wal"), &bytes).unwrap();
+    let gone = Watch::start(&fx.p("gone.wal"));
+    gone.until("the whole journal", |s| s["frames"] == frames);
+    std::fs::remove_file(fx.p("gone.wal")).unwrap();
+    let status = gone.until("the missing file", |s| s["unreadable"].is_string());
+    assert_eq!((status["frames"].as_u64(), status["unreadable"].as_str()), (Some(frames), Some("the file is no longer there")), "{status}");
+    assert_eq!(gone.json("/data")["frames"].as_array().unwrap().len() as u64, frames);
+
+    // `localhost` may be either loopback address: the address printed is the one that answers, under its own name
+    let named = Watch::start_on(&wal, "localhost:0");
+    let status = named.until("the whole journal", |s| s["frames"] == frames);
+    assert_eq!(status["mode"], "recorded");
+    assert_eq!(named.code("/status", &[]), 200);
+    assert_eq!(named.ask("GET /status HTTP/1.1", &[&format!("Host: localhost:{}", named.port)]).unwrap().0, 200);
+}

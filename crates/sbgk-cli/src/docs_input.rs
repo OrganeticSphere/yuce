@@ -95,6 +95,49 @@ fn check_inside(folder: &Path, parts: &[&str], line: &str) -> Result<String, Str
     names.map(|n| n.join("/")).ok_or_else(|| format!("--docs: the name of {line} is not UTF-8"))
 }
 
+/// The file a path names inside `folder`, for a reader that takes the path from a journal and not from its operator
+/// (`audit-watch --docs`): only plain names lead to it (no root, no `..`, no stream of a file), no link is followed on the way,
+/// and it is a regular file of at most `limit` bytes. A device, a pipe or a file outside the folder is refused before it is opened.
+pub(crate) fn file_inside(folder: &Path, relative: &str, limit: u64) -> Result<PathBuf, String> {
+    let plain = relative.replace('\\', "/");
+    let mut parts = Vec::new();
+    for part in Path::new(&plain).components() {
+        match part {
+            Component::Normal(p) if cfg!(windows) && p.to_string_lossy().contains(':') => return Err(format!("{relative} names a stream of a file")),
+            Component::Normal(p) => parts.push(p.to_str().ok_or_else(|| format!("{relative} is not UTF-8"))?),
+            Component::CurDir => {}
+            _ => return Err(format!("{relative} is not a path inside the folder")),
+        }
+    }
+    if parts.is_empty() {
+        return Err(format!("{relative} names no file"));
+    }
+    let inside = check_inside(folder, &parts, relative)?;
+    let path = folder.join(inside);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() && meta.len() <= limit => Ok(path),
+        Ok(meta) if meta.is_file() => Err(format!("{relative} is longer than {limit} bytes")),
+        _ => Err(format!("{relative} is not a file")),
+    }
+}
+
+/// The bytes of the file `file_inside` leads to. The file opened is asked again whether it is a regular file, and no more than
+/// `limit` bytes of it are read: a file put in its place between the check and the reading gives no more than that either.
+pub(crate) fn read_inside(folder: &Path, relative: &str, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let path = file_inside(folder, relative, limit)?;
+    let file = std::fs::File::open(&path).map_err(|e| format!("{relative}: {e}"))?;
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return Err(format!("{relative} is not a file"));
+    }
+    let mut data = Vec::new();
+    file.take(limit.saturating_add(1)).read_to_end(&mut data).map_err(|e| format!("{relative}: {e}"))?;
+    if data.len() as u64 > limit {
+        return Err(format!("{relative} is longer than {limit} bytes"));
+    }
+    Ok(data)
+}
+
 /// The files of a `--select` list: one path inside the folder per line, as in a repository's list, `#` for a comment.
 fn named(folder: &Path, list: &str, files: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
     for line in list.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {

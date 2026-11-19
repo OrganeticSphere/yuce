@@ -22,6 +22,8 @@ mod audit_index;
 mod audit_mcp;
 #[path = "audit_prov.rs"]
 mod audit_prov;
+#[path = "audit_watch.rs"]
+mod audit_watch;
 #[path = "bridge.rs"]
 mod bridge;
 mod docs_input;
@@ -204,6 +206,7 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "audit-proof-verify" => &["anchored-at", "expect-seal", "key", "proof", "trusted-keys"],
         "audit-index" => &["check", "db", "rebuild", "wal"],
         "audit-prov" => &["out", "upto", "wal"],
+        "audit-watch" | "watch" => &["docs", "every-ms", "listen", "note", "wal"],
         "audit-read" => &["doc-id", "end", "from", "limit", "pretty", "record", "since", "start", "to", "unit-status", "wal"],
         "update-doc" => &["doc-id", "file", "out", "pretty"],
         "root" | "dump-claims" | "verify" => &["pretty"],
@@ -1020,6 +1023,9 @@ Audit server for a team of agents:
   audit-prov    the journal as W3C PROV-O, one JSON-LD file rebuilt from it at any time: --wal <run.wal> [--out <file>] (default
                 <run.wal>.prov.jsonld) [--upto <n>] (the first n frames); who wrote each record, on which bytes of which document
                 version it stands, what it rests on, when it stood and stopped standing; exit 1 if the journal is refused
+  audit-watch   (also: watch) YuCe Live, the page of a journal while a server writes it, on this computer: --wal <run.wal>
+                [--listen 127.0.0.1:7117] [--docs <folder>] [--note <text>]; reads the journal alone, from its start once and then
+                only the frames written since, each checked as audit-verify checks it; prints the address and runs until stopped
   audit-read    the reading tools over a recorded journal, checked first as audit-verify checks it: audit-read <tool> --wal <run.wal>;
                 tools: status, dependents (--record <id> or --doc-id <id> [--start --end]), active-claims [--doc-id], diff --from <n>
                 [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood), coverage [--doc-id]
@@ -1144,6 +1150,10 @@ pub fn main() {
             audit_prov::cmd_audit_prov(&a);
             return;
         }
+        "audit-watch" | "watch" => {
+            audit_watch::cmd_audit_watch(&a);
+            return;
+        }
         "update-doc" => cmd_update_doc(&a),
         "root" => cmd_root(&a),
         "dump-nodes" => cmd_dump_nodes(&a),
@@ -1224,6 +1234,8 @@ mod flag_tests {
             "audit-proof-verify",
             "audit-index",
             "audit-prov",
+            "audit-watch",
+            "watch",
             "update-doc",
             "root",
             "dump-claims",
@@ -1246,6 +1258,7 @@ mod flag_tests {
             include_str!("audit_mcp.rs"),
             include_str!("audit_index.rs"),
             include_str!("audit_prov.rs"),
+            include_str!("audit_watch.rs"),
             include_str!("bridge.rs"),
             include_str!("mcp.rs"),
             include_str!("one_command.rs"),
@@ -1273,6 +1286,7 @@ mod flag_tests {
         let audit = include_str!("audit_mcp.rs");
         let index = include_str!("audit_index.rs");
         let prov = include_str!("audit_prov.rs");
+        let watch = include_str!("audit_watch.rs");
         let one = include_str!("one_command.rs");
         for (command, src, function) in [
             ("mcp", one, "cmd_mcp"),
@@ -1302,6 +1316,8 @@ mod flag_tests {
             ("audit-proof-verify", audit, "cmd_audit_proof_verify"),
             ("audit-index", index, "cmd_audit_index"),
             ("audit-prov", prov, "cmd_audit_prov"),
+            ("audit-watch", watch, "cmd_audit_watch"),
+            ("watch", watch, "cmd_audit_watch"),
             ("audit-serve", audit, "start_audit_server"),
         ] {
             let known = known_flags(command).unwrap();
