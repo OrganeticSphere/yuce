@@ -2,6 +2,12 @@
 
 ## 0.2.3 (2026-11-20)
 
+* **The independent verifier checks levels J2 and J3** (`verifier/yuce-verify`, delivery 2, `SPEC_INDEPENDENT_VERIFIER/6`). J2:
+  the genesis record, the body of every frame with its request hash, and the batches. J3, given the source documents (`--docs`):
+  every quote the kernel accepted occurs, byte for byte and once, in its document, and the record ids and the records tree of
+  every frame are those the journal names. `verifier/inputs` holds 22 journals with their documents and expected results, one of
+  them recorded by 0.2.3; `crates/sbgk-cli/tests/verify_inputs.rs` checks that `sbgk audit-verify` answers each as expected. What
+  a PASS does not establish is in `verifier/README.md`.
 * **A reading-only shard.** `sbgk audit-serve --reading-only` runs a shard that reads and records, and whose summaries are made
   outside its journal, for a run split into one journal per agent or per document. No SUMMARIZE task is issued; the run is
   complete, and can be closed, once no work is open and no lease is out; its questions still steer the reading. Its terminal
