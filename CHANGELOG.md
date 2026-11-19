@@ -65,6 +65,9 @@
 * **A kernel notice once per answer in the blind answers.** `answers_blind.md` wrote each claim with the notices of the records it
   rests on, so one notice came back 18 times in one answer of the fourth corpus's run. The notices of an answer are listed once
   at its head, and each claim keeps its own words with the short ids of its notices.
+* **The runner knows the usage-policy refusal.** Claude Code reports a refusal of the provider's safeguards in a second wording
+  ("… can't help with this … /legal/aup"). The runner read it as any other failure and stopped a live run of the fourth corpus;
+  it now closes that one task as refused, as it did for "safeguards flagged", and the run goes on.
 
 ## 0.2.2 (2026-11-15)
 

@@ -562,6 +562,11 @@ CLAUDE_TRANSIENT = ("rate limit", "rate_limit", "overloaded", "529", "500", "502
 # depend on how fast the model overran)
 CLAUDE_OVERRUN = "output token maximum"
 OUTPUT_OVERRUN = "OUTPUT_OVERRUN"
+# The ways Claude Code reports a refusal of the provider's safeguards as an API error: the older "safeguards flagged" and the
+# usage-policy answer ("Haiku 5.5 can't help with this ... /legal/aup ... Details: `[bio]`", live run CROSS_BIO_S2_pro: read as
+# any other failure, it stopped the run instead of closing one task as refused). The policy link alone is no sign: an error about
+# the account itself may carry it, and that error must stop the run, not close every task as refused.
+CLAUDE_REFUSAL = ("safeguards flagged", "can't help with this", "can’t help with this")
 
 
 class ClaudeCliModel:
@@ -658,7 +663,7 @@ class ClaudeCliModel:
                                      f"resumed in {turns} turns; the result holds the last turn only", cost())
                 break
             detail = str(d.get("result") if isinstance(d, dict) else (cp.stdout[-300:] + cp.stderr[-300:]))[:300]
-            if "safeguards flagged" in detail:
+            if any(t in detail for t in CLAUDE_REFUSAL):
                 raise CallFailed(f"{MODEL_REFUSED}: {detail}", cost())
             if CLAUDE_OVERRUN in detail:
                 raise CallFailed(f"{OUTPUT_OVERRUN}: {detail}", cost())

@@ -122,6 +122,24 @@ class EchoOnlyJson(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, f"^{P.MODEL_REFUSED}"):
                 P.ClaudeCliModel(exe="claude.exe").complete("x")
 
+    def test_the_adapter_names_a_usage_policy_refusal(self):
+        # the wording of live run CROSS_BIO_S2_pro, read before as any other failure: it stopped the run
+        out = json.dumps({"is_error": True, "result": "API Error: Haiku 5.5 can't help with this. Start a new session to continue."
+                                                      "\n\nLearn more: https://www.anthropic.com/legal/aup\n\nDetails: `[bio]`"
+                                                      "\n\nRequest ID: req_x\n\nMessage ID: msg_x"})
+        with mock.patch.object(P.subprocess, "run", return_value=SimpleNamespace(stdout=out, stderr="", returncode=1)):
+            with self.assertRaisesRegex(RuntimeError, f"^{P.MODEL_REFUSED}"):
+                P.ClaudeCliModel(exe="claude.exe").complete("x")
+
+    def test_an_account_error_with_the_policy_link_still_stops_the_run(self):
+        # not a refusal of one task: closing every task as refused would let a run go on with no reader at all
+        out = json.dumps({"is_error": True, "result": "API Error: this organization has been disabled. "
+                                                      "Learn more: https://www.anthropic.com/legal/aup"})
+        with mock.patch.object(P.subprocess, "run", return_value=SimpleNamespace(stdout=out, stderr="", returncode=1)):
+            with self.assertRaises(RuntimeError) as e:
+                P.ClaudeCliModel(exe="claude.exe").complete("x")
+        self.assertNotIn(P.MODEL_REFUSED, str(e.exception))
+
 
 class PartlyRefused(unittest.TestCase):
     def test_the_builder_is_told_how_to_drop_a_refused_operation(self):
