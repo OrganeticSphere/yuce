@@ -1,4 +1,4 @@
-//! Reading units and withdrawn text, as Probe 1 of 17.11.2026 found them (findings 5, 4, 3 and 11): a plan of task sections, each
+//! Reading units and withdrawn text: a plan of task sections, each
 //! with a directive REV_A and a fallback REV_B; a cancelled task is its whole section withdrawn, a changed task its REV_A clause
 //! withdrawn. Deterministic stand-ins replace the agents; the journal is the kernel's own.
 
@@ -115,7 +115,7 @@ fn unit_statuses(s: &AuditState, k: usize) -> Vec<String> {
         .collect()
 }
 
-// ---- finding 5: a unit whose every byte is withdrawn is closed, never issued
+// ---- a unit whose every byte is withdrawn is closed, never issued
 
 #[test]
 fn a_cancelled_task_is_closed_without_being_issued_and_the_coverage_table_shows_it_withdrawn() {
@@ -177,7 +177,7 @@ fn a_task_cancelled_while_leased_is_closed_once_its_lease_is_given_back() {
     assert_eq!(d.stats.withdrawn_units, 1);
 }
 
-// ---- finding 4: an issued unit shows its withdrawn bytes as marks, not as text
+// ---- an issued unit shows its withdrawn bytes as marks, not as text
 
 #[test]
 fn a_changed_task_is_issued_with_its_withdrawn_clause_marked_and_its_fallback_quotable() {
@@ -200,7 +200,7 @@ fn a_changed_task_is_issued_with_its_withdrawn_clause_marked_and_its_fallback_qu
     assert_eq!(d.submit(&mut s, id(&t), "w1", &report(&t, &rev_b(2)), 0)["status"], "COMMITTED");
 }
 
-// ---- finding 3: with the plan setting, an answer that leaves its task with nothing accepted does not close it
+// ---- with the plan setting, an answer that leaves its task with nothing accepted does not close it
 
 #[test]
 fn without_the_plan_setting_an_empty_answer_closes_its_unit_as_before() {
@@ -291,7 +291,7 @@ fn with_the_plan_setting_an_empty_answer_on_a_task_cancelled_under_its_lease_clo
     assert_eq!(d.stats.empty_answers, 0);
 }
 
-// ---- finding 11: with the plan setting, a task changed after it was done is done again
+// ---- with the plan setting, a task changed after it was done is done again
 
 /// Does every task the dispatcher hands out, each with the first clause its card shows, until it has none.
 fn do_all(d: &mut Dispatcher, s: &mut AuditState) -> Vec<(usize, String)> {

@@ -1,5 +1,5 @@
-"""A review card whose every answer the kernel refuses is a failed attempt of the agent (Tobi rerun, 17.11.2026: at temperature 0 the
-run Cn_r1 got one ontology review card 53 times and its circle never ended). With --agent-attempts the runner releases the leased
+"""A review card whose every answer the kernel refuses is a failed attempt of the agent (at temperature 0 a run got one ontology
+review card again and again, and its circle never ended). With --agent-attempts the runner releases the leased
 card as failed after its repairs, so the kernel's limit can give it up; without the option nothing changes. No model is called."""
 import json
 import pathlib

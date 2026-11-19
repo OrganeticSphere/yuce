@@ -43,6 +43,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   `at_end` in the report says whether the state is the journal's end, and `--at-end` makes that a condition.
 * **A journal holds the full text of its sources.** Whoever checks a journal gets them: to publish a journal is to publish its
   documents. A journal cannot be checked without their text.
+* **A reading-only shard holds no answer.** A run with `--reading-only` records its reading only; the summary made from its
+  shards is outside its journal, and the journal proves nothing about it. Its receipt says so (`summaries.in_journal: false`).
 * `sbgk audit-serve` takes two kinds of sources: Markdown pinned by commit and SHA-256 (`--manifest`), or the UTF-8 text files of a
   folder (`--docs`). Either way a run is fixed at its start: a source that changes means a new run. The library also takes new
   versions of a document, which is what `examples/findings-gate/` uses.
@@ -186,7 +188,8 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   (`supports`, `contradicts`, `supersedes`, ...), with their checks by an agent that wrote neither end. It is measured but
   not the default: it knew fewer version transitions than a dedicated graph system and cost three times as much. Since 0.2.3
   the kernel holds that rule when it accepts a verdict, not only when it hands out the check; a run started before 0.2.3 keeps
-  the rule it had, held at the hand-out only.
+  the rule it had, held at the hand-out only. The owner can still decide such a link (`arbitration: true`): the journal marks
+  the decision as an arbitration, on the server's word about who called; the mark is no signature of the owner.
 * **Reading version transitions into the kernel** (`--build-scope versions`).
 * **The dynamic ontology** (`--ontology-revisions`, `--ontology-review`): concepts that grow and are revised during a run.
 * **The withdrawn-name notice** (`--withdrawn-anchor`): measured on the recorded runs, where it finds none.

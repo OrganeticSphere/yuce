@@ -34,7 +34,7 @@ pub struct ResearchQuestion {
 }
 
 pub mod circles;
-// reading units and withdrawn text (Probe 1 findings 5, 4, 3, 11)
+// reading units and withdrawn text
 mod units;
 
 /// The words the directives name the documents by when the run gives none (0.2.3): "an audit swarm over the provided source
@@ -106,7 +106,7 @@ pub struct DispatchConfig {
     pub versions: bool,
     /// The gap pass after the first readings (SPEC_V02_GAP_PASS); off while its `limit` is 0.
     pub gap: GapProfile,
-    /// The plan profile (`--unit-is-task`, Probe 1 findings 3 and 11): a reading unit is a task to do, not a text to read. An
+    /// The plan profile (`--unit-is-task`): a reading unit is a task to do, not a text to read. An
     /// answer that leaves its unit with nothing accepted gives the lease back as a failed attempt instead of closing the unit; a
     /// unit whose accepted records all fell to a withdrawal while text of it stands is opened again. Off: a reading profile, where
     /// an empty answer is a legal "nothing here" and closes the unit, as before.
@@ -610,11 +610,11 @@ pub struct DispatchStats {
     pub paced_skips: u64,
     /// Reading tasks that went on to a RELATE turn (`relate_hints`).
     pub relate_turns: u64,
-    /// Reading units closed without being issued because every byte of them is withdrawn (Probe 1 finding 5).
+    /// Reading units closed without being issued because every byte of them is withdrawn.
     pub withdrawn_units: u64,
-    /// With `unit_is_task`: answers that left their unit with nothing accepted, given back as failed attempts (finding 3).
+    /// With `unit_is_task`: answers that left their unit with nothing accepted, given back as failed attempts.
     pub empty_answers: u64,
-    /// With `unit_is_task`: closed units opened again because every record they were closed with fell to a withdrawal (finding 11).
+    /// With `unit_is_task`: closed units opened again because every record they were closed with fell to a withdrawal.
     pub reopened_units: u64,
     /// Per agent, the milliseconds it waited for a task, by why the kernel had none for it: the next task in line for it was
     /// taken, of a kind it does not do, another agent's ring card, closed by the circle phase, an investigation waiting for the
@@ -693,7 +693,7 @@ pub struct Dispatcher {
     pending_unresolved: Vec<(String, String, u32)>,
     /// Reading units closed because every byte of them is withdrawn, whose durable record is not written yet: (key, attempt).
     pending_withdrawn: Vec<(String, u32)>,
-    /// The plan profile (`unit_is_task`, Probe 1 finding 11): the records each reading unit was closed with, and how often a unit
+    /// The plan profile (`unit_is_task`): the records each reading unit was closed with, and how often a unit
     /// was opened again because they all fell to a withdrawal. Both are in the unit's completion checkpoint and come back on recovery.
     unit_records: BTreeMap<String, Vec<RecordId>>,
     reopened: BTreeMap<String, u32>,
@@ -1974,10 +1974,10 @@ impl Dispatcher {
         }
         let f = Flags::of(s);
         self.revalidate(s, &f);
-        // the plan profile: a unit whose records all fell to a withdrawal is done again (Probe 1 finding 11)
+        // the plan profile: a unit whose records all fell to a withdrawal is done again
         self.reopen_fallen_units(s, &f);
         let mut work = self.open_work(s, &f);
-        // a unit whose every byte is withdrawn has nothing left to quote: closed, never issued (Probe 1 finding 5)
+        // a unit whose every byte is withdrawn has nothing left to quote: closed, never issued
         let withdrawn = self.close_withdrawn_units(s, &work);
         if !withdrawn.is_empty() {
             work.retain(|w| !withdrawn.contains(&w.1));
@@ -2297,7 +2297,7 @@ impl Dispatcher {
         let issued: Vec<RecordId> = known_recs.iter().map(|r| r.id).collect();
         // a section cut from the middle of a document: its heading and the header of the table it begins inside, shown to read it
         // by and never quoted (the scope stays the section). Withdrawn bytes, in it and in the section, are shown as marks, never as
-        // text to act on or quote (Probe 1 finding 4; Codex's PR55-R2 for the context)
+        // text to act on or quote (Codex's PR55-R2 for the context)
         let closed = s.closed_spans(doc);
         let (context, context_marked) = gaps::shown_context(doc, &text, *a, &closed);
         let context = if context.is_empty() {
@@ -2334,7 +2334,7 @@ impl Dispatcher {
         for d in docs {
             let text = s.doc_text(d).unwrap_or_default();
             ranges.push((d.clone(), 0, text.len()));
-            // withdrawn bytes as marks (Probe 1 finding 4)
+            // withdrawn bytes as marks
             let (shown, marked) = units::shown_section(&text, 0, text.len(), &s.closed_spans(d));
             let note = if marked { units::WITHDRAWN_NOTE } else { "" };
             sections.push_str(&format!("{note}SECTION doc_id=\"{d}\" (bytes 0..{}):\n<<<\n{shown}\n>>>\n", text.len()));
@@ -3461,8 +3461,8 @@ impl Dispatcher {
             }
             return answer;
         }
-        // the plan profile: an answer that leaves its unit with nothing accepted did not do the task (Probe 1 finding 3: an empty
-        // answer closed the card, and 6 of 100 tasks were never done). Its lease goes back as a failed attempt; a unit with nothing
+        // the plan profile: an answer that leaves its unit with nothing accepted did not do the task (an empty
+        // answer closed the card, and its task was never done). Its lease goes back as a failed attempt; a unit with nothing
         // left to quote closes, with the reason the coverage table shows
         let mut unit_reason = None;
         if self.cfg.unit_is_task && lease.kind == TaskKind::Extend && !lease.relate && own.is_empty() {
@@ -3527,7 +3527,7 @@ impl Dispatcher {
             context["reason"] = json!(reason);
         }
         // the plan profile: what the unit is closed with and how often it was opened again, so that a recovered dispatcher sees
-        // when they all fall as the live one does (finding 11)
+        // when they all fall as the live one does
         let unit_closure = self.cfg.unit_is_task && lease.kind == TaskKind::Extend && !lease.relate;
         if unit_closure {
             self.unit_context(&lease.key, &own, &mut context);

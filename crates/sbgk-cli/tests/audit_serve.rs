@@ -1332,7 +1332,7 @@ fn a_preview_shows_what_a_withdrawal_would_make_fall_and_writes_nothing() {
     assert_eq!(own.call("audit_withdraw_preview", by_text_args), refused);
 }
 
-/// What `audit-verify` did not check, beside its status (Probe 1 finding 8, 17.11.2026): without a checkpoint kept apart from the
+/// What `audit-verify` did not check, beside its status: without a checkpoint kept apart from the
 /// journal, the journal cut back to an earlier frame boundary verifies like the whole one, and the report says so; a signed checkpoint
 /// catches that cut and narrows what is left unchecked to the frames after it. The status keeps its values.
 #[test]

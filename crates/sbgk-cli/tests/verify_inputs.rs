@@ -1,6 +1,6 @@
 //! The journals of the independent verifier's inputs (`verifier/inputs`), recorded by earlier kernels, verify as `expected.json`
 //! says `sbgk audit-verify` answers them: the same exit and status. A report of a verified or torn journal also says what no check
-//! covered without an external checkpoint (Probe 1 finding 8), in fields of its own beside the status.
+//! covered without an external checkpoint, in fields of its own beside the status.
 
 use serde_json::Value;
 use std::path::PathBuf;

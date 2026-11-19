@@ -305,7 +305,7 @@ fn without_a_gap_pass_a_given_up_first_reading_is_not_left_by_the_budget() {
     }
 }
 
-/// What the two recorded runs of the check held (Co_r1b and Co_r2 of the Tobi rerun): a first reading closed by an answer abandoned
+/// What the two recorded runs of the check held: a first reading closed by an answer abandoned
 /// after refused ones (`abandoned` in its checkpoint, the reading closed as done) with nothing stored. A loss reread of the section
 /// follows. When the reread records nothing, the section's units are `reading_given_up`; when it records something, it read the
 /// section: the quoted unit is `quoted` and the other is read with no quote, as before.
