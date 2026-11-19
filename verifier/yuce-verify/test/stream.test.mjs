@@ -1,10 +1,10 @@
 // Streaming, determinism, speed, the browser hash adapter, and loading the
-// bundle without Node.js globals (task statement, section 5).
+// bundle without Node.js globals (the task statement section 5).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { BUNDLE, SMALL, adapter, readRoom, room, yv } from "./helpers.mjs";
+import { BUNDLE, SMALL, adapter, docsOf, readRoom, room, yv } from "./helpers.mjs";
 
 function* chunks(bytes, size) {
   for (let i = 0; i < bytes.length; i += size) yield bytes.subarray(i, i + size);
@@ -99,7 +99,7 @@ test("the bundle loads and verifies without Node.js globals, with crypto.subtle 
   `;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^J0-J1 PASS\. Frames: 8\. Seals: 2\. Tail: closed\./);
+  assert.match(r.stdout, /^J0-J2 PASS. Frames: 8\. Seals: 2\. Tail: closed\./);
 });
 
 test("the delivery file has no static imports at all", async () => {
@@ -107,4 +107,41 @@ test("the delivery file has no static imports at all", async () => {
   const text = readFileSync(BUNDLE, "utf8");
   assert.doesNotMatch(text, /^\s*import\s[^(]/m);
   assert.doesNotMatch(text, /\brequire\(/);
+});
+
+test("the task statement section 5: k017-oracle-v3.wal with its 22 documents in under 5 s", async () => {
+  const bytes = readRoom("inputs/valid/k017-oracle-v3.wal");
+  const documents = docsOf("valid/k017-oracle-v3.docs");
+  assert.equal(documents.length, 22);
+  const t0 = performance.now();
+  const report = await yv.verifyJournal(chunks(bytes, 65536), { documents }, adapter);
+  const ms = performance.now() - t0;
+  assert.equal(report.verdict, "PASS");
+  assert.deepEqual(report.levels.J3, { result: "PASS", records: 2314, quotes: 1163 });
+  assert.ok(ms < 5000, `${ms.toFixed(0)} ms`);
+});
+
+test("J2-J3: the crypto.subtle adapter and the chunking give the same reports with documents", async () => {
+  const subtle = yv.subtleHashAdapter(globalThis.crypto.subtle);
+  for (const [wal, docs] of [
+    ["inputs/valid/kinds-batch-put.wal", "valid/kinds-batch-put.docs"],
+    ["inputs/valid/baicalin-n3-shard1.wal", "valid/baicalin-n3-shard1.docs"],
+    ["inputs/corrupt/forger-full-rehash.wal", "valid/baicalin-n3-shard1.docs"],
+  ]) {
+    const bytes = readRoom(wal);
+    const documents = docsOf(docs);
+    const a = yv.reportToJcs(await yv.verifyJournal([bytes], { documents }, adapter));
+    const b = yv.reportToJcs(await yv.verifyJournal(chunks(bytes, 777), { documents }, subtle));
+    assert.equal(b, a, wal);
+  }
+});
+
+test("the document version runs in O(n): 4 MiB of one byte value in well under a second", () => {
+  const big = new Uint8Array(4 * 1024 * 1024).fill(0x61);
+  const t0 = performance.now();
+  const chunksOf = yv.chunksOf(big);
+  const ms = performance.now() - t0;
+  assert.equal(chunksOf.reduce((s, c) => s + (c.end - c.start), 0), big.length);
+  assert.ok(chunksOf.every((c) => c.end - c.start <= yv.CDC_MAX_CHUNK));
+  assert.ok(ms < 1500, `${ms.toFixed(0)} ms`);
 });

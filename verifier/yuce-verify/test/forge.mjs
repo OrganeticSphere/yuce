@@ -1,19 +1,22 @@
 #!/usr/bin/env node
-// The forger (task statement, acceptance A6): changes a value in a journal and recomputes
-// every hash again, the seals included, so that the result is internally
-// consistent. Levels J0-J1 must accept such a journal: only a seal kept out of
-// the writer's reach (--expect-seal) or a separately kept head (--expect-head)
-// can tell it from the original.
+// The forger (acceptance A6 and B4): changes a value in a journal and
+// recomputes everything it knows, so that the result is internally consistent.
 //
-// It does not know, and does not recompute, values outside levels J0-J1
-// (body.request_hash, header.records_root): their formulas are not in the
-// specification of delivery 1.
+// - Delivery 1: every frame hash and the seals. Levels J0-J1 accept the result.
+// - Delivery 2 (the task statement, B4): also request_hash (J2) and, with the documents,
+//   the record ids, the anchors and the records root of every frame by the
+//   formulas of amendment 3 (`rewriteRecords`). Levels J0-J2 accept the result;
+//   J3 catches it when a changed quote is not in its source. A quote replaced by
+//   another phrase that occurs once in the same document passes J0-J3: only an
+//   external seal or head can tell it from the original.
 //
-// Library: loadFrames, saveFrames, rechain, getPath, setPath.
+// Library: loadFrames, saveFrames, rechain, getPath, setPath, forge,
+//          rewriteRecords, originalEvidence, forgeWithRecords, readDocs.
 // Command line:
-//   node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value>
-//   e.g. node test/forge.mjs in.wal out.wal 1 body.command.lines.0.exact_quote '"Forged."'
-import { readFileSync, writeFileSync } from "node:fs";
+//   node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value> [--docs <folder>]
+//   e.g. node test/forge.mjs in.wal out.wal 1 body.command.lines.0.exact_quote '"Forged."' --docs in.docs
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as yv from "../dist/yuce-verify.mjs";
 
@@ -37,6 +40,16 @@ export function loadFrames(text) {
 /** Canonical journal text of the frames. */
 export function saveFrames(frames) {
   return frames.map((f) => yv.jcs(f) + "\n").join("");
+}
+
+/** Every regular file of a folder and its subfolders, as bytes. */
+export function readDocs(dir) {
+  return readdirSync(dir)
+    .sort()
+    .flatMap((name) => {
+      const p = join(dir, name);
+      return statSync(p).isDirectory() ? readDocs(p) : [new Uint8Array(readFileSync(p))];
+    });
 }
 
 function step(container, key) {
@@ -68,13 +81,14 @@ function isKernelSeal(body) {
 /**
  * Recomputes hashes in place, frame by frame:
  *   - always: header.previous, header.body_hash, hash (and header.seq if renumber);
+ *   - requestHash (default true): body.request_hash of frames i >= 1 (amendment 3, P3-3);
  *   - resealHash: for kernel seals, copies command.seal into outcome.result.seal
  *     and recomputes seal_hash from it;
  *   - reseal: also recomputes the seal's log_size, log_root, wal_head,
  *     audit_root, engine_root and submission_id from the frames before it
  *     (implies resealHash).
  */
-export async function rechain(frames, { reseal = false, resealHash = false, renumber = false } = {}) {
+export async function rechain(frames, { reseal = false, resealHash = false, renumber = false, requestHash = true } = {}) {
   const hashes = [];
   for (let k = 0; k < frames.length; k++) {
     const frame = frames[k];
@@ -100,6 +114,9 @@ export async function rechain(frames, { reseal = false, resealHash = false, renu
       result.set("seal", clone(seal));
       result.set("seal_hash", await H(yv.DOMAIN.seal, yv.jcs(seal)));
     }
+    if (requestHash && k > 0 && body instanceof Map && body.has("actor") && body.has("command") && body.has("request_hash")) {
+      body.set("request_hash", await yv.requestHash(adapter, body.get("actor"), body.get("command")));
+    }
     header.set("previous", k === 0 ? yv.ZERO_HASH : hashes[k - 1]);
     header.set("body_hash", await H(yv.DOMAIN.frameBody, yv.jcs(body)));
     const hash = await H(yv.DOMAIN.frameHeader, yv.jcs(header));
@@ -109,7 +126,36 @@ export async function rechain(frames, { reseal = false, resealHash = false, renu
   return frames;
 }
 
-/** Changes one value and recomputes everything, seals included. */
+/** Evidence of every record of a valid journal, by record id (J3 of the verifier, read only). */
+export async function originalEvidence(frames, files) {
+  const engine = new yv.RecordEngine(adapter, await yv.indexDocuments(files, adapter));
+  const g = await engine.genesis(frames[0].get("body"));
+  if (g !== null) throw new Error(`genesis: ${JSON.stringify(g)}`);
+  for (let k = 1; k < frames.length; k++) {
+    const f = await engine.frame(frames[k].get("header"), frames[k].get("body"));
+    if (f !== null) throw new Error(`frame ${k}: ${JSON.stringify(f)}`);
+  }
+  return new Map(engine.accepted.filter((r) => r.evidence !== null).map((r) => [r.id, r.evidence]));
+}
+
+/**
+ * Rewrites, in place, the record ids in the outcomes, the "@" references in the
+ * lines, put_document versions and the records root of every frame, by the
+ * formulas of amendment 3. A changed quote that is no longer found keeps the
+ * evidence of the original record (from `evidence`, by its original id).
+ */
+export async function rewriteRecords(frames, files, evidence = new Map()) {
+  const engine = new yv.RecordEngine(adapter, await yv.indexDocuments(files, adapter), { originalEvidence: evidence });
+  const g = await engine.genesis(frames[0].get("body"));
+  if (g !== null) throw new Error(`genesis: ${JSON.stringify(g)}`);
+  for (let k = 1; k < frames.length; k++) {
+    const f = await engine.frame(frames[k].get("header"), frames[k].get("body"));
+    if (f !== null) throw new Error(`the forger cannot rewrite frame ${k}: ${JSON.stringify(f)}`);
+  }
+  return frames;
+}
+
+/** Changes one value and recomputes the frame hashes, request hashes and seals (no documents). */
 export async function forge(text, frameIndex, path, value) {
   const frames = loadFrames(text);
   setPath(frames[frameIndex], path, value);
@@ -117,13 +163,30 @@ export async function forge(text, frameIndex, path, value) {
   return saveFrames(frames);
 }
 
+/** Changes one value and recomputes everything, records and records roots included (B4). */
+export async function forgeWithRecords(text, files, frameIndex, path, value) {
+  const evidence = await originalEvidence(loadFrames(text), files);
+  const frames = loadFrames(text);
+  setPath(frames[frameIndex], path, value);
+  await rewriteRecords(frames, files, evidence);
+  await rechain(frames, { reseal: true });
+  return saveFrames(frames);
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [input, output, frame, path, json] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const d = args.indexOf("--docs");
+  const docs = d >= 0 ? args.splice(d, 2)[1] : undefined;
+  const [input, output, frame, path, json] = args;
   if (json === undefined) {
-    console.error("usage: node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value>");
+    console.error("usage: node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value> [--docs <folder>]");
     process.exit(2);
   }
-  const forged = await forge(readFileSync(input, "utf8"), Number(frame), path, parseLine(json));
+  const text = readFileSync(input, "utf8");
+  const forged =
+    docs === undefined
+      ? await forge(text, Number(frame), path, parseLine(json))
+      : await forgeWithRecords(text, readDocs(docs), Number(frame), path, parseLine(json));
   writeFileSync(output, forged);
-  console.log(`forged ${output}: frame ${frame}, ${path} = ${json}; all hashes and seals recomputed`);
+  console.log(`forged ${output}: frame ${frame}, ${path} = ${json}; hashes, request hashes and seals recomputed${docs === undefined ? "" : ", records and records roots too"}`);
 }

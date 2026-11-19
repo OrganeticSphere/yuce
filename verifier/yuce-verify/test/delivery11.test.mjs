@@ -26,7 +26,8 @@ test("6.1 defaults: line limit 67108863 bytes, nesting limit 64 (amendment 1)", 
   frames[0].get("body").set("padding", "x".repeat(17 * 1024 * 1024));
   await rechain(frames);
   const big = bytesOf(saveFrames(frames));
-  assert.equal((await verify(big)).verdict, "PASS");
+  // The padding is a 16th key of the genesis record: J2 refuses it (GENESIS_KEYS); the limit is J0's.
+  assert.equal((await verify(big)).levels.J0.result, "PASS");
   assert.deepEqual(outcome(await verify(big, { maxLineBytes: 16 * 1024 * 1024 })), { verdict: "FAIL", level: "J0", code: "LIMIT_EXCEEDED", frame: 0 });
   // Nesting 64 passes the limit, 65 does not.
   const nest = (m) => joinLines([JSON.stringify({ deep: JSON.parse("[".repeat(m) + "]".repeat(m)) })]);
@@ -79,7 +80,7 @@ test("6.5 J1-9 compares P.run_id with body.run_id of frame 0", async () => {
   assert.deepEqual(outcome(missing), j1("SEAL_RUN_ID", 2));
   // Without seals there is nothing to compare.
   const noSeals = await verify(joinLines(linesOf(await mutate((f) => f[0].get("body").delete("run_id"))).slice(0, 2)));
-  assert.equal(noSeals.verdict, "PASS");
+  assert.equal(noSeals.levels.J1.result, "PASS"); // J2 refuses a genesis record without run_id (GENESIS_KEYS)
 });
 
 test("6.6 anchor has two parts, seal and head; three anchor sentences", async () => {
@@ -109,7 +110,7 @@ test("6.8 lone surrogate: raw bytes give INVALID_UTF8, escaped gives INVALID_JSO
 });
 
 test("6.9 vectors checks log_root in V9", async () => {
-  const parsed = yv.parseJson(readFileSync(room("spec/VECTORS_INDEPENDENT_VERIFIER_20261110.json"), "utf8"));
+  const parsed = yv.parseJson(readFileSync(room("spec/VECTORS_INDEPENDENT_VERIFIER_20261119_v2.json"), "utf8"));
   const good = await yv.checkVectors(parsed.value, adapter);
   assert.equal(good.find((o) => o.name === "V9_checks").status, "PASS");
   assert.equal(good.some((o) => o.status === "SKIP" && o.name.startsWith("V9")), false);
@@ -127,10 +128,10 @@ test("6.9 vectors checks log_root in V9", async () => {
   assert.equal(checks.detail, "fails: P.log_root == RFC 6962 root over the hashes of frames 0..n-1");
 });
 
-// the task statement 6.10 as changed by amendments 1 (P1-5) and 2 (P2-3): /4.
-test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/4 (amendments 1 and 2)", async () => {
+// the task statement 6.10 as changed by amendments 1, 2 and 3: /5.
+test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/6 (amendments 1, 2 and 3)", async () => {
   const r = await verify(base);
-  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/4");
+  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
 });
 
 test("6.11 the checks of one frame run in the order of SPEC 6.2", async () => {
@@ -154,20 +155,26 @@ test("6.11 the checks of one frame run in the order of SPEC 6.2", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// A9: delivery 1 reports, normalized, equal the reports of 1.1.
+// A9 (and the task statement B2): delivery 1 reports, normalized, equal the J0-J1 part of
+// the reports now. Levels J2 and J3 are new; boundary/nested-seal.wal is now
+// refused by J2 (the task statement, section 6), which the J0-J1 part does not show.
 // ---------------------------------------------------------------------------
 
-/** Drops what 1.1 changes on purpose: anchor, removed fields, spec id, version, the J1 reason, free-text details. */
+/** The J0-J1 part of a report: input, J0, J1, computed, and a J0 or J1 failure. */
 function normalize(report) {
   const r = structuredClone(report);
-  delete r.anchor;
-  delete r.verifier.spec;
-  delete r.verifier.version;
+  const f = r.first_failure;
+  if (r.levels.J1.result === "NOT_CHECKABLE") delete r.levels.J1.reason;
+  // Fields of delivery 1 that 1.1 removed (the task statement, section 6, items 2 and 3).
   delete r.levels.J1.anomalies;
   delete r.levels.J1.frames_after_close;
-  delete r.levels.J1.reason;
-  if (r.first_failure !== null) delete r.first_failure.detail;
-  return r;
+  return {
+    input: { journal_sha256: r.input.journal_sha256, bytes: r.input.bytes, frames: r.input.frames, format: r.input.format },
+    J0: r.levels.J0,
+    J1: r.levels.J1,
+    computed: r.computed,
+    failure: f !== null && (f.level === "J0" || f.level === "J1") ? { level: f.level, frame: f.frame, code: f.code } : null,
+  };
 }
 
 const SNAPSHOTS = readdirSync(fixture("delivery1-reports")).filter((f) => f.endsWith(".json"));

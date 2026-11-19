@@ -1,4 +1,4 @@
-// Bundles src/ into the single delivery file dist/yuce-verify.mjs (task statement, section 5).
+// Bundles src/ into the single delivery file dist/yuce-verify.mjs (the task statement section 5).
 // esbuild is a development tool only; the output has no runtime dependencies.
 import { build } from "esbuild";
 import { readFileSync } from "node:fs";
