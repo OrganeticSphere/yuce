@@ -31,5 +31,5 @@ fn the_recorded_journals_keep_their_verdicts_and_a_report_says_what_was_not_chec
             checked += 1;
         }
     }
-    assert_eq!(checked, 14, "every recorded journal");
+    assert_eq!(checked, 22, "every recorded journal");
 }
