@@ -1343,7 +1343,8 @@ fn status(r: &Run) -> Value {
            "builder_caught_up": caught_up, "reading_done": r.dispatch.reading_done(&r.state), "leases": r.dispatch.leases(), "completion": r.dispatch.completion(&r.state, caught_up),
            "dispatch": {"issued": d.issued, "committed": d.committed, "repairs": d.repairs, "expired": d.expired, "confirmed": d.confirmed,
                         "rejected": d.rejected, "waits": d.waits, "requests_accepted": d.requests_accepted, "requests_refused": d.requests_refused,
-                        "paced_skips": d.paced_skips, "relate_turns": d.relate_turns, "extend_leases": r.dispatch.extend_leases(),
+                        "paced_skips": d.paced_skips, "relate_turns": d.relate_turns, "withdrawn_units": d.withdrawn_units, "empty_answers": d.empty_answers, "reopened_units": d.reopened_units,
+                        "extend_leases": r.dispatch.extend_leases(),
                         "wait_ms": d.wait_ms},
            "builder_backlog": r.backlog(), "stall_guard": r.guard.to_json(),
            "builder": {"cards": b.cards, "ops_accepted": b.ops_accepted, "ops_refused": b.ops_refused, "concepts_proposed": b.concepts_proposed,
@@ -1672,6 +1673,8 @@ struct CoverageMode {
     ontology_review: bool,
     answer_timeout_ms: Option<u64>,
     build_scope: &'static str,
+    /// `--unit-is-task`, the plan profile: pinned only when on, so the settings of a run without it are those of every run before it
+    unit_is_task: bool,
 }
 fn coverage_context(
     section_bytes: usize,
@@ -1681,7 +1684,7 @@ fn coverage_context(
     circles: Option<&sbgk_core::audit::directives::circles::CircleConfig>,
     mode: CoverageMode,
 ) -> Value {
-    let CoverageMode { ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope } = mode;
+    let CoverageMode { ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope, unit_is_task } = mode;
     // the rule the sections are cut by: a run cut by another one is not taken up again (HDR-R01)
     let mut context = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": section_bytes,
                              "section_rule": sbgk_core::audit::directives::SECTION_RULE});
@@ -1697,6 +1700,9 @@ fn coverage_context(
     }
     if unattested_at_end {
         context["unattested_at_end"] = json!(true);
+    }
+    if unit_is_task {
+        context["unit_is_task"] = json!(true);
     }
     if ontology_review {
         context["ontology_review"] = json!(true);
@@ -2617,6 +2623,7 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
             agent_attempts,
             unattested_at_end: a.sw("unattested-at-end"),
             build_scope,
+            unit_is_task: a.sw("unit-is-task"),
         },
     );
     // pinned with the run's settings: a run is not resumed with another gap pass (a run without one keeps its coverage bytes)
@@ -2664,6 +2671,7 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
         relate_hints: build_scope == "hints",
         versions: build_scope == "versions",
         gap: gap.clone(),
+        unit_is_task: a.sw("unit-is-task"),
         ..DispatchConfig::default()
     };
     // the control profiles have no links by any path, a reader's relation record included (Codex review of 8023910, SCOPE-01)
@@ -2763,6 +2771,7 @@ mod tests {
             ontology_review: false,
             answer_timeout_ms: None,
             build_scope: "full",
+            unit_is_task: false,
         };
         let current = coverage_context(128, &[], false, None, None, mode());
         assert_eq!(current["section_rule"], json!(sbgk_core::audit::directives::SECTION_RULE));
@@ -2779,6 +2788,39 @@ mod tests {
         let refused = check_coverage(&run("earlier", &earlier), &current, 128, true).unwrap_err();
         assert!(refused.contains("another rule") && refused.contains("start a new run"), "{refused}");
         assert_eq!(check_coverage(&run("same", &current), &current, 128, true), Ok(()), "a run of this rule goes on");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_plan_setting_is_pinned_only_when_on_and_a_run_is_not_resumed_with_it_changed() {
+        // Probe 1 findings 3 and 11: `--unit-is-task` changes what the dispatcher closes, so a run keeps the setting it started with
+        let dir = std::env::temp_dir().join(format!("sbgk_unit_is_task_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = |unit_is_task| CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task,
+        };
+        let (off, on) = (coverage_context(300, &[], false, None, None, mode(false)), coverage_context(300, &[], false, None, None, mode(true)));
+        assert!(off.get("unit_is_task").is_none(), "off, the settings are those of every run before the switch: {off}");
+        assert_eq!(on["unit_is_task"], json!(true));
+        let run = |name: &str, settings: &Value| {
+            let docs = vec![("plan.md".to_string(), b"## Task #1\n\nDirective REV_A: draw a circle.\n".to_vec())];
+            let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), name, docs).unwrap();
+            let spec = GenesisSpec { questions: json!([]), settings: settings.clone(), operator_meta: None };
+            state.start_journal(&dir.join(format!("{name}.wal")), &spec).unwrap();
+            bind_coverage(&mut state, settings.clone()).unwrap();
+            state
+        };
+        let plan = run("plan", &on);
+        assert!(check_coverage(&plan, &off, 300, true).unwrap_err().contains("unit_is_task"), "a plan run is not resumed as a reading run");
+        assert_eq!(check_coverage(&plan, &on, 300, true), Ok(()));
+        assert!(check_coverage(&run("reading", &off), &on, 300, true).is_err(), "nor a reading run as a plan run");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

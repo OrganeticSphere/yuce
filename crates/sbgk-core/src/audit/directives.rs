@@ -34,6 +34,8 @@ pub struct ResearchQuestion {
 }
 
 pub mod circles;
+// reading units and withdrawn text (Probe 1 findings 5, 4, 3, 11)
+mod units;
 
 #[derive(Debug, Clone)]
 pub struct DispatchConfig {
@@ -99,6 +101,11 @@ pub struct DispatchConfig {
     pub versions: bool,
     /// The gap pass after the first readings (SPEC_V02_GAP_PASS); off while its `limit` is 0.
     pub gap: GapProfile,
+    /// The plan profile (`--unit-is-task`, Probe 1 findings 3 and 11): a reading unit is a task to do, not a text to read. An
+    /// answer that leaves its unit with nothing accepted gives the lease back as a failed attempt instead of closing the unit; a
+    /// unit whose accepted records all fell to a withdrawal while text of it stands is opened again. Off: a reading profile, where
+    /// an empty answer is a legal "nothing here" and closes the unit, as before.
+    pub unit_is_task: bool,
 }
 
 impl Default for DispatchConfig {
@@ -129,6 +136,7 @@ impl Default for DispatchConfig {
             relate_hints: false,
             versions: false,
             gap: GapProfile::default(),
+            unit_is_task: false,
         }
     }
 }
@@ -592,6 +600,12 @@ pub struct DispatchStats {
     pub paced_skips: u64,
     /// Reading tasks that went on to a RELATE turn (`relate_hints`).
     pub relate_turns: u64,
+    /// Reading units closed without being issued because every byte of them is withdrawn (Probe 1 finding 5).
+    pub withdrawn_units: u64,
+    /// With `unit_is_task`: answers that left their unit with nothing accepted, given back as failed attempts (finding 3).
+    pub empty_answers: u64,
+    /// With `unit_is_task`: closed units opened again because every record they were closed with fell to a withdrawal (finding 11).
+    pub reopened_units: u64,
     /// Per agent, the milliseconds it waited for a task, by why the kernel had none for it: the next task in line for it was
     /// taken, of a kind it does not do, another agent's ring card, closed by the circle phase, an investigation waiting for the
     /// builder, paced, or the check of its own link; no open work at all (others' leases out, the builder behind); a checkpoint,
@@ -667,6 +681,14 @@ pub struct Dispatcher {
     /// write failed; retried at the next call that has the store, each attempt under a new submission id (Codex review d7d9a49,
     /// D06; review of 4381fe7: a failed write on a direct release was forgotten). (key, task id, attempt)
     pending_unresolved: Vec<(String, String, u32)>,
+    /// Reading units closed because every byte of them is withdrawn, whose durable record is not written yet: (key, attempt).
+    pending_withdrawn: Vec<(String, u32)>,
+    /// The plan profile (`unit_is_task`, Probe 1 finding 11): the records each reading unit was closed with, and how often a unit
+    /// was opened again because they all fell to a withdrawal. Both are in the unit's completion checkpoint and come back on recovery.
+    unit_records: BTreeMap<String, Vec<RecordId>>,
+    reopened: BTreeMap<String, u32>,
+    /// Units given up because they fell again past their bound of openings, whose unresolved record says so (Codex's PR55-R1).
+    reopen_exhausted: BTreeSet<String>,
     /// Immutable grant history is separate from live authority. Closures are retried until durable.
     pending_version_closures: BTreeMap<String, (String, u32)>,
     /// Questions the word search of `sections_about` found no section for: given up without a model call, durably, with the reason
@@ -1410,6 +1432,10 @@ impl Dispatcher {
             unresolved: BTreeSet::new(),
             settled: BTreeMap::new(),
             pending_unresolved: Vec::new(),
+            pending_withdrawn: Vec::new(),
+            unit_records: BTreeMap::new(),
+            reopened: BTreeMap::new(),
+            reopen_exhausted: BTreeSet::new(),
             pending_version_closures: BTreeMap::new(),
             no_source: BTreeSet::new(),
             requests: Vec::new(),
@@ -1496,7 +1522,9 @@ impl Dispatcher {
     /// The open work of kinds 1-4 (conflicts, proposed links, questions, uncovered sections), in priority order; keys given up as
     /// unresolved are not open work.
     fn open_work<S: AuditStore>(&self, s: &S, f: &Flags) -> Vec<Work> {
-        self.all_work(s, f).into_iter().filter(|w| !self.handled.contains(&w.1) && !self.unresolved.contains(&w.1)).collect()
+        // a closed unit whose records all fell to a withdrawal is open work again (the plan profile), before any call reopens it
+        let (fallen, _) = self.fallen_units(s, f);
+        self.all_work(s, f).into_iter().filter(|w| (!self.handled.contains(&w.1) || fallen.contains(&w.1)) && !self.unresolved.contains(&w.1)).collect()
     }
 
     /// After a restart: tasks whose completion checkpoint is durable are done; leases are not restored, their work is issued
@@ -1622,9 +1650,13 @@ impl Dispatcher {
                     self.settled.insert(key.clone(), ids);
                 }
             }
+            if self.cfg.unit_is_task {
+                self.recover_unit(&key, ctx);
+            }
             self.handled.insert(key);
         }
         self.revalidate(s, &f);
+        self.reopen_fallen_units(s, &f);
     }
 
     fn all_work<S: AuditStore>(&self, s: &S, f: &Flags) -> Vec<Work> {
@@ -1932,7 +1964,14 @@ impl Dispatcher {
         }
         let f = Flags::of(s);
         self.revalidate(s, &f);
+        // the plan profile: a unit whose records all fell to a withdrawal is done again (Probe 1 finding 11)
+        self.reopen_fallen_units(s, &f);
         let mut work = self.open_work(s, &f);
+        // a unit whose every byte is withdrawn has nothing left to quote: closed, never issued (Probe 1 finding 5)
+        let withdrawn = self.close_withdrawn_units(s, &work);
+        if !withdrawn.is_empty() {
+            work.retain(|w| !withdrawn.contains(&w.1));
+        }
         for card in self.build_offer.iter().filter(|c| c.records.iter().all(|r| r.author != agent)) {
             let key = format!("build:{}", card.card_id);
             let at = work.iter().position(|w| w.0 == TaskKind::Extend).unwrap_or(work.len());
@@ -2247,8 +2286,10 @@ impl Dispatcher {
         let known_recs = self.known(s, f, &terms, Some(doc));
         let issued: Vec<RecordId> = known_recs.iter().map(|r| r.id).collect();
         // a section cut from the middle of a document: its heading and the header of the table it begins inside, shown to read it
-        // by and never quoted (the scope stays the section)
-        let context = gaps::reading_context(doc, &text, *a);
+        // by and never quoted (the scope stays the section). Withdrawn bytes, in it and in the section, are shown as marks, never as
+        // text to act on or quote (Probe 1 finding 4; Codex's PR55-R2 for the context)
+        let closed = s.closed_spans(doc);
+        let (context, context_marked) = gaps::shown_context(doc, &text, *a, &closed);
         let context = if context.is_empty() {
             String::new()
         } else {
@@ -2257,13 +2298,14 @@ impl Dispatcher {
                 context.iter().map(|c| format!("  {c}")).collect::<Vec<_>>().join("\n")
             )
         };
+        let (shown, marked) = units::shown_section(&text, *a, *b, &closed);
+        let context = if marked || context_marked { format!("{}{context}", units::WITHDRAWN_NOTE) } else { context };
         let prompt = format!(
             "TASK EXTEND: read this section of report {doc} and record what it establishes, qualifies, revokes or leaves open that \
              matters for the research questions. Quote only from the section.\nRESEARCH QUESTIONS:\n{}\n{}\n{context}SECTION doc_id=\"{doc}\" \
-             (bytes {a}..{b}):\n<<<\n{}\n>>>",
+             (bytes {a}..{b}):\n<<<\n{shown}\n>>>",
             self.questions_text(),
             known_block(&known_recs, "ALREADY RECORDED (do not repeat; relate to these @ids instead)"),
-            &text[*a..*b]
         );
         let prompt =
             if super::quality::show_concepts(s, self.cfg.circles.is_some()) { format!("{prompt}\n{}", self.known_concepts(s, &text[*a..*b])) } else { prompt };
@@ -2282,7 +2324,10 @@ impl Dispatcher {
         for d in docs {
             let text = s.doc_text(d).unwrap_or_default();
             ranges.push((d.clone(), 0, text.len()));
-            sections.push_str(&format!("SECTION doc_id=\"{d}\" (bytes 0..{}):\n<<<\n{text}\n>>>\n", text.len()));
+            // withdrawn bytes as marks (Probe 1 finding 4)
+            let (shown, marked) = units::shown_section(&text, 0, text.len(), &s.closed_spans(d));
+            let note = if marked { units::WITHDRAWN_NOTE } else { "" };
+            sections.push_str(&format!("{note}SECTION doc_id=\"{d}\" (bytes 0..{}):\n<<<\n{shown}\n>>>\n", text.len()));
         }
         let prompt = format!(
             "TASK EXTEND: read these {} reports whole and record what they establish, qualify, revoke or leave open that matters for \
@@ -3406,6 +3451,16 @@ impl Dispatcher {
             }
             return answer;
         }
+        // the plan profile: an answer that leaves its unit with nothing accepted did not do the task (Probe 1 finding 3: an empty
+        // answer closed the card, and 6 of 100 tasks were never done). Its lease goes back as a failed attempt; a unit with nothing
+        // left to quote closes, with the reason the coverage table shows
+        let mut unit_reason = None;
+        if self.cfg.unit_is_task && lease.kind == TaskKind::Extend && !lease.relate && own.is_empty() {
+            if !self.scope_withdrawn_whole(s, &lease.scope) {
+                return self.give_back_empty(s, task_id, agent);
+            }
+            unit_reason = Some(units::WITHDRAWN_WHOLE);
+        }
         // what this answer may cite: its own records (this attempt or an earlier accepted one, with own_refs any of the run) and the
         // records the directive showed, and the rows a summary keeps; each name read as the store reads it, as the done's names were
         // read before it was stored
@@ -3458,6 +3513,15 @@ impl Dispatcher {
         // a summary's answer: its stored done record, the stated outcome and the records it names (all of them citable)
         let mut answer = None;
         let mut context = json!({"task_id": task_id, "kind": lease.kind.name(), "agent": agent, "link_task": if link_task { Some(task_id) } else { None }});
+        if let Some(reason) = unit_reason {
+            context["reason"] = json!(reason);
+        }
+        // the plan profile: what the unit is closed with and how often it was opened again, so that a recovered dispatcher sees
+        // when they all fall as the live one does (finding 11)
+        let unit_closure = self.cfg.unit_is_task && lease.kind == TaskKind::Extend && !lease.relate;
+        if unit_closure {
+            self.unit_context(&lease.key, &own, &mut context);
+        }
         if !retained.is_empty() {
             context["composition"] = json!({"by": "kernel", "mode": "incremental_repair", "retained_answer_ids": short_list(&retained),
                 "source_done": lease.question.as_ref().and_then(|q| self.retained.get(q)).map(|a| a.done.short())});
@@ -3567,6 +3631,9 @@ impl Dispatcher {
         }
         if !settled.is_empty() {
             self.settled.insert(lease.key.clone(), settled);
+        }
+        if unit_closure {
+            self.close_unit(&lease.key, &own);
         }
         if lease.kind == TaskKind::Extend && refusals > 0 && !lease.relate {
             self.strained.insert(lease.key.clone(), loss);
@@ -3875,8 +3942,9 @@ impl Dispatcher {
         out
     }
 
-    /// Write the keys given up when failed leases expired (Codex review d7d9a49, D06); the server calls it after every call with the
-    /// store at hand. A key whose record could not be written stays queued.
+    /// Write the keys given up when failed leases expired (Codex review d7d9a49, D06), and the reading units closed because every
+    /// byte of them is withdrawn; the server calls it after every call with the store at hand. A key whose record could not be
+    /// written stays queued.
     pub fn persist_unresolved<S: AuditStore>(&mut self, s: &mut S) -> Vec<Value> {
         let mut errors = Vec::new();
         for (key, attempt, who) in std::mem::take(&mut self.pending_agent_failures) {
@@ -3894,6 +3962,12 @@ impl Dispatcher {
                 self.pending_unresolved.push((key, task_id, attempt + 1));
             }
         }
+        for (key, attempt) in std::mem::take(&mut self.pending_withdrawn) {
+            if let Err(e) = self.write_withdrawn(s, &key, attempt) {
+                errors.push(e);
+                self.pending_withdrawn.push((key, attempt + 1));
+            }
+        }
         errors
     }
 
@@ -3909,6 +3983,10 @@ impl Dispatcher {
         }
         if task_id.starts_with("noreader-") {
             context["reason"] = json!("NO_INDEPENDENT_READER");
+        }
+        if self.reopen_exhausted.contains(key) {
+            context["reason"] = json!(units::REOPEN_LIMIT);
+            context["reopened"] = json!(self.reopened.get(key));
         }
         if let Some(q) = key.strip_prefix("rq:") {
             context["rq_id"] = json!(q);
