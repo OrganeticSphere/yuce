@@ -1301,6 +1301,75 @@ fn a_preview_shows_what_a_withdrawal_would_make_fall_and_writes_nothing() {
     assert_eq!(own.call("audit_withdraw_preview", by_text_args), refused);
 }
 
+/// What `audit-verify` did not check, beside its status (Probe 1 finding 8, 17.11.2026): without a checkpoint kept apart from the
+/// journal, the journal cut back to an earlier frame boundary verifies like the whole one, and the report says so; a signed checkpoint
+/// catches that cut and narrows what is left unchecked to the frames after it. The status keeps its values.
+#[test]
+fn audit_verify_says_that_without_a_checkpoint_a_cut_at_a_frame_boundary_is_not_checked() {
+    let fx = Fixture::new("unanchored");
+    let key = fx.p("operator.key");
+    assert!(Command::new(BIN).args(["keygen", "--name", "operator", "--out", &key]).output().unwrap().status.success());
+    let mut args = fx.args(true);
+    args.extend(["--signing-key".to_string(), key.clone()]);
+    let server = Server::start(&args);
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    let mut sealed = false;
+    for round in 0..20 {
+        catch_up(&mut gb);
+        let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
+        let t = agent.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+        // a seal in the middle of the run, after its first answer: its checkpoint names a prefix of the journal
+        if !sealed {
+            assert_eq!(own.call("audit_seal", json!({}))["status"], "SEALED");
+            sealed = true;
+        }
+    }
+    assert!(sealed, "the run answered at least once");
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    drop(server);
+    let wal = fx.p("run.wal");
+    let dir = fx.0.join("run.wal.checkpoints");
+    let mut seals: Vec<String> =
+        std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("seal-")).collect();
+    seals.sort_by_key(|n| n[5..n.len() - 4].parse::<usize>().unwrap());
+    assert!(seals.len() >= 2, "a seal mid-run and the seal of the close: {seals:?}");
+    let checkpoint = |n: usize| dir.join(&seals[n]).display().to_string();
+    let frames_of = |n: usize| std::fs::read_to_string(checkpoint(n)).unwrap().lines().nth(1).unwrap().parse::<usize>().unwrap();
+    let verify = |wal: &str, extra: &[&str]| {
+        let out = Command::new(BIN).args(["audit-verify", "--wal", wal]).args(extra).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap_or(Value::Null))
+    };
+    let unanchored = |v: &Value| v["external_checkpoint"] == false && v["not_checked"].as_str().is_some_and(|t| t.starts_with("frame-boundary truncation:"));
+
+    // the whole journal, no anchor: VERIFIED, and the report says what was not checked
+    let (code, whole) = verify(&wal, &[]);
+    assert_eq!((code, whole["status"].as_str()), (Some(0), Some("VERIFIED")), "{whole}");
+    assert!(unanchored(&whole), "{whole}");
+    // the journal cut back to the mid-run seal, a frame boundary: it verifies too, which is exactly what the field says
+    let cut = fx.p("cut.wal");
+    let text = std::fs::read_to_string(&wal).unwrap();
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    std::fs::write(&cut, lines[..frames_of(0)].concat()).unwrap();
+    let (code, v) = verify(&cut, &[]);
+    assert_eq!((code, v["status"].as_str()), (Some(0), Some("VERIFIED")), "{v}");
+    assert!(unanchored(&v) && v["entries"].as_u64() < whole["entries"].as_u64(), "{v}");
+    // the checkpoint of the close's seal, kept apart: the cut is refused, and the whole journal is anchored up to that seal
+    let last = checkpoint(seals.len() - 1);
+    let (code, v) = verify(&cut, &["--checkpoint", &last]);
+    assert_eq!((code, v["status"].as_str(), v["external_checkpoint"].as_bool()), (Some(1), Some("CHECKPOINT_REFUSED"), Some(false)), "{v}");
+    let (code, v) = verify(&wal, &["--checkpoint", &last]);
+    assert_eq!((code, v["status"].as_str(), v["external_checkpoint"].as_bool()), (Some(0), Some("VERIFIED"), Some(true)), "{v}");
+    let after = format!("frame-boundary truncation after frame {}", frames_of(seals.len() - 1));
+    assert!(v["not_checked"].as_str().unwrap().starts_with(&after), "{v}");
+}
+
 /// Signed checkpoints on the wire (SPEC_V02_STEP4): a server with a signing key signs the seal it writes when the run is closed,
 /// and `audit-verify` takes the checkpoint with the journal: pinned under the trusted keys, not pinned under the key beside it,
 /// refused when the key is revoked or the checkpoint names other frames.

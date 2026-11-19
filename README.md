@@ -169,7 +169,8 @@ see [LIMITATIONS.md](LIMITATIONS.md).
 * **It checks bytes and structure, not meaning.** The kernel checks that a quote occurs in the source and that a claim
   names live grounds. It does not check that a claim says what its quotes say; two agents can agree on a wrong reading.
 * **A hash chain alone does not authenticate history.** Detecting a rehashed history, or a journal cut back to a valid
-  prefix, needs a checkpoint trusted from outside the journal.
+  prefix, needs a checkpoint trusted from outside the journal. `sbgk audit-verify` says so in its report: without
+  `--checkpoint` it carries `"external_checkpoint": false` and names the unchecked cut in `not_checked`.
 * **The bridge restricts only what it is configured to.** Without `--allow-tools`, `mcp-bridge` passes every tool
   through, and the server's role check is the only filter. The agent id and the token come from the bridge's
   configuration. Give each agent a restricted profile: `--allow-tools`, `--agent-id` and its own token. The servers have
