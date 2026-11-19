@@ -2118,13 +2118,31 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
         log.fail("PARSE_FAILURE: builder response format was not repaired", arm="C", phase=ph, agent=agent, card=cid, parse_failure=True)
         stop.set()
     abandoned = r.get("status") != "CARD_DONE"
+    given_up = False
     if abandoned and not parse_failure and log.active() and not stop.is_set():
         r = submit_ops(cid, ph, [], None)
+        # A card that [] cannot close (an ontology review, a pending revision) came back at once with the same refused answer:
+        # at temperature 0 the Tobi rerun's run Cn_r1 got one review card 53 times and its circle never ended. With --agent-attempts
+        # a leased card whose repairs ran out is a failed attempt of the agent, so the kernel's limit gives it up as unresolved.
+        # In circles the kernel takes this release as a ring reader's timeout: it excludes the agent until the next shift and its
+        # ring checkpoint gives the reason MODEL_TIMEOUT (the attempt itself is recorded as MODEL_AGENT_FAILURE). In a run's
+        # analysis read such an exclusion after CARD_ATTEMPT_FAILED as "every answer refused", not as a model timeout; the
+        # kernel has no release reason of its own for it yet (review of PR 57).
+        if (r.get("status") == "REPAIR_REQUIRED" and AGENT_ATTEMPTS is not None and task_id
+                and card.get("kind") in ("ONTOLOGY_REVIEW_CARD", "REVISION_CARD") and log.active() and not stop.is_set()):
+            released = rpc.call("audit_release", task_id=task_id, timed_out=True)
+            log.event(**circle_context, arm="C", phase=ph, agent=agent, card=cid, task=task_id, kind=role,
+                      outcome="CARD_ATTEMPT_FAILED" if released.get("status") == "RELEASED" else "CARD_ATTEMPT_STALE", reply=released)
+            if released.get("status") not in ("RELEASED", "STALE_TASK"):
+                raise RuntimeError(f"failed card attempt was not recorded: {released}")
+            given_up = True  # the lease is gone: the worker must not release it again
     log.event(**circle_context,arm="C", phase=ph, agent=agent, card=cid, task=task_id, kind=role, card_authors=sorted({x["author"] for x in card["records"] if x.get("author")}), builder_model=actual_model, records=len(card["records"]), outcome=r.get("status"), repairs=tries,
               broken_lines=broken, parse_failure=parse_failure, explicit_empty=explicit_empty, model_invoked=True,
               abandoned=abandoned, first_try=(tries == 0 and not abandoned),
               **card_fields,
               operations_submitted=submitted_ops, closed_without_operations=r.get("status") == "CARD_DONE" and submitted_ops == 0)
+    if given_up:
+        return None  # released as a failed attempt, like a timeout
     return r.get("status") == "CARD_DONE"
 
 
