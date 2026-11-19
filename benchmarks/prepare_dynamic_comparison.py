@@ -35,7 +35,8 @@ def answer_prompt(run, docs, coverage):
         n = int(phase[5:])
         for w in arms["C"].get("withdrawals") or []:
             if w["phase"] <= n:
-                text += [f"Withdrawn: {w['report']}: {w['quote']}"]
+                # a withdrawal of a whole report names it; its text is among the full reports above
+                text += [f"Withdrawn: {w['report']}: " + ("the whole report" if w.get("whole") else w["quote"])]
         for q in questions:
             text += [f"Question {q['id']}: {q['text']}"]
             for label, arm_key in key.items():

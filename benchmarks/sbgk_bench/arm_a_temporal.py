@@ -240,16 +240,16 @@ def run(team: list, docs: dict[str, str], withdraw: dict, timeout_s: float = 180
             res["phase2"] = P.skipped_phase("PHASE1_STOPPED")
         elif withdraw:
             steps = P.withdrawal_steps(withdraw)
-            texts = chosen or [{"step": s["name"], "report": s["report"], **s["candidates"][0]} for s in steps]
             so_far: list[dict] = []
-            for n, (step, text) in enumerate(zip(steps, texts), start=2):
+            # a step of many texts (a whole or all step) is one stage
+            for n, (step, group) in enumerate(zip(steps, P.withdrawal_groups(steps, chosen, docs)), start=2):
                 k = f"phase{n}"
                 if res[f"phase{n - 1}"].get("status") == "STOPPED":
                     res[k] = P.skipped_phase("PREVIOUS_PHASE_STOPPED")
                     continue
                 log.deadline = time.monotonic() + timeout_s
                 t1 = time.monotonic()
-                so_far.append({"report": text["report"], "quote": text["quote"]})
+                so_far.extend({"report": text["report"], "quote": text["quote"]} for text in group)
                 out = stage({"stage": n, "withdrawn": list(so_far)}) or {}
                 res[k] = dict(_record(out, n, log, t1), step=step["name"])
         else:
