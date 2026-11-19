@@ -93,6 +93,7 @@ const SWITCHES: &[&str] = &[
     "ring-rotate",
     "link-both-sides",
     "stale-suspect",
+    "withdrawn-anchor",
     "evolution-cards",
     "temporal-summary",
     "summary-companions",
@@ -177,6 +178,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "version-lineage",
     "wal",
     "wave-sections",
+    "withdrawn-anchor",
     "zones",
 ];
 
@@ -1028,7 +1030,7 @@ Audit server for a team of agents:
                 only the frames written since, each checked as audit-verify checks it; prints the address and runs until stopped
   audit-read    the reading tools over a recorded journal, checked first as audit-verify checks it: audit-read <tool> --wal <run.wal>;
                 tools: status, dependents (--record <id> or --doc-id <id> [--start --end]), active-claims [--doc-id], diff --from <n>
-                [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood), coverage [--doc-id]
+                [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood), withdrawn-anchor (standing claims naming a hash, version, number, code or path only withdrawn text held), coverage [--doc-id]
                 [--unit-status <status>] (what each list item, paragraph and table row came to, and the packs of the gap pass);
                 --limit; a point <n> is a number of frames, as a seal's log_size; exit 1 if the journal is refused
 

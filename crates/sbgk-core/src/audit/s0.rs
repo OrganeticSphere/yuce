@@ -12,18 +12,71 @@ pub fn missing_identifiers(claim: &str, quotes: &[&str]) -> Vec<String> {
     let quoted: Vec<String> = quotes.iter().flat_map(|q| identifiers(q)).collect();
     let mut out: Vec<String> = Vec::new();
     for id in identifiers(claim) {
-        let held = quoted.iter().any(|q| {
-            q == &id
-                || match id_class(&id) {
-                    Some("hash") => id_class(q) == Some("hash") && q.starts_with(&id),
-                    Some("version") => q.strip_prefix('v') == Some(id.as_str()),
-                    Some("path") => id_class(q) == Some("path") && q.strip_suffix(id.as_str()).is_some_and(|parent| parent.ends_with('/')),
-                    _ => false,
-                }
-        });
-        if !held && !out.contains(&id) {
+        if !identifier_held(&id, &quoted) && !out.contains(&id) {
             out.push(id);
         }
+    }
+    out
+}
+
+/// Whether identifiers of a text hold `id`: the same identifier, a quoted hash it is the prefix of, the version with a v marker,
+/// or the path under parent components.
+pub fn identifier_held(id: &str, quoted: &[String]) -> bool {
+    quoted.iter().any(|q| {
+        q == id
+            || match id_class(id) {
+                Some("hash") => id_class(q) == Some("hash") && q.starts_with(id),
+                Some("version") => q.strip_prefix('v') == Some(id),
+                Some("path") => id_class(q) == Some("path") && q.strip_suffix(id).is_some_and(|parent| parent.ends_with('/')),
+                _ => false,
+            }
+    })
+}
+
+/// The structural anchors of a text with their bytes, in order: hashes, versions, `#124`-style numbers, error codes and file paths,
+/// the identifiers of `missing_identifiers` without the code names. The extractor the open kernel compares withdrawn text by.
+pub fn anchors(text: &str) -> Vec<(usize, usize, String)> {
+    const BASE: [&str; 5] = ["hash", "version", "number", "code", "path"];
+    let token_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-' | '#');
+    let edge = |c: char| matches!(c, '.' | '-' | '/');
+    // a token's bytes without the marks at its ends
+    let trimmed = |start: usize, t: &str| {
+        let lead = t.len() - t.trim_start_matches(edge).len();
+        let core = t.trim_matches(edge);
+        (start + lead, start + lead + core.len(), core.to_string())
+    };
+    let mut out = Vec::new();
+    let mut take = |start: usize, t: &str| {
+        let (a, b, core) = trimmed(start, t);
+        if core.is_empty() {
+            return;
+        }
+        if id_class(&core).is_some_and(|c| BASE.contains(&c)) {
+            out.push((a, b, core));
+        } else if core.contains('/') && id_class(&core).is_none() {
+            let mut at = a;
+            for part in core.split('/') {
+                let (pa, pb, p) = trimmed(at, part);
+                if id_class(&p).is_some_and(|c| BASE.contains(&c)) {
+                    out.push((pa, pb, p));
+                }
+                at += part.len() + 1;
+            }
+        }
+    };
+    let mut start = None;
+    for (i, c) in text.char_indices() {
+        match (token_char(c), start) {
+            (true, None) => start = Some(i),
+            (false, Some(a)) => {
+                take(a, &text[a..i]);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(a) = start {
+        take(a, &text[a..]);
     }
     out
 }
@@ -214,6 +267,34 @@ mod tests {
         assert_eq!(ids, ["3a7e9c21", "5b2d8e47", "#125", "1.99.0", "v1.97.1", "E003", "conformance.rs", "MergedGateHold", "CARGO_PKG_VERSION"]);
         assert!(identifiers("deadline accepted decade").is_empty(), "words of hex letters only are no hash");
         assert_eq!(identifiers("Row D for SameCodeDifferentDetails/DifferentIdentity in docs/reports/a.md"), ["SameCodeDifferentDetails", "docs/reports/a.md"]);
+    }
+
+    #[test]
+    fn anchors_are_the_identifiers_without_code_names_with_their_bytes() {
+        let text = "Base 3a7e9c21, pin 1.99.0 (was v1.97.1), #125 and E003 in conformance.rs; MergedGateHold, CARGO_PKG_VERSION, docs/a.md.";
+        let found = anchors(text);
+        assert_eq!(
+            found.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(),
+            ["3a7e9c21", "1.99.0", "v1.97.1", "#125", "E003", "conformance.rs", "docs/a.md"]
+        );
+        for (a, b, t) in &found {
+            assert_eq!(&text[*a..*b], t, "the bytes of {t}");
+        }
+        assert_eq!(anchors("Row D for SameCode/E004 now").iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(), ["E004"]);
+        let text = "flows of 2, 4, 27 mm/s and 0.691 mPa";
+        assert_eq!(
+            anchors(text).iter().map(|(a, b, t)| (&text[*a..*b], t.as_str())).collect::<Vec<_>>(),
+            [("0.691", "0.691")],
+            "a decimal is a version; a quantity is none"
+        );
+        assert!(identifier_held("1.97.1", &["v1.97.1".to_string()]) && !identifier_held("#12", &["#125".to_string()]));
+        // bytes after text of several bytes a character, through the parts of a slash and a mark at a token's start
+        let text = "Strömung — für SameCode/E004 und -/v2.1.0/ in ./docs/ä.md";
+        let found = anchors(text);
+        assert_eq!(found.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(), ["E004", "v2.1.0"]);
+        for (a, b, t) in &found {
+            assert_eq!(&text[*a..*b], t, "the bytes of {t}");
+        }
     }
 
     #[test]

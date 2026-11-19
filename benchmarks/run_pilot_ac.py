@@ -757,6 +757,7 @@ def main() -> None:
     ap.add_argument("--ring-rotate",action="store_true")
     ap.add_argument("--link-both-sides",action="store_true")
     ap.add_argument("--stale-suspect",action="store_true")
+    ap.add_argument("--withdrawn-anchor",action="store_true",help="the kernel notes a standing claim that names a hash, version, number, code or path only withdrawn text held (a notice; nothing falls by it)")
     ap.add_argument("--evolution-cards",action="store_true")
     ap.add_argument("--version-lineage", type=pathlib.Path, help="explicit ordered snapshot doc_id/SHA256 map; requires --build-scope versions")
     ap.add_argument("--build-scope",choices=("full","concepts","none","hints","versions"),default="full",
@@ -928,7 +929,7 @@ def main() -> None:
         sys.exit("--change-summary-documents requires --concept-functions and --evolution-pairing lexical")
     if a.evolution_pairs_per_function is not None and not a.concept_functions:
         sys.exit("--evolution-pairs-per-function requires --concept-functions")
-    P.GRAPH_QUALITY={k:getattr(a,k) for k in ("term_hygiene","term_max_words","candidate_match","known_concepts","ring_rotate","link_both_sides","stale_suspect","temporal_summary","summary_companions","evolution_cards","evolution_pairs_per_concept","evolution_pairs_per_card","evolution_pairing","evolution_document_order","concept_functions","change_summary_documents","evolution_pairs_per_function") if getattr(a,k,None) is not None and getattr(a,k) is not False}
+    P.GRAPH_QUALITY={k:getattr(a,k) for k in ("term_hygiene","term_max_words","candidate_match","known_concepts","ring_rotate","link_both_sides","stale_suspect","withdrawn_anchor","temporal_summary","summary_companions","evolution_cards","evolution_pairs_per_concept","evolution_pairs_per_card","evolution_pairing","evolution_document_order","concept_functions","change_summary_documents","evolution_pairs_per_function") if getattr(a,k,None) is not None and getattr(a,k) is not False}
     if a.build_scope!="full":
         clash=[f for f,v in (("--evolution-cards",a.evolution_cards),("--evolution-document-order",a.evolution_document_order),
                              ("--evolution-pairs-per-concept",a.evolution_pairs_per_concept),("--evolution-pairs-per-card",a.evolution_pairs_per_card),("--evolution-pairing",a.evolution_pairing),("--change-summary-documents",a.change_summary_documents),

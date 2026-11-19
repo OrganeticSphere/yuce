@@ -546,7 +546,16 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
            "quotes_gone": gone.len(), "questions_to_answer_again": questions, "rows": out_rows, "truncated": fallen_rows.len() > limit,
            "other_not_standing": {"by_kind": by_kind(&other),
                                   "meaning": "not standing, though no ground of theirs fell: a question or hypothesis without grounds, or an answer whose grounds stand but cannot all support it"},
-           "provable": PROVABLE, "heuristic": HEURISTIC, "not_erased": NOT_ERASED})
+           "provable": PROVABLE, "heuristic": HEURISTIC, "not_erased": NOT_ERASED,
+           "withdrawn_anchor": super::quality::withdrawn_anchor::rows(s, &super::quality::withdrawn_anchor::flagged(s))})
+}
+
+/// The standing claims that name a structural anchor only withdrawn text held, whether the run turned the notice on or not: the
+/// reading tool `withdrawn-anchor` over any journal.
+pub fn withdrawn_anchor(s: &AuditState) -> Value {
+    let found = super::quality::withdrawn_anchor::flagged_any(s);
+    json!({"status": "WITHDRAWN_ANCHOR", "count": found.len(), "rows": super::quality::withdrawn_anchor::rows(s, &found),
+           "rule": "a standing claim names a hash, version, #number, error code or file path that withdrawn text held and none of its own quotes holds; a notice, nothing falls by it"})
 }
 
 /// `coverage`: what each structural unit of the documents came to and each pack of the gap pass, at the state `s` of `at` frames

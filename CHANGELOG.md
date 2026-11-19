@@ -52,6 +52,19 @@
   open lease its task id, the kind and the key of its work, the agent that holds it and the milliseconds left; never the text of a
   task. It takes no step of the run and writes no frame, like the other reading tools, and it is refused to every other role.
   `Client.leases()` in the Python client. The rules and the journal format do not change.
+* **A notice of a name only withdrawn text held** (`--withdrawn-anchor`, off by default). After a withdrawal, a standing claim
+  whose words name a token that the withdrawn bytes held, and none of its own quotes, gets a notice: in its record
+  (`audit_record`, field `withdrawn_anchor`), in the report of what fell, and in the prompt a summary is given. Nothing falls,
+  is refused or is reopened by it; the journal and the rules do not change. A token is withdrawn when an occurrence of it in a
+  document's whole text overlaps the withdrawn bytes and no text outside them, in any document, holds it. What a token is, an
+  extractor says (`quality::withdrawn_anchor::Extractor`);
+  the kernel's reads the structural anchors S0 already compares: hashes, versions, `#`numbers, error codes and file paths.
+  `sbgk audit-read withdrawn-anchor --wal <run.wal>` lists them over any journal. On the seventeen recorded journals, each of
+  which withdrew text, it finds none: S0 already refuses a claim that names an anchor its quotes lack, so the notice speaks for
+  claims recorded without S0 and for extractors plugged in.
+* **A kernel notice once per answer in the blind answers.** `answers_blind.md` wrote each claim with the notices of the records it
+  rests on, so one notice came back 18 times in one answer of the fourth corpus's run. The notices of an answer are listed once
+  at its head, and each claim keeps its own words with the short ids of its notices.
 
 ## 0.2.2 (2026-11-15)
 
