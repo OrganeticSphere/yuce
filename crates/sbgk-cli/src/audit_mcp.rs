@@ -1682,6 +1682,9 @@ struct CoverageMode {
     /// `--unit-is-task`, the plan profile: off unless given, and pinned in every run since 0.2.3, on or off (the architect's
     /// decision of 18.11.2026, part I, A); a journal before it pins it only when on, and a journal without it reads as off
     unit_is_task: bool,
+    /// `--reading-only`, a shard whose summaries are made outside its journal: pinned only when on, so the settings of a run without
+    /// it are those of every run before it, and a run is not resumed the other way
+    reading_only: bool,
     /// `--auto-rereads`, the bound of the loss rereads: pinned in every run since 0.2.3 (the architect's decision of 18.11.2026, part I,
     /// A: the bounds of a run stand in its start checkpoint); a journal before it pins none, and goes on under any bound, as before
     auto_reread_limit: usize,
@@ -1705,6 +1708,7 @@ fn coverage_context(
         circle_refiner,
         build_scope,
         unit_is_task,
+        reading_only,
         auto_reread_limit,
         corpus_description,
     } = mode;
@@ -1725,6 +1729,9 @@ fn coverage_context(
         context["unattested_at_end"] = json!(true);
     }
     context["unit_is_task"] = json!(unit_is_task);
+    if reading_only {
+        context["reading_only"] = json!(true);
+    }
     // four eyes at the acceptance of a link: every new run holds it (`AuditState::four_eyes`)
     context["four_eyes"] = json!(true);
     context["auto_reread_limit"] = json!(auto_reread_limit);
@@ -2698,6 +2705,7 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
             unattested_at_end: a.sw("unattested-at-end"),
             build_scope,
             unit_is_task: a.sw("unit-is-task"),
+            reading_only: a.sw("reading-only"),
             auto_reread_limit,
             corpus_description: corpus_description.clone(),
         },
@@ -2754,6 +2762,7 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
         versions: build_scope == "versions",
         gap: gap.clone(),
         unit_is_task: a.sw("unit-is-task"),
+        reading_only: a.sw("reading-only"),
         ..DispatchConfig::default()
     };
     // the control profiles have no links by any path, a reader's relation record included (Codex review of 8023910, SCOPE-01)
@@ -2854,6 +2863,7 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "full",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit: 20,
             corpus_description: None,
         };
@@ -2889,6 +2899,7 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task,
+            reading_only: false,
             auto_reread_limit: 20,
             corpus_description: None,
         };
@@ -2936,6 +2947,7 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit,
             corpus_description: corpus_description.map(str::to_string),
         };
@@ -2994,6 +3006,7 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit: 20,
             corpus_description: None,
         };
@@ -3039,6 +3052,43 @@ mod tests {
         assert_eq!(link_decision(&mut state, "owner", &args(Some(json!(false))))["code"], "REFUSED");
         let decided = link_decision(&mut state, "owner", &args(Some(json!(true))));
         assert_eq!((decided["status"].as_str(), decided["link_status"].as_str()), (Some("DECIDED"), Some("accepted")), "{decided}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--reading-only` is pinned only when on: the settings of a run without it are those of every run before it, and a run is not
+    /// resumed the other way.
+    #[test]
+    fn the_reading_only_setting_is_pinned_when_on_and_a_run_keeps_it() {
+        let dir = std::env::temp_dir().join(format!("sbgk_reading_only_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = |reading_only| CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            reading_only,
+            auto_reread_limit: 20,
+            corpus_description: None,
+        };
+        let (off, on) = (coverage_context(300, &[], false, None, None, mode(false)), coverage_context(300, &[], false, None, None, mode(true)));
+        assert!(off.get("reading_only").is_none(), "{off}");
+        assert_eq!(on["reading_only"], json!(true));
+        let run = |name: &str, settings: &Value| {
+            let docs = vec![("a.md".to_string(), b"# A\n\ntext\n".to_vec())];
+            let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), name, docs).unwrap();
+            let spec = GenesisSpec { questions: json!([]), settings: settings.clone(), operator_meta: None };
+            state.start_journal(&dir.join(format!("{name}.wal")), &spec).unwrap();
+            bind_coverage(&mut state, settings.clone()).unwrap();
+            state
+        };
+        let shard = run("shard", &on);
+        assert_eq!(check_coverage(&shard, &on, 300, true), Ok(()));
+        assert!(check_coverage(&shard, &off, 300, true).unwrap_err().contains("reading_only"), "a shard is not resumed as a run that summarizes");
+        assert!(check_coverage(&run("whole", &off), &on, 300, true).is_err(), "nor a run that summarizes as a shard");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3127,6 +3177,7 @@ mod codex_recovery_review {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit: 20,
             corpus_description: None,
         };
@@ -3166,6 +3217,7 @@ mod codex_recovery_review {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit,
             corpus_description: None,
         };
@@ -3216,6 +3268,7 @@ mod codex_legacy_four_eyes {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task: false,
+            reading_only: false,
             auto_reread_limit: 20,
             corpus_description: None,
         };

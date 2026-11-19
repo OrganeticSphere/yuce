@@ -90,6 +90,7 @@ const SWITCHES: &[&str] = &[
     "ontology-review",
     "unattested-at-end",
     "unit-is-task",
+    "reading-only",
     "term-hygiene",
     "ring-rotate",
     "link-both-sides",
@@ -160,6 +161,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "own-refs",
     "profile",
     "questions",
+    "reading-only",
     "refine-budget-ms",
     "repo",
     "ring-rotate",
@@ -1012,7 +1014,9 @@ Audit server for a team of agents:
                 Started again on an existing --wal without --manifest or --docs, it resumes that run.
                 --unit-is-task (off by default) is for a plan, where each unit is a task to do: an answer that leaves a unit
                 with nothing accepted does not close it. In a reading run it turns an honest empty answer into retries.
-                --corpus-description <words> names the documents in the directives (default: the provided source documents)
+                --corpus-description <words> names the documents in the directives (default: the provided source documents).
+                --reading-only: a shard that reads and records only; no summary task, done once no work is open, its
+                answers made outside the journal
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the

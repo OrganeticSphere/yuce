@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* **A reading-only shard.** `sbgk audit-serve --reading-only` runs a shard that reads and records, and whose summaries are made
+  outside its journal, for a run split into one journal per agent or per document. No SUMMARIZE task is issued; the run is
+  complete, and can be closed, once no work is open and no lease is out; its questions still steer the reading. Its terminal
+  receipt says so with `summaries: {"in_journal": false}` and gives no outcome for a question: neither `unknown` nor
+  `not_answered`, which would say something false about the sources or the agents. Before, such a shard could be closed only by
+  handing in empty or broken summaries, which wrote exactly that into the journal. The run pins the setting (`reading_only: true`)
+  when it is on, and is not resumed the other way; a run without it is as before, its settings and its journal included.
 * **Four eyes when a link is judged, held by the kernel.** A verdict on a link was handed out only to an agent that wrote neither
   end, but the kernel accepted one from an author of an end. In a run started by this version it refuses it: a run pins
   `four_eyes: true` in the settings it starts with, and while it does, a `set_link_status` that accepts or rejects a link is
