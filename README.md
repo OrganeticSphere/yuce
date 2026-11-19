@@ -252,6 +252,10 @@ use for the topic: if no document holds any of them, the server says so at the s
 unit with nothing accepted does not close it; the unit is handed out again until the run's attempts run out. Leave it off for a
 reading run, where it would turn an honest "nothing here" into retries. A run pins the switch, on or off, with its other settings.
 
+`--reading-only` runs a shard that reads and records only: no summary task is issued, the run closes once its reading is done, and
+its terminal receipt says that its answers are made outside the journal. It is meant for a run split into one journal per agent or
+per document, whose summary is made from the shards.
+
 The same flags fit in one file: `sbgk audit-serve --settings settings.json`, with relative paths taken from the file's folder.
 `examples/settings/` holds one you can run as it is.
 

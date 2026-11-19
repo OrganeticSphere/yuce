@@ -111,6 +111,10 @@ pub struct DispatchConfig {
     /// unit whose accepted records all fell to a withdrawal while text of it stands is opened again. Off: a reading profile, where
     /// an empty answer is a legal "nothing here" and closes the unit, as before.
     pub unit_is_task: bool,
+    /// The reading-only shard (`--reading-only`, 0.2.3): the run reads and records, and its summaries are made outside this
+    /// journal. No SUMMARIZE is issued, and the run is complete once no work is open and no lease is out; its questions still
+    /// steer the reading. The terminal receipt says so (`summaries`) and gives no outcome for a question.
+    pub reading_only: bool,
 }
 
 impl Default for DispatchConfig {
@@ -142,6 +146,7 @@ impl Default for DispatchConfig {
             versions: false,
             gap: GapProfile::default(),
             unit_is_task: false,
+            reading_only: false,
         }
     }
 }
@@ -2040,7 +2045,7 @@ impl Dispatcher {
             pick = Some((*kind, key.clone(), *link, *question, section.clone()));
             break;
         }
-        if pick.is_none() && work.is_empty() && builder_caught_up && allowed(TaskKind::Summarize) && self.circles_final() {
+        if pick.is_none() && work.is_empty() && builder_caught_up && allowed(TaskKind::Summarize) && self.circles_final() && !self.cfg.reading_only {
             pick = self
                 .questions
                 .iter()
@@ -2055,7 +2060,7 @@ impl Dispatcher {
                 && work.is_empty()
                 && builder_caught_up
                 && self.leases.is_empty()
-                && self.questions.iter().all(|q| self.answered.contains_key(&q.id) || self.given_up(q));
+                && (self.cfg.reading_only || self.questions.iter().all(|q| self.answered.contains_key(&q.id) || self.given_up(q)));
             if complete {
                 // work reopened later is a new wait, not this one (Codex review 987431f3, WAIT-01)
                 self.stats.end_wait(agent, now);
@@ -4102,10 +4107,16 @@ impl Dispatcher {
             );
         }
         let (rev, hash) = s.ontology_version();
-        Some(json!({"run_id": run_id, "question_set_revision": self.question_set_revision(), "audit_ontology_revision": rev,
+        let mut receipt = json!({"run_id": run_id, "question_set_revision": self.question_set_revision(), "audit_ontology_revision": rev,
                     "audit_ontology_hash": crate::hash::to_hex(&hash), "ingest_watermark": s.head(), "builder_cursor": builder_cursor,
                     "audit_root": crate::hash::to_hex(&s.root()), "answered": self.answered.keys().collect::<Vec<_>>(),
-                    "outcomes": outcomes, "unknown_outcomes": unknown, "not_answered": failed, "unresolved": self.reported_unresolved(s)}))
+                    "outcomes": outcomes, "unknown_outcomes": unknown, "not_answered": failed, "unresolved": self.reported_unresolved(s)});
+        // a reading-only shard: no question was summarized here, which is neither an unknown of the sources nor a failed summary
+        if self.cfg.reading_only {
+            receipt["summaries"] = json!({"in_journal": false, "meaning": "a reading-only run (--reading-only): no summary task was issued, \
+                and the answers to its questions are made outside this journal"});
+        }
+        Some(receipt)
     }
 
     /// The research questions answered so far whose answers still hold, for a run that stops before it is terminal (Codex's analysis
@@ -4143,7 +4154,8 @@ impl Dispatcher {
         let f = Flags::of(s);
         let open = self.open_work(s, &f).len();
         let holds = |q: &ResearchQuestion| self.answered.get(&q.id).is_some_and(|a| Self::answer_holds(s, &f, &q.id, a)) || self.given_up(q);
-        let swarm = open == 0 && self.questions.iter().all(holds);
+        // a reading-only shard is done with its reading: its questions are answered outside the journal
+        let swarm = open == 0 && (self.cfg.reading_only || self.questions.iter().all(holds));
         let kernel = self.leases.is_empty();
         json!({"swarm_done": swarm, "builder_caught_up": builder_caught_up, "kernel_idle": kernel, "complete": swarm && builder_caught_up && kernel && self.circles_final(),
                "open_work": open, "answered": self.answered.len(), "questions": self.questions.len(), "unresolved": self.reported_unresolved(s)})

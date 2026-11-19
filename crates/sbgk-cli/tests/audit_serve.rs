@@ -2808,3 +2808,34 @@ fn codex_only_owner_can_use_arbitration_and_the_wire_marks_it() {
     assert_eq!(s.link(&link).unwrap().status, LinkStatus::Accepted);
     assert!(std::fs::read_to_string(&wal).unwrap().contains("\"arbitration\":true"));
 }
+
+/// `--reading-only` (0.2.3): a shard reads and records, and its summaries are made outside its journal. On the wire it is issued
+/// no summary, is terminal once its reading is done, says so in its receipt, closes, and its journal pins the setting.
+#[test]
+fn a_reading_only_shard_is_issued_no_summary_and_closes_after_its_reading() {
+    let fx = Fixture::new("readingonly");
+    let server = Server::start(&[fx.args(true), vec!["--reading-only".to_string()]].concat());
+    let (mut w1, mut own, mut gb) = (Client::connect(server.port, W1), Client::connect(server.port, OWN), Client::connect(server.port, GB));
+    let mut kinds = Vec::new();
+    for _ in 0..20 {
+        catch_up(&mut gb);
+        let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        kinds.push(t["kind"].as_str().unwrap().to_string());
+        let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+        assert_eq!(r["status"], "COMMITTED", "{t} -> {r}");
+    }
+    assert!(kinds.iter().any(|k| k == "EXTEND") && !kinds.iter().any(|k| k == "SUMMARIZE"), "{kinds:?}");
+    catch_up(&mut gb);
+    let receipt = own.call("audit_terminal_receipt", json!({}));
+    assert_eq!(receipt["status"], "TERMINAL", "{receipt}");
+    assert_eq!((receipt["summaries"]["in_journal"].as_bool(), receipt["outcomes"].as_object().map(|o| o.len())), (Some(false), Some(0)), "{receipt}");
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    drop(server);
+    let s = sbgk_core::audit::state::AuditState::open(&PathBuf::from(fx.p("run.wal"))).unwrap();
+    assert_eq!(s.checkpoint("audit:mcp:coverage").unwrap()["context"]["reading_only"], true);
+}
