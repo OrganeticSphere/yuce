@@ -2667,8 +2667,10 @@ fn the_watch_follows_the_journal_of_a_running_server_and_stands_in_no_writers_wa
     let (code, last, stderr) = reading(&fx, &["audit-verify"]);
     assert_eq!((code, last["status"].as_str(), last["torn_tail_bytes"].as_u64()), (Some(0), Some("VERIFIED"), Some(0)), "{last} {stderr}");
     assert_eq!(last["wal_head"], verified["wal_head"]);
-    let status = caught(&watch, end, "closed");
-    assert_eq!(status["writer"], false, "{status}");
+    // the watch asks for the writer again at its next step: the frames and the mode were the same before the server stopped, so
+    // what is waited for is the answer that no writer holds the journal
+    let status = watch.until(&format!("{end} frames, closed, no writer"), |s| s["frames"] == end && s["mode"] == "closed" && s["writer"] == false);
+    assert_eq!((status["more"].as_bool(), status["pending"].as_u64()), (Some(false), Some(0)), "{status}");
 }
 
 /// The server of `audit-watch` answers its own page and no other: a request under another name, one a page of another site
