@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 (2026-11-20)
 
 * **A reading-only shard.** `sbgk audit-serve --reading-only` runs a shard that reads and records, and whose summaries are made
   outside its journal, for a run split into one journal per agent or per document. No SUMMARIZE task is issued; the run is

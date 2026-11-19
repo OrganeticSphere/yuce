@@ -1,7 +1,7 @@
-//! Reading units and withdrawn text (Probe 1 of 17.11.2026, findings 5, 4, 3 and 11). What the owner withdrew is never handed out
-//! as work: a unit whose every byte is withdrawn is closed, not issued (finding 5), and an issued unit shows its withdrawn bytes as
-//! marks, not as text (finding 4). In the plan profile (`unit_is_task`) a unit is a task: an answer that leaves it with nothing
-//! accepted does not close it (finding 3), and a closed unit whose records all fell to a withdrawal is done again (finding 11).
+//! Reading units and withdrawn text. What the owner withdrew is never handed out
+//! as work: a unit whose every byte is withdrawn is closed, not issued, and an issued unit shows its withdrawn bytes as
+//! marks, not as text. In the plan profile (`unit_is_task`) a unit is a task: an answer that leaves it with nothing
+//! accepted does not close it, and a closed unit whose records all fell to a withdrawal is done again.
 //!
 //! These are decisions of the dispatcher only. The rules of the journal (`r2r-audit-rules/3`) check every submission against the
 //! scope its own frame records and never replay what the dispatcher chose to issue or to close.
@@ -12,11 +12,11 @@ use super::*;
 /// table, as those of a unit read before the withdrawal do.
 pub(super) const WITHDRAWN_WHOLE: &str = "withdrawn_whole";
 
-/// The code of an answer given back because it left its task with nothing accepted (`unit_is_task`, finding 3).
+/// The code of an answer given back because it left its task with nothing accepted (`unit_is_task`).
 pub(super) const EMPTY_ANSWER: &str = "EMPTY_ANSWER";
 
-/// The reason a unit was given up as unresolved because it fell again after it was opened as often as its bound allows (finding 11,
-/// Codex's PR55-R1): text of it stands, so its task is not done.
+/// The reason a unit was given up as unresolved because it fell again after it was opened as often as its bound allows (Codex's
+/// PR55-R1): text of it stands, so its task is not done.
 pub(super) const REOPEN_LIMIT: &str = "REOPEN_LIMIT";
 
 /// The withdrawn bytes of a document inside `a..b`: its closed spans cut to the range, merged, in order.
@@ -53,12 +53,12 @@ pub(super) fn withdrawn_whole(text: &str, a: usize, b: usize, closed: &[(usize, 
     blank(from, b)
 }
 
-/// Said before a section, and its context, that show withdrawn bytes as marks (finding 4). Only such a card has it: a prompt over
+/// Said before a section, and its context, that show withdrawn bytes as marks. Only such a card has it: a prompt over
 /// text with nothing withdrawn is what it was.
 pub(super) const WITHDRAWN_NOTE: &str = "WITHDRAWN TEXT: the owner withdrew the bytes marked [withdrawn: N bytes] below. \
                                          They are not shown and no longer stand: do not act on them, and a quote of them is refused.\n";
 
-/// `text[a..b]` as an agent is shown it: each run of withdrawn bytes replaced by a mark of its length (Probe 1 finding 4: a section
+/// `text[a..b]` as an agent is shown it: each run of withdrawn bytes replaced by a mark of its length (a section
 /// issued again showed its withdrawn clause as live text, so the executor carried it out and quoted it, and only the refusal told
 /// it). A quote of withdrawn bytes is refused anyway, so the mark hides nothing an answer could use. Returns the text and whether it
 /// marks anything; with nothing withdrawn in the range it is the range's text, byte for byte.
@@ -131,8 +131,8 @@ impl Dispatcher {
         sections(doc, &text, self.cfg.section_bytes).get(k).map(|(a, b)| vec![(doc.to_string(), *a, *b)]).unwrap_or_default()
     }
 
-    /// Closes, without issuing them, the open EXTEND units of `work` whose every byte is withdrawn and that no lease holds (Probe 1
-    /// finding 5: a cancelled task was issued again and again until its failed leases gave it up). Each counts as read; its durable
+    /// Closes, without issuing them, the open EXTEND units of `work` whose every byte is withdrawn and that no lease holds (a
+    /// cancelled task was issued again and again until its failed leases gave it up). Each counts as read; its durable
     /// record, reason WITHDRAWN_WHOLE, is written at the next call that has the store (`persist_unresolved`). Returns their keys.
     pub(super) fn close_withdrawn_units<S: AuditStore>(&mut self, s: &S, work: &[Work]) -> BTreeSet<String> {
         let mut docs = WithdrawnDocs::default();
@@ -163,7 +163,7 @@ impl Dispatcher {
         !scope.ranges.is_empty() && scope.ranges.iter().all(|(doc, a, b)| docs.whole(s, doc, *a, *b))
     }
 
-    /// The plan profile (`unit_is_task`, finding 3): an answer that left its unit with nothing accepted gives its lease back as a
+    /// The plan profile (`unit_is_task`): an answer that left its unit with nothing accepted gives its lease back as a
     /// failed attempt, as a refused answer given back does. With a bound of agent attempts the attempt is recorded durably with the
     /// reason EMPTY_ANSWER; without one it counts toward MAX_FAILED_LEASES. Past the bound the unit is unresolved; before it, it is
     /// issued again.
@@ -222,14 +222,14 @@ impl Dispatcher {
         };
     }
 
-    /// The plan profile (`unit_is_task`, finding 11): the closed units that are tasks to do again. Every record a unit was closed
-    /// with has fallen, withdrawn text touches it, and text of it stands: its task was changed after it was done (Probe 1g: REV_A
-    /// withdrawn after acceptance took the element away, and nobody did REV_B). A unit is opened again at most as often as the
+    /// The plan profile (`unit_is_task`): the closed units that are tasks to do again. Every record a unit was closed
+    /// with has fallen, withdrawn text touches it, and text of it stands: its task was changed after it was done (a directive
+    /// withdrawn after acceptance took its element away, and nobody carried out its fallback). A unit is opened again at most as often as the
     /// bound of attempts (`agent_attempts`, else MAX_FAILED_LEASES), so text withdrawn piece by piece cannot hold the run for ever;
     /// one that falls again past the bound still has a task to do, and is given up as unresolved, not closed in silence (Codex's
     /// PR55-R1).
     /// The records a unit stands on are those its last lease was closed with. A unit no withdrawn text touches is not opened (its
-    /// records fell for another cause, such as a document's new version), nor one withdrawn whole (finding 5: nothing is left to do).
+    /// records fell for another cause, such as a document's new version), nor one withdrawn whole (nothing is left to do).
     /// Returns the units to open again and those given up.
     pub(super) fn fallen_units<S: AuditStore>(&self, s: &S, f: &Flags) -> (BTreeSet<String>, BTreeSet<String>) {
         let (mut reopen, mut exhausted) = (BTreeSet::new(), BTreeSet::new());

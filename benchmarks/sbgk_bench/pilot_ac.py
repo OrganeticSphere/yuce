@@ -2122,7 +2122,7 @@ def build_card(rpc: Rpc, card: dict, model: Model, log: Log, phase: int, stop: t
     if abandoned and not parse_failure and log.active() and not stop.is_set():
         r = submit_ops(cid, ph, [], None)
         # A card that [] cannot close (an ontology review, a pending revision) came back at once with the same refused answer:
-        # at temperature 0 the Tobi rerun's run Cn_r1 got one review card 53 times and its circle never ended. With --agent-attempts
+        # at temperature 0 a run got one review card again and again, and its circle never ended. With --agent-attempts
         # a leased card whose repairs ran out is a failed attempt of the agent, so the kernel's limit gives it up as unresolved.
         # In circles the kernel takes this release as a ring reader's timeout: it excludes the agent until the next shift and its
         # ring checkpoint gives the reason MODEL_TIMEOUT (the attempt itself is recorded as MODEL_AGENT_FAILURE). In a run's
@@ -3791,7 +3791,7 @@ def answers_md(a: dict, c: dict) -> tuple[str, dict]:
             return "(none)"
         out = [] if plain else [f"outcome: {ans['outcome']}"] + ([f"reason: {ans['reason']}"] if ans.get("reason") else [])
         # the kernel's notices of an answer, each once: a notice belongs to the record it names, and every claim resting on that
-        # record carries it, so written into each claim's text one notice came back 18 times in one answer (run CROSS_BIO_r1)
+        # record carries it, so written into each claim's text one notice came back once for every claim that rests on its record
         notices = []
         for cl in ans["claims"]:
             notices += [n for n in cl.get("temporal_warnings") or [] if n not in notices]

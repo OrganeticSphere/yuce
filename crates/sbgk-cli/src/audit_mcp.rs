@@ -1919,7 +1919,7 @@ pub(crate) fn live_read(frames: usize, in_flight: Option<u64>) -> Value {
 /// crash. Exit 2 when the file cannot be read: that says nothing about the journal. A journal cut back to a complete entry is a
 /// shorter sound journal: only a receipt shows that anything is missing. A journal a server is writing is checked up to its last
 /// complete entry at that moment and the report says so (`live`): an entry the server has not finished is no torn tail.
-/// What `audit-verify` says it did not check when no anchor kept apart from the journal was given (Probe 1 finding 8).
+/// What `audit-verify` says it did not check when no anchor kept apart from the journal was given.
 const UNANCHORED: &str = "frame-boundary truncation: verified without an external checkpoint, so a journal cut back to an earlier frame boundary \
                           verifies like the whole one; give --checkpoint with a signed checkpoint kept apart from the journal, or --expect with \
                           its latest receipt";
@@ -1973,8 +1973,8 @@ pub fn cmd_audit_verify(a: &Args) {
     if read.live {
         out["live"] = live_read(entries, Some(read.in_flight_bytes));
     }
-    // what this check does not cover, said beside its status (Probe 1 finding 8, 17.11.2026: a plain VERIFIED was read as more
-    // than it is). The hash chain holds for every prefix of a journal: without an anchor kept apart from it, a journal cut back to
+    // what this check does not cover, said beside its status, so that a plain VERIFIED is not read as more than it is. The
+    // hash chain holds for every prefix of a journal: without an anchor kept apart from it, a journal cut back to
     // an earlier frame boundary verifies like the whole one. The status keeps its values; an anchor given below narrows the field
     out["external_checkpoint"] = json!(false);
     out["not_checked"] = json!(UNANCHORED);
@@ -2887,7 +2887,7 @@ mod tests {
 
     #[test]
     fn the_plan_setting_is_pinned_on_or_off_and_a_run_is_not_resumed_with_it_changed() {
-        // Probe 1 findings 3 and 11: `--unit-is-task` changes what the dispatcher closes, so a run keeps the setting it started with
+        // `--unit-is-task` changes what the dispatcher closes, so a run keeps the setting it started with
         let dir = std::env::temp_dir().join(format!("sbgk_unit_is_task_{}_{}", std::process::id(), unix_ms()));
         std::fs::create_dir_all(&dir).unwrap();
         let mode = |unit_is_task| CoverageMode {
