@@ -15,14 +15,18 @@ use crate::jcs::to_jcs;
 /// - `unread`: it does not lie wholly in sections whose first reading is over;
 /// - `quoted`: a standing quote touches it;
 /// - `withdrawn`: no standing quote, and withdrawn text touches it;
+/// - `reading_given_up`: no standing quote and no withdrawn text, and the reading of a section it lies in was given up with
+///   nothing recorded (`FirstReadings::given_up`): it is not read, whatever a pack of the gap pass answered for it, and `pack`
+///   still names that pack. Only a quote that stands on it later, of a pack or of any other task, makes it `quoted`. Until 0.2.2
+///   such a unit was counted as read, as a gap (the dispatch table check of 18.11.2026);
 /// - then the gaps (read, no standing quote, no withdrawn text):
 ///   - `empty`: a pack of its tier that was answered spans it, and no second reading is owed: an explicit empty answer;
 ///   - `second_reading_pending`: such a pack spans it in a tier with a second reader, whose pack is not closed yet;
 ///   - `second_reading_failed`: the second reader's pack was given up (its attempts ran out, or no independent reader was left);
 ///   - `pack_failed`: the only pack of its tier that spans it was given up: nobody answered;
 ///   - `left_by_budget`: no pack of its tier spans it: the budget, a closed tier or a run without a gap pass left it.
-pub const UNIT_STATUSES: [&str; 8] =
-    ["unread", "quoted", "withdrawn", "empty", "second_reading_pending", "second_reading_failed", "pack_failed", "left_by_budget"];
+pub const UNIT_STATUSES: [&str; 9] =
+    ["unread", "quoted", "withdrawn", "reading_given_up", "empty", "second_reading_pending", "second_reading_failed", "pack_failed", "left_by_budget"];
 
 /// The columns of a unit's row, and of a pack's row: the index names its columns so (`audit::index::TABLES`).
 pub const UNIT_COLUMNS: [&str; 9] = ["doc_id", "start", "end", "section", "tier", "status", "quoted_by", "pack", "second_pack"];
@@ -42,7 +46,8 @@ pub struct Coverage {
     pub units: Vec<Vec<Value>>,
     /// One row per pack whose task was closed, answered or given up: the values of `PACK_COLUMNS`.
     pub packs: Vec<Vec<Value>>,
-    /// The totals: with a gap pass the fields of its report, equal to it; without one the units read, quoted and left.
+    /// The totals: with a gap pass the fields of its report, equal to it; without one the units read, quoted and left. Both name
+    /// `units_reading_given_up` when some units are `reading_given_up`, and not otherwise.
     pub summary: Value,
 }
 
@@ -93,6 +98,82 @@ struct Pack {
     order: Option<u64>,
     agent: Option<String>,
     reason: Option<String>,
+}
+
+/// Whether the reading of a section was given up with nothing recorded, as its journal says. The coverage table and the report of
+/// the gap pass ask it of every section whose first reading is over.
+pub(crate) struct FirstReadings<'a, S: AuditStore> {
+    s: &'a S,
+    /// The task that stored each record (its `directive`), read once and only when a given-up reading is asked about.
+    recorded: std::cell::OnceCell<BTreeMap<RecordId, String>>,
+    /// The scope ranges each task stored records under (`AuditStore::stored_scopes`), read likewise.
+    scoped: std::cell::OnceCell<Vec<(String, String, usize, usize)>>,
+    /// The tasks each work key had an answer of refused in part (`task-repair:<task>:<attempt>`, `work_key`), read likewise.
+    repaired: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,
+}
+
+impl<'a, S: AuditStore> FirstReadings<'a, S> {
+    pub(crate) fn new(s: &'a S) -> Self {
+        FirstReadings { s, recorded: std::cell::OnceCell::new(), scoped: std::cell::OnceCell::new(), repaired: std::cell::OnceCell::new() }
+    }
+
+    /// The first reading of `key` (`doc:{doc}#{k}`), over, was given up with nothing recorded when:
+    /// - it was given up: closed unresolved or out of attempts (`unresolved`, as the caller reads it), or closed by an answer
+    ///   abandoned after refused ones (`abandoned` in its checkpoint, the kernel's own word for a reading given up: `Loss`);
+    /// - it stored no record. Above all, no first reading (an EXTEND task, `T<n>-`; a reread is `TR`, a pack of the gap pass `TG`)
+    ///   stored a record of any kind under a scope inside the section's bytes (`AuditStore::stored_scopes`), nor bound a quote
+    ///   there (`AuditStore::bound_quotes`), standing or not: both are written in the transaction that stores the record, so the
+    ///   tie holds at every frame (Codex's PR59-R4 of 6c9f567b and of 0e655b47: the ties of the earlier fixes are written later and
+    ///   miss a journal cut off between, and a question has no quote of its own). Then, for a store that keeps neither, no record
+    ///   of a task of the reading: the one its checkpoint names (and its `stored` count), those of its failed attempts (PR59-R1 of
+    ///   bbea393e), those its repair checkpoints tie to the section (`task-repair:`, `work_key`; PR59-R3 of 2490c346). A refusal
+    ///   alone is no record, and a record of another section or task kind is not one of the reading. A reading that stored records
+    ///   read its section, whatever it lost;
+    /// - and no loss reread of the section (`reread:{doc}#{k}`) was answered with a record: one that recorded anything read it.
+    ///
+    /// The dispatch table check of 18.11.2026 found such sections on two recorded runs counted as read: 5 and 7 of 21 first
+    /// readings closed by an abandoned answer with nothing stored, of which 1 and 2 had no record after their reread either.
+    pub(crate) fn given_up(&self, key: &str, section: (usize, usize), unresolved: bool) -> bool {
+        let context = self.s.checkpoint(&task_checkpoint(key)).map_or(Value::Null, |c| c["context"].clone());
+        if !(unresolved || context["abandoned"] == true) || context["stored"].as_u64().unwrap_or(0) > 0 {
+            return false;
+        }
+        let recorded = self.recorded.get_or_init(|| self.s.records_since(0).into_iter().map(|r| (r.id, r.directive)).collect());
+        // a quote of a first reading bound inside the section
+        let first_reading =
+            |id: &RecordId| recorded.get(id).and_then(|task| task.strip_prefix('T')).is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+        let doc = key.strip_prefix("doc:").and_then(|rest| rest.rsplit_once('#')).map(|(doc, _)| doc);
+        if doc.is_some_and(|doc| self.s.bound_quotes(doc).iter().any(|(id, a, b)| section.0 <= *a && *b <= section.1 && first_reading(id))) {
+            return false;
+        }
+        // a record of any kind a first reading stored under a scope inside the section
+        let first_reading_task = |task: &str| task.strip_prefix('T').is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+        let scoped = self.scoped.get_or_init(|| self.s.stored_scopes());
+        if doc.is_some_and(|doc| scoped.iter().any(|(task, d, a, b)| d == doc && section.0 <= *a && *b <= section.1 && *a < *b && first_reading_task(task))) {
+            return false;
+        }
+        // the tasks of the first reading, and an answered loss reread of the section
+        let mut tasks: Vec<String> = context["task_id"].as_str().map(str::to_string).into_iter().collect();
+        let failed = crate::audit::agent_failures::entry(self.s, key);
+        tasks.extend(failed["attempts"].as_array().into_iter().flatten().filter_map(|a| a["id"].as_str()).map(str::to_string));
+        let repaired = self.repaired.get_or_init(|| {
+            let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for name in self.s.checkpoint_keys("task-repair:") {
+                let context = self.s.checkpoint(&name).map_or(Value::Null, |c| c["context"].clone());
+                if let (Some(work), Some(task)) = (context["work_key"].as_str(), context["task_id"].as_str()) {
+                    by_key.entry(work.to_string()).or_default().push(task.to_string());
+                }
+            }
+            by_key
+        });
+        tasks.extend(repaired.get(key).into_iter().flatten().cloned());
+        if let Some(section) = key.strip_prefix("doc:") {
+            let reread = self.s.checkpoint(&task_checkpoint(&format!("reread:{section}"))).map_or(Value::Null, |c| c["context"].clone());
+            tasks.extend(reread["task_id"].as_str().filter(|_| reread["unresolved"] != true).map(str::to_string));
+        }
+        let stored_by: BTreeSet<&String> = recorded.values().collect();
+        !tasks.iter().any(|task| stored_by.contains(task))
+    }
 }
 
 /// `coverage` under given settings: the units and packs as the dispatcher of a run with these settings counts them.
@@ -155,15 +236,22 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
     };
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    let readings = FirstReadings::new(s);
     for d in &documents {
         let sections = sections(&d.id, &d.text, section_bytes);
-        let done = |k: usize| closed_task(&format!("doc:{}#{k}", d.id)).is_some();
+        // the first reading of each section: over when answered or given up (`Some(false)`), and whether it was given up with
+        // nothing recorded
+        let first: Vec<Option<bool>> = (0..sections.len()).map(|k| closed_task(&format!("doc:{}#{k}", d.id))).collect();
+        let done = |k: usize| first.get(k).is_some_and(Option::is_some);
+        let gave_up: Vec<bool> =
+            first.iter().enumerate().map(|(k, f)| f.is_some() && readings.given_up(&format!("doc:{}#{k}", d.id), sections[k], *f == Some(false))).collect();
         let read: BTreeSet<(usize, usize)> = gaps(&d.units, &sections, done, &[], &[]).into_iter().collect();
         // the dispatcher's own account of the gaps: the units the kernel's quoted and withdrawn bytes leave
         let gap_units: BTreeSet<(usize, usize)> = gaps(&d.units, &sections, done, &s.quoted_spans(&d.id), &s.closed_spans(&d.id)).into_iter().collect();
         let (quoted, withdrawn) = (s.quoted_spans(&d.id), s.closed_spans(&d.id));
         let quotes = s.quoted_records(&d.id);
         let touches = |u: (usize, usize), span: &(usize, usize)| u.0 < span.1 && span.0 < u.1;
+        let abandoned = |u: (usize, usize)| sections.iter().zip(&gave_up).any(|(sec, g)| *g && touches(u, sec));
         for u in &d.units {
             let (a, b) = *u;
             let tier = gap.tier(&d.label, &d.text[a..b]);
@@ -175,6 +263,8 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
                 "quoted"
             } else if !gap_units.contains(u) || withdrawn.iter().any(|w| touches(*u, w)) {
                 "withdrawn"
+            } else if abandoned(*u) {
+                "reading_given_up"
             } else {
                 match pack {
                     Some(p) if p.answered => match second {
@@ -203,13 +293,16 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
     }
     let n = |status: &str| count.get(status).copied().unwrap_or(0);
     let (left, pack_failed, second_failed) = (n("left_by_budget"), n("pack_failed"), n("second_reading_failed"));
-    let second_pending = n("second_reading_pending");
+    let (second_pending, given_up) = (n("second_reading_pending"), n("reading_given_up"));
     let gap_units = n("empty") + second_pending + second_failed + pack_failed + left;
-    let units_read = rows.len() - n("unread");
+    let units_read = rows.len() - n("unread") - given_up;
     let of = |second: bool, answered: bool| packs.iter().filter(move |p| p.second == second && p.answered == answered);
-    let summary = if gap.limit == 0 {
-        json!({"units_read": units_read, "units_quoted": n("quoted"), "gap_units": gap_units, "gap_pass": false,
-               "meaning": format!("the run had no gap pass: {gap_units} read units have no standing quote, and nobody was asked about them again")})
+    let mut summary = if gap.limit == 0 {
+        let mut meaning = format!("the run had no gap pass: {gap_units} read units have no standing quote, and nobody was asked about them again");
+        if given_up > 0 {
+            meaning = format!("{meaning}; {}", super::gaps::given_up_meaning(given_up));
+        }
+        json!({"units_read": units_read, "units_quoted": n("quoted"), "gap_units": gap_units, "gap_pass": false, "meaning": meaning})
     } else {
         let gap_recorded = of(false, true).filter(|p| p.recorded > 0).count();
         // the fields and the words of `Dispatcher::gap_report`
@@ -220,9 +313,13 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
         "gap_left_by_budget": left, "gap_units_unanswered": pack_failed + second_failed,
         "gap_units_pack_failed": pack_failed, "gap_units_second_reading_failed": second_failed,
         "gap_units_second_reading_pending": second_pending,
-        "complete": super::gaps::coverage_complete(left, pack_failed, second_failed, second_pending),
-        "meaning": super::gaps::coverage_meaning(left, pack_failed, second_failed, second_pending)})
+        "complete": super::gaps::coverage_complete(left, pack_failed, second_failed, second_pending, given_up),
+        "meaning": super::gaps::coverage_meaning(left, pack_failed, second_failed, second_pending, given_up)})
     };
+    // as the report of the pass names them: only when there are any
+    if given_up > 0 {
+        summary["units_reading_given_up"] = json!(given_up);
+    }
     let packs = packs
         .iter()
         .map(|p| {

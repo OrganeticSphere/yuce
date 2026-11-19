@@ -334,6 +334,11 @@ struct Data {
     /// version of the document or a later withdrawal nearby never rewrites it (Codex review of 2c6864f, S3-01, S3-02). A replay of
     /// the commands writes it again; it enters no root, no frame and no projection.
     fates: BTreeMap<RecordId, Value>,
+    /// The scope ranges each task stored records under (`submit`, by `directive`): a submission that stored at least one record
+    /// adds its ranges, in the same transaction as the records, whatever their kind (Codex's PR59-R4 of 0e655b47: a question, with
+    /// no quote of its own, is tied to the section it was read in by nothing else at every frame). A replay of the commands writes
+    /// it again; like `fates`, it enters no root, no frame and no projection.
+    stored_scopes: BTreeMap<String, BTreeSet<(String, usize, usize)>>,
     /// The run was closed by a `close` entry of a `/3` journal (`audit_close`): it stays closed after a restart.
     closed: bool,
 }
@@ -873,6 +878,9 @@ impl Core {
                 }
             }
         }
+        if !report.accepted.is_empty() && !scope.ranges.is_empty() {
+            self.data.stored_scopes.entry(directive.to_string()).or_default().extend(scope.ranges.iter().cloned());
+        }
         Ok(Outcome::Records(report))
     }
 
@@ -1125,6 +1133,7 @@ impl AuditState {
                     withdrawal_closes_bytes: true,
                     withdrawn: BTreeMap::new(),
                     fates: BTreeMap::new(),
+                    stored_scopes: BTreeMap::new(),
                     closed: false,
                 },
             },
@@ -2817,6 +2826,22 @@ impl AuditStore for AuditState {
             .filter(|r| r.doc_id.as_deref() == Some(doc_id))
             .filter_map(|r| self.core.data.evidence.get(&r.id).map(|b| (r.id, b)))
             .filter(|(_, b)| b.version == doc.version_id && self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
+            .map(|(id, b)| (id, b.start, b.end))
+            .collect()
+    }
+    fn stored_scopes(&self) -> Vec<(String, String, usize, usize)> {
+        self.core.data.stored_scopes.iter().flat_map(|(task, ranges)| ranges.iter().map(move |(doc, a, b)| (task.clone(), doc.clone(), *a, *b))).collect()
+    }
+    fn bound_quotes(&self, doc_id: &str) -> Vec<(RecordId, usize, usize)> {
+        let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
+        // `quoted_records` with the revoked ones too: a quote stored and withdrawn later was stored
+        self.core
+            .data
+            .records
+            .iter()
+            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .filter_map(|r| self.core.data.evidence.get(&r.id).map(|b| (r.id, b)))
+            .filter(|(_, b)| b.version == doc.version_id)
             .map(|(id, b)| (id, b.start, b.end))
             .collect()
     }

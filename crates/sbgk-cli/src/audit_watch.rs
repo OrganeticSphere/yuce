@@ -208,7 +208,7 @@ type Period = (usize, Option<usize>, Value, Value);
 /// The cells of the coverage table at a frame: for each document, one letter a unit in the order of its bytes.
 type Cells = BTreeMap<String, String>;
 
-/// The kernel's eight coverage statuses, folded into six cells on the page (`make_page.py`).
+/// The kernel's nine coverage statuses, folded into seven cells on the page (`make_page.py`).
 fn cell(status: &str) -> char {
     match status {
         "quoted" => 'q',
@@ -216,6 +216,7 @@ fn cell(status: &str) -> char {
         "left_by_budget" => 'b',
         "withdrawn" => 'w',
         "unread" => 'n',
+        "reading_given_up" => 'g',
         _ => 'p',
     }
 }

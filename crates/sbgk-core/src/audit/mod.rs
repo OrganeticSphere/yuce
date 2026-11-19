@@ -230,6 +230,18 @@ pub trait AuditStore {
             .filter_map(|r| r.quote.filter(|q| !q.is_empty()).and_then(|q| text.find(&q).map(|a| (r.id, a, a + q.len()))))
             .collect()
     }
+    /// Every quote the kernel bound in a document's present version, standing or not, with its record: the bytes are bound when the
+    /// record is stored, inside the ranges of the task's scope, in the same transaction (the coverage table asks which reading
+    /// stored a record in a section). The default gives the standing ones, as `quoted_records` does.
+    fn bound_quotes(&self, doc_id: &str) -> Vec<(RecordId, usize, usize)> {
+        self.quoted_records(doc_id)
+    }
+    /// The scope ranges each task stored a record under, of any kind, as `(directive, doc_id, byte_start, byte_end)`: a submission
+    /// that stored at least one record gives its ranges, in the same transaction as the records (the coverage table asks which
+    /// reading stored a record in a section, a record with no quote of its own included). Default: none.
+    fn stored_scopes(&self) -> Vec<(String, String, usize, usize)> {
+        Vec::new()
+    }
     /// The byte ranges of a document closed by a withdrawal of its text (every occurrence of each closed text). Default: none.
     fn closed_spans(&self, _doc_id: &str) -> Vec<(usize, usize)> {
         Vec::new()

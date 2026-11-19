@@ -140,6 +140,7 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
 .u.up{border:1px solid var(--muted);background:repeating-linear-gradient(45deg,var(--muted) 0 2px,transparent 2px 6px)}
 .u.ub{border:1px solid var(--muted);background:var(--panel2)}
 .u.uw{border:1px solid var(--gold);background:repeating-linear-gradient(90deg,var(--gold) 0 3px,transparent 3px 6px)}
+.u.ug{border:1px solid var(--red);background:var(--red-bg)}
 .cnt{font-size:12.5px;color:var(--muted);margin:4px 0 0}
 .cleg{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin-top:12px}
 .cleg span{display:inline-flex;gap:6px;align-items:center}
@@ -272,8 +273,8 @@ aside{display:grid;gap:14px;align-content:start;min-width:0}
         <h2>Coverage of the documents <small id="covAt"></small></h2>
         <p class="none" id="covNone" hidden></p>
         <div id="cov"></div>
-        <div class="cleg"><span><i class="u uq"></i>quoted</span><span><i class="u ue"></i>read, no quote</span><span><i class="u up"></i>waiting for or failed a second reading</span><span><i class="u ub"></i>left by the budget</span><span><i class="u uw"></i>withdrawn</span><span><i class="u"></i>not read yet</span></div>
-        <p class="fine">One cell is one part: a paragraph, a list item or a table row. A part counts once the kernel closes the reading task. The kernel's table has eight kinds; this page folds them into six. The same table by hand: <code>sbgk audit-read coverage --wal run.wal</code></p>
+        <div class="cleg"><span><i class="u uq"></i>quoted</span><span><i class="u ue"></i>read, no quote</span><span><i class="u up"></i>waiting for or failed a second reading</span><span><i class="u ub"></i>left by the budget</span><span><i class="u uw"></i>withdrawn</span><span><i class="u ug"></i>reading given up</span><span><i class="u"></i>not read yet</span></div>
+        <p class="fine">One cell is one part: a paragraph, a list item or a table row. A part counts once the kernel closes the reading task, unless that reading was given up with nothing recorded and no reread recorded anything either: then the part shows as reading given up, not read. The kernel's table has nine kinds; this page folds them into seven. The same table by hand: <code>sbgk audit-read coverage --wal run.wal</code></p>
       </section>
     </div>
 
@@ -588,7 +589,7 @@ function render(anim) {
     $('#steps').innerHTML = h;
   }
   // coverage
-  const names = { q: 'quoted', e: 'read, no quote', p: 'second reading', b: 'left by the budget', w: 'withdrawn', n: 'not read yet' };
+  const names = { q: 'quoted', e: 'read, no quote', p: 'second reading', b: 'left by the budget', w: 'withdrawn', g: 'reading given up', n: 'not read yet' };
   $('#covNone').hidden = !!cov;
   $('#covNone').textContent = cov ? '' : `No coverage table: ${D.coverage_note}.`;
   $('#covAt').textContent = cov ? `at frame ${num(cov.at)}` + (cov.at !== F ? ` (taken at seals and where records stopped standing; the page is at frame ${num(F)})` : '') : '';
