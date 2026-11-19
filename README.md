@@ -161,7 +161,8 @@ hash-chained log and a Merkle root. The minimal example below uses the engine.
 
 **Experimental, off by default.** A graph builder (`--build-scope full`, with a dedicated `builder` subject) proposes links between records of
 different agents (`supports`, `contradicts`, `qualifies`, `supersedes`, `depends_on`, `same_as`, `duplicate_of`), each
-accepted or rejected by a kernel rule, by an agent that wrote neither end, or by the owner; the dynamic ontology
+accepted or rejected by a kernel rule, by an agent that wrote neither end (the kernel refuses a verdict from an author of an
+end), or by the owner, marked as an arbitration when the owner wrote an end; the dynamic ontology
 (`--ontology-revisions`, `--ontology-review`) grows and revises concepts during a run. Both are measured but not the default:
 see [LIMITATIONS.md](LIMITATIONS.md).
 
