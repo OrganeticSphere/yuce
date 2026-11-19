@@ -2758,3 +2758,53 @@ fn the_watch_answers_its_own_page_only_and_says_what_is_wrong_with_a_journal() {
     assert_eq!(named.code("/status", &[]), 200);
     assert_eq!(named.ask("GET /status HTTP/1.1", &[&format!("Host: localhost:{}", named.port)]).unwrap().0, 200);
 }
+
+/// Codex's positive case for PR 61 (7d472d88), as he wrote it: only the owner has `audit_link_status`; a swarm agent and the graph
+/// builder are refused it, mark or not. The owner's decision on a link of a claim the owner wrote is refused without the mark and
+/// stands with it, and the journal holds the mark.
+#[test]
+fn codex_only_owner_can_use_arbitration_and_the_wire_marks_it() {
+    use sbgk_core::audit::state::AuditState;
+    use sbgk_core::audit::{AuditStore, LinkStatus, Scope};
+    use sbgk_core::hash::to_hex;
+    let fx = Fixture::new("codex-four-eyes-wire");
+    let server = Server::start(&fx.args(true));
+    for token in [W1, GB] {
+        let mut c = Client::connect(server.port, token);
+        assert!(!c.tools().iter().any(|t| t == "audit_link_status"));
+        assert_eq!(c.call("audit_link_status", json!({"link":"0".repeat(64),"status":"accepted","basis":["0".repeat(64)],"arbitration":true}))["code"], -32003);
+    }
+    drop(server);
+    let wal = PathBuf::from(fx.p("run.wal"));
+    let mut s = AuditState::open(&wal).unwrap();
+    let docs = AuditStore::docs(&s);
+    let da = docs.iter().find(|d| s.doc_text(d).unwrap_or_default().contains("Topic A is reported.")).unwrap().clone();
+    let db = docs.iter().find(|d| s.doc_text(d).unwrap_or_default().contains("Topic B is reported.")).unwrap().clone();
+    let mut seed = |by: &str, doc: &str, quote: &str| {
+        let r = s.submit_records(
+            by,
+            &format!("seed-{by}"),
+            &Scope { docs: vec![doc.into()], ..Default::default() },
+            &[
+                json!({"kind":"observe","local_id":"o","doc_id":doc,"exact_quote":quote,"terms":["topic"]}),
+                json!({"kind":"claim","local_id":"c","text":quote,"subject":"topic","stance":"reported","based_on":["o"]}),
+            ],
+        );
+        assert!(r.error.is_none(), "{:?}", r.error);
+        r.accepted[1]
+    };
+    let a = seed("own", &da, "Topic A is reported.");
+    let b = seed("w1", &db, "Topic B is reported.");
+    let link = s.add_link("builder", &a, "supports", &b, &[a]).unwrap().id;
+    drop(s);
+    let server = Server::start(&fx.args(false));
+    let mut own = Client::connect(server.port, OWN);
+    let mut args = json!({"link":to_hex(&link.0),"status":"accepted","basis":[to_hex(&a.0)]});
+    assert_eq!(own.call("audit_link_status", args.clone())["code"], "REFUSED");
+    args["arbitration"] = json!(true);
+    assert_eq!(own.call("audit_link_status", args)["status"], "DECIDED");
+    drop(server);
+    let (s, _) = AuditState::verify_states(&wal, &mut |_, _, _| {}).unwrap();
+    assert_eq!(s.link(&link).unwrap().status, LinkStatus::Accepted);
+    assert!(std::fs::read_to_string(&wal).unwrap().contains("\"arbitration\":true"));
+}

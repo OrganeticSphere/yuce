@@ -184,7 +184,9 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 
 * **The graph builder** (`--build-scope full`, a dedicated `builder` subject) and the links it proposes between records
   (`supports`, `contradicts`, `supersedes`, ...), with their checks by an agent that wrote neither end. It is measured but
-  not the default: it knew fewer version transitions than a dedicated graph system and cost three times as much.
+  not the default: it knew fewer version transitions than a dedicated graph system and cost three times as much. Since 0.2.3
+  the kernel holds that rule when it accepts a verdict, not only when it hands out the check; a run started before 0.2.3 keeps
+  the rule it had, held at the hand-out only.
 * **Reading version transitions into the kernel** (`--build-scope versions`).
 * **The dynamic ontology** (`--ontology-revisions`, `--ontology-review`): concepts that grow and are revised during a run.
 * **The withdrawn-name notice** (`--withdrawn-anchor`): measured on the recorded runs, where it finds none.

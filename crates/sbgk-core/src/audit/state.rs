@@ -49,6 +49,9 @@ const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
 /// fields that names the rules, the formats of the root and the seal, the questions and the hash of the settings.
 const GENESIS_FORMAT_V3: &str = "r2r-audit-genesis/3";
 pub const RULES_VERSION: &str = "r2r-audit-rules/3";
+/// The checkpoint `audit-serve` pins a run's settings in, before any record: some rules read it (the circle readers, the refiner,
+/// four eyes at the acceptance of a link).
+pub const SETTINGS_CHECKPOINT: &str = "audit:mcp:coverage";
 const SEAL_FORMAT: &str = "r2r-seal/2";
 const GENESIS_V3_KEYS: [&str; 15] = [
     "audit_root",
@@ -882,6 +885,12 @@ impl Core {
             self.data.stored_scopes.entry(directive.to_string()).or_default().extend(scope.ranges.iter().cloned());
         }
         Ok(Outcome::Records(report))
+    }
+
+    /// Whether the run pins four eyes at the acceptance of a link (0.2.3): its settings checkpoint, written by `audit-serve` before
+    /// any record, says `four_eyes: true`. A journal before 0.2.3, or a run the library started, does not.
+    fn four_eyes(&self) -> bool {
+        self.data.checkpoints.get(SETTINGS_CHECKPOINT).is_some_and(|c| c["context"]["four_eyes"] == true)
     }
 
     fn validate_link_ends(&self, from: &RecordId, rel: &str, to: &RecordId) -> KResult<()> {
@@ -2250,6 +2259,19 @@ impl AuditState {
         }
     }
 
+    /// The owner's decision on a link (`audit_link_status`), marked as an arbitration when `arbitration`: in a run that pins four
+    /// eyes, the only way a subject that wrote an end of the link judges it, and the journal says so.
+    pub fn decide_link(&mut self, id: &LinkId, next: LinkStatus, by: &str, basis: &[RecordId], arbitration: bool) -> KResult<()> {
+        let old = self.core.data.links.get(id).cloned().ok_or_else(|| bad("link", "unknown link"))?;
+        let mut command = json!({"kind":"set_link_status","link":to_hex(&id.0),"status":next.name(),"expected_status":old.status.name(),
+            "basis":basis.iter().map(|x|to_hex(&x.0)).collect::<Vec<_>>()});
+        if arbitration {
+            command["arbitration"] = json!(true);
+        }
+        self.value_command(by, command)?;
+        Ok(())
+    }
+
     pub fn put_document(&mut self, actor: &str, doc_id: &str, bytes: &[u8]) -> KResult<()> {
         if bytes.len() > MAX_DOC_BYTES {
             return Err(bad("document", "document exceeds 16 MiB"));
@@ -2461,7 +2483,20 @@ impl Core {
                 link_value(&self.add_link(actor, &from, string(command, "rel")?, &to, &basis)?)
             }
             "set_link_status" => {
-                check_keys(command, &["kind", "link", "status", "expected_status", "basis"])?;
+                // four eyes at acceptance (0.2.3, the architect's decision of 18.11.2026, part I, A): in a run that pins it, a verdict
+                // on a link is not given by the author of either end, and the owner who decides one anyway says so (`arbitration`).
+                // A run that does not pin it is judged as every run before: the command has no `arbitration`, and an author may judge
+                let four_eyes = self.four_eyes();
+                if four_eyes {
+                    check_keys(command, &["kind", "link", "status", "expected_status", "basis", "arbitration"])?;
+                } else {
+                    check_keys(command, &["kind", "link", "status", "expected_status", "basis"])?;
+                }
+                let arbitration = match command.get("arbitration") {
+                    None => false,
+                    Some(Value::Bool(true)) => true,
+                    Some(_) => return Err(bad("arbitration", "arbitration is true, or absent")),
+                };
                 let id = LinkId(hash_field(command, "link")?);
                 let next = status(string(command, "status")?)?;
                 let basis = self.command_basis(command)?;
@@ -2476,6 +2511,15 @@ impl Core {
                 }
                 if actor == "builder" && next != LinkStatus::Proposed {
                     return Err(bad("actor", "the graph builder cannot accept or reject its own proposal"));
+                }
+                if four_eyes && next != LinkStatus::Proposed && !arbitration {
+                    let wrote = |r: &RecordId| self.record(r).is_some_and(|x| x.author == actor);
+                    if wrote(&link.from) || wrote(&link.to) {
+                        return Err(bad(
+                            "actor",
+                            "a link is judged by a subject that wrote neither of its ends (four eyes); the owner may arbitrate, and says so with arbitration: true",
+                        ));
+                    }
                 }
                 if actor == "kernel" && next == LinkStatus::Accepted && matches!(link.rel.as_str(), "same_as" | "duplicate_of") {
                     return Err(bad("status", "identity and duplicates require a verifier or owner"));
@@ -2495,8 +2539,12 @@ impl Core {
                     d.links.insert(id);
                     d.acceptance.insert(id);
                 }
-                self.data.decisions.push(json!({"op":"link_status","link":to_hex(&id.0),"status":next.name(),"by":actor,
-                    "basis":basis.iter().map(|x|to_hex(&x.0)).collect::<Vec<_>>()}));
+                let mut decision = json!({"op":"link_status","link":to_hex(&id.0),"status":next.name(),"by":actor,
+                    "basis":basis.iter().map(|x|to_hex(&x.0)).collect::<Vec<_>>()});
+                if arbitration {
+                    decision["arbitration"] = json!(true);
+                }
+                self.data.decisions.push(decision);
                 link_value(&self.data.links[&id])
             }
             "put_document" => {
@@ -2583,6 +2631,9 @@ impl Core {
                 let old = self.data.checkpoints.get(key).and_then(|c| c["to"].as_u64()).unwrap_or(0);
                 if from != old || to < from || to > self.data.records.len() as u64 {
                     return Err(bad("to", "checkpoint must extend the current contiguous cursor within the ingest stream"));
+                }
+                if key == SETTINGS_CHECKPOINT && self.four_eyes() && command["context"]["four_eyes"] != true {
+                    return Err(bad("context", "the run pinned four eyes at the acceptance of a link: its settings cannot drop the rule"));
                 }
                 self.data.checkpoints.insert(key.into(), command.clone());
                 if let Some(d) = self.dirty() {

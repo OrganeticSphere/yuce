@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+* **Four eyes when a link is judged, held by the kernel.** A verdict on a link was handed out only to an agent that wrote neither
+  end, but the kernel accepted one from an author of an end. In a run started by this version it refuses it: a run pins
+  `four_eyes: true` in the settings it starts with, and while it does, a `set_link_status` that accepts or rejects a link is
+  refused when its subject wrote either end. The owner may still decide such a link with the owner's tool, `audit_link_status`
+  with `arbitration: true`, and the journal marks the decision as an arbitration. The kernel does not know who holds which role:
+  the server gives that tool to the owner's subject alone, so the mark records the owner's decision as the server authenticated
+  its caller, and is no signature of the owner. The settings of a run that pins the rule cannot drop it later. A run started
+  before 0.2.3 pins no `four_eyes`: it is replayed and resumed under the rule it had, also when its start was cut off before its
+  settings checkpoint, and the journals of the published runs verify with the same roots. The hand-out filter stays.
 * **A run pins whether its units are tasks, on or off.** `--unit-is-task` stays off by default; a run now pins `unit_is_task:
   true` or `false` in the settings it starts with, so its journal says which way it ran. A journal before 0.2.3 pinned the switch
   only when on: one without it reads as off, goes on as a reading run and is not resumed as a plan run. The switch is for plans,

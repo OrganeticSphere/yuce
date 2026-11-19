@@ -492,7 +492,8 @@ fn tool_defs() -> Vec<Value> {
             "The owner's decision on a link, resting on records (full ids).",
             schema(
                 json!({"link": s("full link id"), "status": {"type": "string", "enum": ["accepted", "rejected"]},
-                        "basis": {"type": "array", "items": {"type": "string"}, "description": "full record ids"}}),
+                        "basis": {"type": "array", "items": {"type": "string"}, "description": "full record ids"},
+                        "arbitration": {"type": "boolean", "description": "true to decide a link one of whose ends you wrote: the journal marks it as your arbitration"}}),
                 &["link", "status", "basis"],
             ),
         ),
@@ -1175,7 +1176,12 @@ fn link_decision(state: &mut AuditState, by: &str, args: &Value) -> Value {
         .map(|a| a.iter().map(|x| x.as_str().map(|s| s.trim_start_matches('@')).and_then(from_hex).map(RecordId)).collect())
         .and_then(|v: Vec<Option<RecordId>>| v.into_iter().collect());
     let Some(basis) = basis.filter(|b| !b.is_empty()) else { return bad_arg("'basis' is a non-empty array of full record ids") };
-    match state.set_link_status(&link, status, by, &basis) {
+    let arbitration = match args.get("arbitration") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(_) => return bad_arg("'arbitration' is true or false"),
+    };
+    match state.decide_link(&link, status, by, &basis, arbitration) {
         Ok(()) => json!({"status": "DECIDED", "link": link.short(), "link_status": status.name()}),
         Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
     }
@@ -1719,6 +1725,8 @@ fn coverage_context(
         context["unattested_at_end"] = json!(true);
     }
     context["unit_is_task"] = json!(unit_is_task);
+    // four eyes at the acceptance of a link: every new run holds it (`AuditState::four_eyes`)
+    context["four_eyes"] = json!(true);
     context["auto_reread_limit"] = json!(auto_reread_limit);
     if let Some(words) = corpus_description {
         context["corpus_description"] = json!(words);
@@ -1753,7 +1761,8 @@ fn coverage_context(
 
 /// The settings a journal pins since 0.2.3 and a journal before it does not, with how such a journal reads the absent key: as
 /// that value (`unit_is_task`: a journal before 0.2.3 pinned it only when on), or `None`, under any value (it was not pinned then).
-const PINNED_SINCE_0_2_3: [(&str, Option<bool>); 2] = [("unit_is_task", Some(false)), ("auto_reread_limit", None)];
+/// `four_eyes`: a run before 0.2.3 goes on under the rule it started with, without four eyes at the acceptance of a link.
+const PINNED_SINCE_0_2_3: [(&str, Option<bool>); 3] = [("unit_is_task", Some(false)), ("auto_reread_limit", None), ("four_eyes", None)];
 
 /// The settings `given` as a journal whose pinned settings are `stored` pinned them: without a key pinned since 0.2.3 that the
 /// journal lacks, when the given value reads the same as its absence. A journal of 0.2.3 has the keys and is compared as it is.
@@ -2954,6 +2963,7 @@ mod tests {
         let mut before = context(20, None);
         before.as_object_mut().unwrap().remove("auto_reread_limit");
         before.as_object_mut().unwrap().remove("unit_is_task");
+        before.as_object_mut().unwrap().remove("four_eyes");
         for bind in [true, false] {
             let old = run(&format!("old{bind}"), &before, bind);
             for n in [0, 20, 7] {
@@ -2966,6 +2976,69 @@ mod tests {
         let worded = run("worded", &context(20, Some("a set of plans")), true);
         assert_eq!(check_coverage(&worded, &context(20, Some("a set of plans")), 300, true), Ok(()));
         assert!(check_coverage(&worded, &context(20, None), 300, true).unwrap_err().contains("corpus_description"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Four eyes at the acceptance of a link (0.2.3): every new run pins it, a run before it goes on without it, and the owner's tool
+    /// passes the arbitration mark to the kernel, which refuses a verdict from the author of an end without it.
+    #[test]
+    fn a_new_run_pins_four_eyes_and_the_owner_arbitrates_with_a_mark() {
+        let dir = std::env::temp_dir().join(format!("sbgk_four_eyes_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            auto_reread_limit: 20,
+            corpus_description: None,
+        };
+        let settings = coverage_context(400, &[], false, None, None, mode);
+        assert_eq!(settings["four_eyes"], json!(true), "{settings}");
+        let docs = vec![("d1".to_string(), b"# First\nTopic A is reported.\n".to_vec()), ("d2".to_string(), b"# Second\nTopic B is reported.\n".to_vec())];
+        let start = |name: &str, settings: &Value| {
+            let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), name, docs.clone()).unwrap();
+            let spec = GenesisSpec { questions: json!([]), settings: settings.clone(), operator_meta: None };
+            state.start_journal(&dir.join(format!("{name}.wal")), &spec).unwrap();
+            bind_coverage(&mut state, settings.clone()).unwrap();
+            state
+        };
+        // a run before 0.2.3 pinned no four eyes: it goes on as it is
+        let mut before = settings.clone();
+        before.as_object_mut().unwrap().remove("four_eyes");
+        assert_eq!(check_coverage(&start("before", &before), &settings, 400, true), Ok(()));
+        // a new run: the owner wrote a claim, and the graph builder linked it
+        let mut state = start("pinned", &settings);
+        let mut seed = |actor: &str, doc: &str, quote: &str| {
+            let scope = sbgk_core::audit::Scope { docs: vec![doc.into()], ..Default::default() };
+            let lines = [
+                json!({"kind": "observe", "local_id": "o", "doc_id": doc, "exact_quote": quote, "terms": ["topic"]}),
+                json!({"kind": "claim", "local_id": "c", "text": quote, "subject": "topic", "stance": "reported", "based_on": ["o"]}),
+            ];
+            let r = state.submit_records(actor, &format!("seed-{actor}"), &scope, &lines);
+            assert!(r.error.is_none(), "{:?}", r.error);
+            r.accepted[1]
+        };
+        let (a, b) = (seed("owner", "d1", "Topic A is reported."), seed("w1", "d2", "Topic B is reported."));
+        let link = state.add_link("builder", &a, "supports", &b, &[a]).unwrap().id;
+        let args = |arbitration: Option<Value>| {
+            let mut v = json!({"link": to_hex(&link.0), "status": "accepted", "basis": [to_hex(&a.0)]});
+            if let Some(mark) = arbitration {
+                v["arbitration"] = mark;
+            }
+            v
+        };
+        assert_eq!(link_decision(&mut state, "owner", &args(Some(json!("yes"))))["status"], "error", "the mark is a boolean");
+        let refused = link_decision(&mut state, "owner", &args(None));
+        assert_eq!(refused["code"], "REFUSED", "{refused}");
+        assert!(refused.to_string().contains("four eyes"), "{refused}");
+        assert_eq!(link_decision(&mut state, "owner", &args(Some(json!(false))))["code"], "REFUSED");
+        let decided = link_decision(&mut state, "owner", &args(Some(json!(true))));
+        assert_eq!((decided["status"].as_str(), decided["link_status"].as_str()), (Some("DECIDED"), Some("accepted")), "{decided}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3122,6 +3195,60 @@ mod codex_recovery_review {
                 assert!(check_coverage(&state, &other, 400, true).is_err(), "{name}: still held");
             }
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod codex_legacy_four_eyes {
+    use super::*;
+
+    /// Codex's PR61-R1 of 7d472d88, his case as he wrote it: a run before 0.2.3, cut off after its genesis, is resumed; the start
+    /// binds its settings, and the run must keep the rule it started with, where an author may judge a link of its own claim.
+    #[test]
+    fn codex_resuming_legacy_genesis_only_must_not_enable_four_eyes() {
+        let mode = CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            auto_reread_limit: 20,
+            corpus_description: None,
+        };
+        let current = coverage_context(400, &[], false, None, None, mode);
+        let mut legacy = current.clone();
+        for key in ["unit_is_task", "auto_reread_limit", "four_eyes"] {
+            legacy.as_object_mut().unwrap().remove(key);
+        }
+        let dir = std::env::temp_dir().join(format!("codex_legacy_policy_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wal = dir.join("run.wal");
+        let docs = vec![("d1".into(), b"Topic A is reported.\n".to_vec()), ("d2".into(), b"Topic B is reported.\n".to_vec())];
+        let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), "codex-legacy-policy", docs).unwrap();
+        state.start_journal(&wal, &GenesisSpec { questions: json!([]), settings: legacy, operator_meta: None }).unwrap();
+        assert_eq!(check_coverage(&state, &current, 400, true), Ok(()));
+        bind_coverage(&mut state, current.clone()).unwrap();
+        let mut seed = |actor: &str, doc: &str, quote: &str| {
+            let scope = sbgk_core::audit::Scope { docs: vec![doc.into()], ..Default::default() };
+            let lines = [
+                json!({"kind":"observe","local_id":"o","doc_id":doc,"exact_quote":quote,"terms":["topic"]}),
+                json!({"kind":"claim","local_id":"c","text":quote,"subject":"topic","stance":"reported","based_on":["o"]}),
+            ];
+            let r = state.submit_records(actor, &format!("seed-{actor}"), &scope, &lines);
+            assert!(r.error.is_none(), "{:?}", r.error);
+            r.accepted[1]
+        };
+        let a = seed("author-a", "d1", "Topic A is reported.");
+        let b = seed("author-b", "d2", "Topic B is reported.");
+        let link = state.add_link("builder", &a, "supports", &b, &[a]).unwrap().id;
+        let decision = state.set_link_status(&link, sbgk_core::audit::LinkStatus::Accepted, "author-a", &[a]);
+        eprintln!("LEGACY_POLICY_DECISION={decision:?}; settings={:?}", state.checkpoint(COVERAGE_CHECKPOINT));
+        assert!(decision.is_ok(), "a legacy run without the rule must retain its old admission policy after resume");
+        assert!(state.checkpoint(COVERAGE_CHECKPOINT).unwrap()["context"].get("four_eyes").is_none(), "nor is the rule pinned for it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
