@@ -65,9 +65,31 @@
 * **A kernel notice once per answer in the blind answers.** `answers_blind.md` wrote each claim with the notices of the records it
   rests on, so one notice came back 18 times in one answer of the fourth corpus's run. The notices of an answer are listed once
   at its head, and each claim keeps its own words with the short ids of its notices.
+* **`run_pilot_ac.py --withdraw-preview`.** Before each planned withdrawal the owner asks `audit_withdraw_preview`, which writes
+  nothing, and the run keeps its answer in `arm_c.json` (`withdraw_preview`): what the withdrawal would make fall, beside what it
+  then made fall. Off by default.
 * **The runner knows the usage-policy refusal.** Claude Code reports a refusal of the provider's safeguards in a second wording
   ("… can't help with this … /legal/aup"). The runner read it as any other failure and stopped a live run of the fourth corpus;
   it now closes that one task as refused, as it did for "safeguards flagged", and the run goes on.
+* **Retraction plans in the runner: a whole report, several sentences in one phase, and a message for arm A.** A step of
+  `--withdrawal-plan` may now withdraw every byte of one report (`"whole": true`) or every one of its candidates, each in its own
+  report, in the same phase (`"all": true`); a step of candidates still withdraws one of them. Step names are unique, and a
+  sentence of an all step occurs once in its report, since the kernel closes every occurrence of a withdrawn text. Arm C withdraws
+  each text with its own `audit_withdraw_text` call, so its own frame of the journal, and records its byte span. With
+  `--withdraw-preview` every text of a step is previewed before the step's first withdrawal: the previews describe the state at
+  the start of the step and are compared with what the whole step made fall (the phase's `fell` and `previewed`). Any step may
+  carry a `"message"`: arm A's answer is then told the messages of the steps so far in place of the withdrawn text, is asked
+  which conclusions of its previous answer they affect, and those lines are recorded beside its answer (`affected`); a step
+  without one is told as before. A plan with messages needs `--arm-a-no-withdrawn-check`, which keeps arm A's quotes that
+  overlap withdrawn text (their bytes are still checked) and is recorded in `summary.json`: arm A is not told the withdrawn text,
+  and refusing its quotes of that text would make what it still rests on 0 by construction. Messages go with arm A's direct
+  answer only; the notes arm and `--arm-a-answer map-reduce` refuse them before any work. A refusal of the model's safeguards in
+  arm A now closes that section or that answer, and the arm goes on to the next; a declined update leaves the answer it updated
+  for the next step. `revision_outcomes.py` counts a step of several texts as one phase. `benchmarks/test_withdraw_steps.py`
+  checks it on the stub team and the kernel, a whole report with CRLF line ends and a BOM too.
+* **`--model fable`: Claude Fable 5.2 in the runner** (`claude-fable-5-2`, through Claude Code like the other Claude aliases;
+  also for `--team`, `--team-models` and `--circles-refiner`). A call may last 1200 s by default; the brake reserves at $8 / $40
+  per million tokens, and fable has no default `--budget-usd`.
 
 ## 0.2.2 (2026-11-15)
 

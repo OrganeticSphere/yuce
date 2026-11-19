@@ -116,6 +116,11 @@ TEAM_READER_KINDS = ["RESOLVE_CONFLICT", "VERIFY_LINK", "REQUEST", "INVESTIGATE"
 # observes, --own-refs), a withdrawal is the kernel's alone, without a model call, and the builder runs no model. Arm A takes the
 # same answer without the kernel (ARM_A_MODE "whole").
 WHOLE_READER = False
+# before each planned withdrawal the owner asks audit_withdraw_preview, which writes nothing, and the run keeps its answer
+WITHDRAW_PREVIEW = False
+# arm A's quotes that overlap withdrawn text are refused (check_single). Off, only their bytes are checked: an arm told of a
+# retraction by a message, not by the withdrawn text, cannot know which bytes it must avoid (--arm-a-no-withdrawn-check)
+ARM_A_WITHDRAWN_CHECK = True
 WHOLE_LINES = 250
 WHOLE_KINDS = ["EXTEND", "CHANGE", "SUMMARIZE"]
 WHOLE_GRAPH = ("observe", "claim", "relation")
@@ -543,7 +548,11 @@ CLAUDE_HAIKU = "claude-haiku-5-5"
 # Claude Opus 5.5 as the one strong reader in place of the swarm: $4 / $20 per MTok (the Claude API model
 # table, claude-api skill models.md).
 CLAUDE_OPUS = "claude-opus-5-5"
-CLAUDE_MODEL_RATES = {CLAUDE_MODEL: (CLAUDE_RATES[0], CLAUDE_RATES[2]), CLAUDE_HAIKU: (0.10, 0.50), CLAUDE_OPUS: (4.00, 20.00)}
+# Claude Fable 5.2, the most capable widely released model: $8 / $40 per MTok (the Claude API model table, cached 2026-11-03). Its
+# single calls on hard tasks can run many minutes, hence the longer default call deadline in make_model.
+CLAUDE_FABLE = "claude-fable-5-2"
+CLAUDE_MODEL_RATES = {CLAUDE_MODEL: (CLAUDE_RATES[0], CLAUDE_RATES[2]), CLAUDE_HAIKU: (0.10, 0.50), CLAUDE_OPUS: (4.00, 20.00),
+                      CLAUDE_FABLE: (8.00, 40.00)}
 # The output a call may reserve against the brake: far above any answer of the pilot (its bound is 48 lines), not the model's 128K.
 CLAUDE_RESERVED_OUTPUT = 32000
 # The task is the whole conversation: no Claude Code system prompt, tools, skills, MCP servers, settings or session history.
@@ -759,7 +768,8 @@ def make_model(name: str, effort: str = "medium", *, timeout_s: float | None = N
         return AgyModel(name[4:], timeout_s=timeout_s or AGY_TIMEOUT_S)
     aliases = {"stub": StubModel, "deepseek": DeepSeekModel, "sonnet": lambda: ClaudeCliModel(effort=effort),
                "haiku": lambda: ClaudeCliModel(model=CLAUDE_HAIKU, effort=effort),
-               "opus": lambda: ClaudeCliModel(model=CLAUDE_OPUS, effort=effort, timeout_s=timeout_s or 600.0)}
+               "opus": lambda: ClaudeCliModel(model=CLAUDE_OPUS, effort=effort, timeout_s=timeout_s or 600.0),
+               "fable": lambda: ClaudeCliModel(model=CLAUDE_FABLE, effort=effort, timeout_s=timeout_s or 1200.0)}
     if name in aliases:
         return aliases[name]()
     if name in CLOSED_MODELS:
@@ -2352,6 +2362,98 @@ def choose_candidate(step: dict, observes: dict[str, dict], answers: dict, docum
     return hits[0][0], [], "not quoted in C"
 
 
+# Why a text of a step that chooses nothing was withdrawn: the plan fixed it, not the answers of the run (choose_candidate)
+WHOLE_REASON = "the plan withdraws every byte of the report"
+ALL_REASON = "the plan withdraws every candidate of the step"
+
+
+def plan_texts(step: dict, docs: dict[str, str]) -> list[dict]:
+    """The texts a step may withdraw as the plan fixes them, each with its report. A whole step ({"whole": true}): every byte of its
+    report, the text as the runner holds it, its first line the anchor. An all step ({"all": true}): every candidate, each in its own
+    report. Any other step: its candidates, of which one is withdrawn (choose_candidate)."""
+    if step.get("whole"):
+        text = docs[step["report"]]
+        return [{"report": step["report"], "anchor": text.split("\n", 1)[0].rstrip("\r"), "quote": text, "whole": True}]
+    if step.get("all"):
+        return [dict(cand, all=True) for cand in step["candidates"]]
+    return [{"report": step["report"], **cand} for cand in step["candidates"]]
+
+
+def step_withdrawals(step: dict, observes: dict[str, dict], answers: dict, document_paths: dict[str, str],
+                     docs: dict[str, str]) -> list[tuple[dict, list[str], str]]:
+    """What arm C withdraws in one step, each text with the accepted observes it hits and why it was taken: a whole step every
+    observe of its report, an all step each candidate by its anchor (anchor_hits), any other step the one candidate
+    choose_candidate takes."""
+    texts = plan_texts(step, docs)
+    if step.get("whole"):
+        report = step["report"]
+        return [(texts[0], sorted(rid for rid, ob in observes.items() if document_paths.get(ob["doc_id"]) == report), WHOLE_REASON)]
+    if step.get("all"):
+        return [(t, anchor_hits(observes, t["report"], t, document_paths), ALL_REASON) for t in texts]
+    cand, hit, reason = choose_candidate(step, observes, answers, document_paths)
+    return [({"report": step["report"], **cand}, hit, reason)]
+
+
+def withdrawal_groups(steps: list[dict], chosen: list[dict] | None, docs: dict[str, str]) -> list[list[dict]]:
+    """The texts each step withdrew, for an arm A: arm C's withdrawals grouped by their step, so a step of many texts is one
+    phase; the steps arm C did not reach are left out, as when each step was one text. Without arm C's withdrawals, the plan's
+    texts: every text of a whole or all step, the first candidate of any other."""
+    if chosen:
+        by_step: dict[str, list[dict]] = {}
+        for w in chosen:
+            by_step.setdefault(w["step"], []).append(w)
+        groups = []
+        for step in steps:
+            if step["name"] not in by_step:
+                break
+            groups.append(by_step[step["name"]])
+        return groups
+    groups = []
+    for step in steps:
+        texts = plan_texts(step, docs)
+        groups.append([{"step": step["name"], **t} for t in (texts if step.get("whole") or step.get("all") else texts[:1])])
+    return groups
+
+
+# A step may carry a "message": what arm A is told of it in place of the withdrawn text (a retraction notice, the sentences that cite
+# a retracted paper), as a researcher outside the kernel learns of it. answer_phases tells it; the notes arm (run_arm_a) and the
+# map-reduce answer build their own prompts from the withdrawn text and would show it, so a plan with messages is refused there.
+MESSAGE_ARMS = ("a withdrawal step's message is told only to arm A's direct answer (single, team or whole reader, without "
+                "--arm-a-answer map-reduce)")
+
+
+def plan_messages(withdraw: dict | None) -> bool:
+    """Whether a step of the plan tells arm A of its withdrawal by a message."""
+    return bool(withdraw) and any(s.get("message") is not None for s in withdrawal_steps(withdraw))
+
+
+def withdrawal_told(step: dict, group: list[dict]) -> str:
+    """What arm A's answer is told of one withdrawal step: its message when the plan gives one, and then never the withdrawn text;
+    else each text it withdrew, with its report."""
+    if step.get("message") is not None:
+        return f"NOTICE: {step['message']}\n"
+    return "".join(f"WITHDRAWN QUOTE: \"{w['quote']}\" (report {w['report']}): a later revision withdraws it.\n" for w in group)
+
+
+# The update of a step told by a message: the notice names no bytes, so the answer is asked what it changes; the lines of what it
+# affects are recorded beside the answer (answer_phases), not checked as claims
+NOTICE_UPDATE = ("Answer again with these notices in mind: drop what rests only on what they withdraw, keep valid support from "
+                 "elsewhere. Before the claims, you may list each conclusion of your answer before the withdrawal that the notices "
+                 'affect, one JSON line each: {"kind":"affected","text":"<that conclusion, in a sentence>"}. These lines are not '
+                 "claims and carry no quotes.\n")
+
+
+# What a withdrawal preview describes: the state at the start of its step, before the step's first withdrawal
+PREVIEW_STATE = "the start of the step, before its first withdrawal"
+
+
+def byte_span(text: str, quote: str) -> list[int] | None:
+    """Where a quote stands in its report, in bytes of its UTF-8, as the kernel's journal names a withdrawn span."""
+    raw, part = text.encode("utf-8"), quote.encode("utf-8")
+    at = raw.find(part)
+    return [at, at + len(part)] if at >= 0 else None
+
+
 def withdrawal_hits(observes: dict[str, dict], withdraw: dict, document_paths: dict[str, str]) -> list[str]:
     quote, report = withdraw["quote"], withdraw["report"]
     return sorted(rid for rid, ob in observes.items()
@@ -2483,23 +2585,46 @@ def run_arm_c(model: Model, builder_model: Model, work: pathlib.Path, manifest: 
                 res[key] = skipped_phase("PREVIOUS_PHASE_NOT_TERMINAL")
                 continue
             with log.lock:
-                cand, hit, reason = choose_candidate(step, log.observes, answers, document_paths)
-            res["withdrawals"].append({"step": step["name"], "phase": n, "report": step["report"], **cand, "observes": hit, "reason": reason})
+                picked = step_withdrawals(step, log.observes, answers, document_paths, docs)
             phase[0] = n
             log.phase_number = n
             log.deadline = time.monotonic() + timeout_s
             t1 = time.monotonic()
-            if WHOLE_READER:
-                # the summaries of run S1.3 restate what rested on these observes as well as on others
-                whole.setdefault("revoked", []).extend(hit)
-                whole.setdefault("withdrawn_quotes", []).append({"quote": cand.get("quote"), "report": step["report"]})
-            # the planned text itself, quoted or not: the kernel closes it and takes the quotes overlapping it
-            doc_id = next((doc for doc, path in document_paths.items() if path == step["report"]), None)
-            revoked = [own.call("audit_withdraw_text", doc_id=doc_id, exact_quote=cand["quote"]) if doc_id else {"status": "error", "code": "PAGE_NOT_IN_RUN"}]
-            res["revoke"] += revoked
             # two observes quoting the same span share one evidence node: the second revoke finds it already revoked (run 5)
             withdrawn_ok = lambda r: r.get("status") == "REVOKED" or ((r.get("error") or {}).get("code") == "ALREADY_REVOKED")  # noqa: E731
-            if not all(withdrawn_ok(r) for r in revoked):
+            refused = False
+            doc_of = lambda report: next((doc for doc, path in document_paths.items() if path == report), None)  # noqa: E731
+            step_previews, step_revokes = [], []
+            if WITHDRAW_PREVIEW:
+                # what each text would make fall, asked before the step's first withdrawal: every preview of a step describes the
+                # state at its start (a later text's preview does not see what an earlier text takes), so they are compared with
+                # what the whole step made fall (the phase's "fell"), not text by text. A preview writes no frame.
+                for text, _, _ in picked:
+                    if doc_of(text["report"]):
+                        step_previews.append({"step": step["name"], "report": text["report"],
+                                              "quote_span": byte_span(docs.get(text["report"], ""), text["quote"]),
+                                              **own.call("audit_withdraw_preview", doc_id=doc_of(text["report"]), exact_quote=text["quote"]),
+                                              "describes": PREVIEW_STATE})
+                res.setdefault("withdraw_preview", []).extend(step_previews)
+            # each text of the step is its own withdrawal, so its own frame of the journal (its document and bytes), in the order
+            # of the plan; the phase's answers are taken once, after the last of them
+            for text, hit, reason in picked:
+                res["withdrawals"].append({"step": step["name"], "phase": n, **text,
+                                           "quote_span": byte_span(docs.get(text["report"], ""), text["quote"]), "observes": hit, "reason": reason})
+                if WHOLE_READER:
+                    # the summaries of run S1.3 restate what rested on these observes as well as on others
+                    whole.setdefault("revoked", []).extend(hit)
+                    whole.setdefault("withdrawn_quotes", []).append({"quote": text.get("quote"), "report": text["report"]})
+                # the planned text itself, quoted or not: the kernel closes it and takes the quotes overlapping it
+                doc_id = doc_of(text["report"])
+                revoked = own.call("audit_withdraw_text", doc_id=doc_id, exact_quote=text["quote"]) if doc_id else {"status": "error", "code": "PAGE_NOT_IN_RUN"}
+                res["revoke"].append(revoked)
+                step_revokes.append(revoked)
+                if not withdrawn_ok(revoked):
+                    # the step's later texts are not withdrawn: a journal that took only part of a refused step says so by itself
+                    refused = True
+                    break
+            if refused:
                 log.fail("WITHDRAWAL_REFUSED", arm="C", phase=n)
                 res[key] = skipped_phase("WITHDRAWAL_REFUSED")
                 break
@@ -2512,7 +2637,13 @@ def run_arm_c(model: Model, builder_model: Model, work: pathlib.Path, manifest: 
             wall = time.monotonic() - t1
             answers_from, partial = settle(receipt, n)
             res[key] = {"step": step["name"], "receipt": receipt, "wall_s": wall, "status": best_effort(own, "audit_status"),
-                        "nothing_quoted": not hit}
+                        "nothing_quoted": not any(hit for _, hit, _ in picked),
+                        # what the step's withdrawals made fall, together: what its previews are compared with
+                        "fell": sum(r.get("fell") or 0 for r in step_revokes)}
+            if step_previews:
+                # the rows the previews named, each once (a row two texts would take is one row); unknown when a preview was cut
+                rows = None if any(p.get("truncated") for p in step_previews) else {r.get("id") for p in step_previews for r in p.get("rows") or []}
+                res[key]["previewed"] = {"rows": None if rows is None else len(rows), "describes": PREVIEW_STATE}
             res[key]["answers"] = answers = c_answers(own, answers_from, docs, document_paths)
             if partial:
                 res[key]["answers_partial"] = PARTIAL_ANSWERS
@@ -2663,6 +2794,12 @@ def read_notes(log: Log, models: list[Model], docs: dict[str, str], by_report: d
             c = log.invoke(model, prompt, call_id=call_id, arm="A", role="WORKER", phase=1, context=context)
             if c is None:
                 return False
+            if model_refused(c):
+                # the model's safeguards declined this section: it gives no notes and the team reads on, as a refused task of
+                # arm C closes and its run goes on (live run 10A-8)
+                log.event(arm="A", phase=1, agent=f"w{w}", kind="WORKER", report=path, section=list(rng), call_id=c.call_id,
+                          outcome="MODEL_REFUSED", error=c.error)
+                return True
             if not c.ok:
                 log.fail(f"MODEL_ERROR: {c.error}", arm="A", phase=1, agent=f"w{w}")
                 return False
@@ -2695,6 +2832,8 @@ def run_arm_a(model: Model, docs: dict[str, str], withdraw: dict, workers: int =
     """`chosen`: the withdrawn text of each step as arm C resolved it by the pre-registered rule (else each step's first candidate)."""
     if workers <= 0 or timeout_s <= 0:
         raise ValueError("workers and phase timeout must be positive")
+    if plan_messages(withdraw):
+        raise ValueError(MESSAGE_ARMS)
     log = Log(max_calls, evidence, time.monotonic() + timeout_s)
     log.budget = budget
     t0 = time.monotonic()
@@ -2725,9 +2864,9 @@ def run_arm_a(model: Model, docs: dict[str, str], withdraw: dict, workers: int =
         res["phase2"] = skipped_phase("NO_WITHDRAWAL")
     else:
         steps = withdrawal_steps(withdraw)
-        texts = chosen or [{"step": s["name"], "report": s["report"], **s["candidates"][0]} for s in steps]
         previous, so_far = res["phase1"]["answers"], []
-        for n, (step, text) in enumerate(zip(steps, texts), start=2):
+        # a step of many texts (a whole or all step) is one phase, its texts told together
+        for n, (step, group) in enumerate(zip(steps, withdrawal_groups(steps, chosen, docs)), start=2):
             key = f"phase{n}"
             if so_far and res[f"phase{n - 1}"].get("status") != "COMPLETE":
                 res[key] = skipped_phase("PREVIOUS_PHASE_NOT_COMPLETE")
@@ -2736,14 +2875,14 @@ def run_arm_a(model: Model, docs: dict[str, str], withdraw: dict, workers: int =
             t1 = time.monotonic()
             res[key] = {"step": step["name"], "answers": {}}
             earlier = "".join(f"EARLIER WITHDRAWN QUOTE: \"{w['quote']}\" (report {w['report']})\n" for w in so_far)
-            so_far.append(text)
+            now = "".join(f"WITHDRAWN QUOTE: \"{t['quote']}\" (report {t['report']}): a later revision withdraws it.\n" for t in group)
+            so_far.extend(group)
             for q in QUESTIONS:
                 context = notes_context(notes)
-                context.update(rq_id=q["id"], withdrawal=text, previous_answer=previous[q["id"]])
+                context.update(rq_id=q["id"], withdrawal=group[0] if len(group) == 1 else group, previous_answer=previous[q["id"]])
                 if isinstance(model, StubModel):
                     context["stub_about"] = tuple(q["about"])
-                prompt = (f"ARM A UPDATE {q['id']}: {q['text']}\nWITHDRAWN QUOTE: \"{text['quote']}\" "
-                          f"(report {text['report']}): a later revision withdraws it.\n{earlier}Update the answer: drop what rests only on "
+                prompt = (f"ARM A UPDATE {q['id']}: {q['text']}\n{now}{earlier}Update the answer: drop what rests only on "
                           "withdrawn text, keep valid support from elsewhere.\n"
                           f"{G.TEXT}\nPREVIOUS ANSWER:\n{context['previous_answer']}\nNOTES:\n{context['notes']}")
                 c = invoke_answer(log,model, prompt, call_id=f"A{n}-update-{q['id']}", arm="A", role="UPDATE", phase=n, context=context)
@@ -2805,17 +2944,23 @@ def resolve_quote(text: str, quote: str) -> tuple[tuple[int, int] | None, str]:
 
 
 def check_single(lines: list[dict], docs: dict[str, str], withdrawn: list[dict], kept: dict[str, dict], *,
-                 max_claims: int = SINGLE_CLAIMS) -> tuple[dict[str, dict], list[dict], dict | None]:
+                 max_claims: int = SINGLE_CLAIMS, affected: list[str] | None = None) -> tuple[dict[str, dict], list[dict], dict | None]:
     """The checked claims of an answer by local id (each quote as the report's bytes), the lines refused with why, and the done line.
-    A line under a local id already kept is a resend and changes nothing; a quote overlapping withdrawn text is refused."""
+    A line under a local id already kept is a resend and changes nothing; a quote overlapping withdrawn text is refused
+    (ARM_A_WITHDRAWN_CHECK). `affected`, when given: the answer was asked which earlier conclusions a withdrawal affects, and its
+    {"kind":"affected"} lines are added to it, each text once; they are no claims, carry no quotes and are never refused."""
     spans = []
-    for w in withdrawn:
+    for w in withdrawn if ARM_A_WITHDRAWN_CHECK else []:
         span, _ = resolve_quote(docs.get(w["report"], ""), w["quote"])
         if span:
             spans.append((w["report"], span))
     new, refused, done = {}, [], None
     for v in lines:
         kind, local = v.get("kind"), v.get("local_id")
+        if kind == "affected" and affected is not None:
+            if isinstance(v.get("text"), str) and v["text"].strip() and v["text"] not in affected:
+                affected.append(v["text"])
+            continue
         if kind == "done":
             text = v.get("text") if isinstance(v.get("text"), str) else ""
             if done is not None:
@@ -2876,12 +3021,15 @@ def single_output_contract(claims: int, chars: int) -> str:
 def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], withdrawn: list[dict], *, phase: int, rq: str,
                   role: str, name: str = "single", context: dict | None = None, first: str | None = None,
                   stop_on_model_error: bool = True, max_response_chars: int | None = None, allowed_quotes: set | None = None,
-                  max_claims: int = SINGLE_CLAIMS, repair_context: str | None = None) -> dict | None:
+                  max_claims: int = SINGLE_CLAIMS, repair_context: str | None = None, affected: list[str] | None = None) -> dict | None:
     """A bounded answer and targeted repairs. Accepted lines stay; a repair gets only the refused lines, the original evidence,
     and a local output contract, rather than another full answer task and every accepted line. A failed/cut response contributes
     no new lines. An OUTPUT_OVERRUN is terminal for this answer, never a timeout retry: keep prior validated lines as INCOMPLETE.
+    A call the model's safeguards declined (MODEL_REFUSED) ends this answer, not the arm: what was validated before it stays, the
+    answer is INCOMPLETE and says why, and the next question goes on.
     `repair_context` contains the original task's evidence/question/withdrawals, with no new source access or answer instructions.
-    `first` supplies an already given initial answer, whose validation is identical."""
+    `first` supplies an already given initial answer, whose validation is identical. `affected`: see check_single; its lines do
+    not count against the bound of lines."""
     cap = SINGLE_RESPONSE_CHARS if max_response_chars is None else max_response_chars
     if not 1 <= max_claims <= SINGLE_CLAIMS or cap <= 0:
         raise ValueError("invalid arm A answer limits")
@@ -2912,6 +3060,13 @@ def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], w
         if c is None:
             return None
         repairs = attempt
+        if model_refused(c):
+            # the model's safeguards declined this answer: it closes with what was validated before (nothing, when the first call
+            # was declined) and the arm goes on to the next question, as a declined task of arm C closes (live run 10A-8)
+            log.event(arm="A", phase=phase, kind=role, rq_id=rq, name=name, call_id=c.call_id, outcome="MODEL_REFUSED", error=c.error)
+            return {"outcome": "answered" if kept else "not_answered", "claims": list(kept.values()),
+                    "unsettled": (done or {}).get("text"), "refused_at_end": refused, "repairs": repairs,
+                    "complete": False, "error": c.error, "model_refused": True}
         if not c.ok:
             overrun = f"{OUTPUT_OVERRUN}:" in (c.error or "")
             if stop_on_model_error and not overrun:
@@ -2925,7 +3080,7 @@ def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], w
         lines, local, _ = check_answer(c, allow_empty=False, bound=limit + 1)
         if len(c.text or "") > cap:
             local={"error":{"code":"ANSWER_PARTIAL_TOO_LONG","message":f"Answer must fit {cap} characters; send it again shorter."}}
-        elif local is None and len(lines) > limit + 1:
+        elif local is None and sum(affected is None or v.get("kind") != "affected" for v in lines) > limit + 1:
             local={"error":{"code":"ANSWER_TOO_MANY_LINES","message":f"Send at most {limit} claim lines and one done line."}}
         whole = local is not None
         if whole:
@@ -2933,7 +3088,7 @@ def single_answer(log: "Log", model: Model, prompt: str, docs: dict[str, str], w
             # Never put a cut or oversized response back into the next prompt; malformed examples are not useful repair input.
             previous = "(cut at the output limit)" if local["error"].get("code") in ("OUTPUT_LIMIT","ANSWER_PARTIAL_TOO_LONG") else "(invalid response omitted)"
             continue
-        new, refused, got = check_single(lines, docs, withdrawn, kept, max_claims=max_claims)
+        new, refused, got = check_single(lines, docs, withdrawn, kept, max_claims=max_claims, affected=affected)
         for local_id, claim in list(new.items()):
             why = ("repair may only correct a refused local_id" if allowed_ids is not None and local_id not in allowed_ids else
                    "quote is not among the validated per-report partial answers" if allowed_quotes is not None and
@@ -2966,6 +3121,8 @@ def answers_status(answers: dict, log: "Log") -> tuple[str, str | None]:
         return "STOPPED", log.stopped
     if len(answers) == len(QUESTIONS) and all(a.get("complete") for a in answers.values()):
         return "COMPLETE", None
+    if any(a.get("model_refused") for a in answers.values()):
+        return "INCOMPLETE", "the model declined one or more answers (MODEL_REFUSED)"
     if any(a.get("partial_reports_missing") for a in answers.values()):return "INCOMPLETE","one or more per-report partial answers are incomplete"
     return "INCOMPLETE", "an answer ended without its done line or with lines refused after its repairs"
 
@@ -2979,6 +3136,7 @@ def answer_phases(log: "Log", model: Model, docs: dict[str, str], withdraw: dict
     rules = G.append_to(rules)
     if ARM_A_ANSWER=="map-reduce":
         if first is not None:raise ValueError("map-reduce needs its own report/notes inputs; precomputed answers are not allowed")
+        if plan_messages(withdraw):raise ValueError(MESSAGE_ARMS)
         res["answer_strategy"]=ARM_A_ANSWER
     for q in QUESTIONS:
         prompt = f"{corpus}\nQUESTION {q['id']}: {q['text']}\n{rules}"
@@ -3001,37 +3159,48 @@ def answer_phases(log: "Log", model: Model, docs: dict[str, str], withdraw: dict
         res["phase2"] = skipped_phase("PHASE1_STOPPED")
     elif withdraw:
         steps = withdrawal_steps(withdraw)
-        texts = chosen or [{"step": s["name"], "report": s["report"], **s["candidates"][0]} for s in steps]
-        previous, so_far = res["phase1"]["answers"], []
-        for n, (step, text) in enumerate(zip(steps, texts), start=2):
+        previous, so_far, told_steps = res["phase1"]["answers"], [], []
+        # a step of many texts (a whole or all step) is one phase: so_far holds every text withdrawn so far, for check_single
+        for n, (step, group) in enumerate(zip(steps, withdrawal_groups(steps, chosen, docs)), start=2):
             key = f"phase{n}"
             if so_far and res[f"phase{n - 1}"].get("status") == "STOPPED":
                 res[key] = skipped_phase("PREVIOUS_PHASE_STOPPED")
                 continue
             log.deadline = time.monotonic() + timeout_s
             t1 = time.monotonic()
-            so_far.append(text)
+            so_far.extend(group)
+            told_steps.append((step, group))
             res[key] = {"step": step["name"], "answers": {}}
-            told = "".join(f"WITHDRAWN QUOTE: \"{w['quote']}\" (report {w['report']}): a later revision withdraws it.\n" for w in so_far)
+            told = "".join(withdrawal_told(s, g) for s, g in told_steps)
+            noticed = step.get("message") is not None
             for q in QUESTIONS:
                 before = "\n".join(json.dumps({"kind": "claim", "local_id": cl["id"], "text": cl["text"],
                                                "quotes": [{"report": x["report"], "exact_quote": x["quote"]} for x in cl["quotes"]]})
                                    for cl in previous[q["id"]]["claims"])
                 prompt = (f"{corpus}\nQUESTION {q['id']}: {q['text']}\n{told}"
-                          f"YOUR ANSWER BEFORE THE WITHDRAWAL:\n{before or '(no claims)'}\nAnswer again: drop what rests only on withdrawn "
-                          f"text, keep valid support from elsewhere.\n{rules}")
+                          f"YOUR ANSWER BEFORE THE WITHDRAWAL:\n{before or '(no claims)'}\n"
+                          + (NOTICE_UPDATE if noticed else "Answer again: drop what rests only on withdrawn text, keep valid support from elsewhere.\n")
+                          + rules)
+                noted = [] if noticed else None
                 if ARM_A_ANSWER=="map-reduce":
                     from .answer_map_reduce import answer
                     sink=res[key].setdefault("partials",{}).setdefault(q["id"],[])
                     ans=answer(log,model,docs,so_far,q,n,rules,name,"UPDATE",context,notes_by_report,sink)
                 else:ans = single_answer(log, model, prompt, docs, so_far, phase=n, rq=q["id"], role="UPDATE", name=name, context=context,
-                                          repair_context=f"{corpus}\nQUESTION {q['id']}: {q['text']}\n{told}")
+                                          repair_context=f"{corpus}\nQUESTION {q['id']}: {q['text']}\n{told}", affected=noted)
                 if ans is None:
                     break
                 res[key]["answers"][q["id"]] = ans
+                if noted is not None:
+                    # the conclusions of its previous answer the lead says the notices affect: its own reading, not checked
+                    res[key].setdefault("affected", {})[q["id"]] = noted
             status, reason = answers_status(res[key]["answers"], log)
             res[key].update(wall_s=time.monotonic() - t1, status=status, reason=reason)
-            previous = res[key]["answers"] if status != "STOPPED" else previous
+            if status != "STOPPED":
+                # an update the model declined before it gave a line is no new version of the answer: the next step updates the
+                # last answered one, while this phase keeps the declined, empty answer in its record
+                previous = {qid: previous[qid] if ans.get("model_refused") and not ans.get("claims") and qid in previous else ans
+                            for qid, ans in res[key]["answers"].items()}
     else:
         res["phase2"] = skipped_phase("NO_WITHDRAWAL")
 
@@ -3074,6 +3243,8 @@ def run_arm_team(team: list[Model], docs: dict[str, str], withdraw: dict, timeou
     if ARM_A_ORCHESTRATION in ("langgraph-native", "temporal-native"):
         # the same team, prompts and checks as one LangGraph graph or one Temporal workflow with their own checkpoints, retries and
         # native means
+        if plan_messages(withdraw):
+            raise ValueError(MESSAGE_ARMS)
         if ARM_A_ORCHESTRATION == "langgraph-native":
             from .arm_a_langgraph import run as run_native
         else:
@@ -3572,11 +3743,16 @@ def measures(a: dict, c: dict, docs: dict[str, str] | None = None) -> dict:
         "worker_errors": [e for e in c["events"] + a["events"] if e.get("outcome") == "ERROR"],
         # submissions whose answer was lost (stored or not: read the WAL receipt) and errors after a stop (Codex's review of 77a803e, R02)
         "ack_unknown": [e for e in c["events"] if e.get("outcome") == "ACK_UNKNOWN"],
-        "closing_lines_cut": sum(1 for e in a.get("events") or [] if e.get("kind") == "CLOSING_LINE_CUT"), "model_refusals": [e for e in c["events"] if e.get("outcome") == "MODEL_REFUSED"],
+        "closing_lines_cut": sum(1 for e in a.get("events") or [] if e.get("kind") == "CLOSING_LINE_CUT"),
+        # both arms: a declined task closes in either and its arm goes on (arm A's events carry arm "A")
+        "model_refusals": [e for e in c["events"] + (a.get("events") or []) if e.get("outcome") == "MODEL_REFUSED"],
         "errors_after_stop": [e for e in c["events"] + a["events"] if e.get("outcome") == "ERROR_AFTER_STOP"],
         "semantic_check": "manual and blind: answers_blind.md by checklist.md; the variant key is in answers_key.json",
         "strategies": STRATEGIES,
-        "withdrawal_roles": WITHDRAWAL_ROLES,
+        # a plan of whole or all steps fixed what each step withdraws, and says it in each withdrawal's reason; the roles above
+        # describe the plans that choose a candidate
+        "withdrawal_roles": WITHDRAWAL_ROLES if not any(w.get("whole") or w.get("all") for w in c.get("withdrawals") or [])
+        else {w["step"]: w["reason"] for w in c["withdrawals"]},
         "phase2_max_calls": PHASE2_MAX_CALLS,
         "phase2_cap_rule": PHASE2_CAP_RULE,
         "acquire_wait_ms": ACQUIRE_WAIT_MS,
@@ -3626,7 +3802,9 @@ def answers_md(a: dict, c: dict) -> tuple[str, dict]:
     out = ["# Pilot: answers for the blind manual check (grade by checklist.md)", ""]
     w = c.get("withdrawn")
     for x in (w if isinstance(w, list) else [w] if w else []):
-        out += [f"Withdrawn in phase {x.get('phase', 2)} ({x.get('step', '2')}): \"{x['quote']}\" ({x['report']})", ""]
+        # a whole report is named, not copied into the grader's page
+        what = "the whole report" if x.get("whole") else f"\"{x['quote']}\""
+        out += [f"Withdrawn in phase {x.get('phase', 2)} ({x.get('step', '2')}): {what} ({x['report']})", ""]
     phases = ["phase1"] + sorted({k for k in list(a) + list(c) if re.fullmatch(r"phase[2-9]", k)})
     for ph in phases:
         for q in QUESTIONS:

@@ -295,6 +295,52 @@ def reuse_arm_c(src: pathlib.Path, out: pathlib.Path, corpus: dict, withdraw: di
     return c, reused
 
 
+def check_withdrawal(withdraw: dict, docs: dict[str, str]) -> None:
+    """The plan before any work: each step names selected reports and exact quotes in them, each holding its anchor. A whole step
+    ({"whole": true}) names a selected report and withdraws all of it; an all step ({"all": true}) withdraws each of its candidates,
+    each naming its own report; any other step names one report, and one of its candidates is withdrawn. A step's "message", told to
+    arm A in place of the withdrawn text, is text, and only the direct answer of arm A tells it (pilot_ac.MESSAGE_ARMS). Step names are
+    unique: arm A finds a step's texts by its name. A quote of an all step occurs once in its report: the kernel closes every
+    occurrence of a withdrawn text, so a repeated sentence would take more than the plan names."""
+    def once(report, cand: dict) -> bool:
+        quote, anchor = cand.get("quote"), cand.get("anchor")
+        if report not in docs or not isinstance(quote, str) or not quote or not isinstance(anchor, str) or anchor not in quote:
+            return False
+        at = docs[report].find(quote)
+        return at >= 0 and docs[report].find(quote, at + 1) < 0
+
+    steps = P.withdrawal_steps(withdraw)
+    names = [step.get("name") for step in steps]
+    if len(set(names)) != len(names):
+        raise ValueError(f"withdrawal step names must be unique: {names}")
+    for step in steps:
+        if "message" in step and not (isinstance(step["message"], str) and step["message"].strip()):
+            raise ValueError(f"withdrawal step {step.get('name')}: a message is nonempty text")
+        if step.get("whole"):
+            if step.get("report") not in docs:
+                raise ValueError(f"withdrawal step {step.get('name')}: a whole step names a selected report")
+        elif step.get("all"):
+            cands = step.get("candidates")
+            if not isinstance(cands, list) or not cands:
+                raise ValueError(f"withdrawal step {step.get('name')}: an all step needs at least one candidate")
+            for cand in cands:
+                if not isinstance(cand, dict) or not once(cand.get("report"), cand):
+                    raise ValueError(f"withdrawal step {step.get('name')}: each candidate of an all step names a selected report and a "
+                                     "quote that occurs exactly once in it (with its anchor)")
+        else:
+            for cand in step["candidates"]:
+                if step.get("report") not in docs or not cand.get("quote") or cand["quote"] not in docs[step["report"]] or cand["anchor"] not in cand["quote"]:
+                    raise ValueError("withdrawal must name a selected report and an exact quote in it (with its anchor)")
+    if P.plan_messages(withdraw) and not P.ARM_A_FROZEN:
+        # the notes arm and the map-reduce answer would tell arm A the withdrawn text, not the message
+        if P.ARM_A_MODE == "notes" or P.ARM_A_ANSWER == "map-reduce":
+            raise ValueError(P.MESSAGE_ARMS)
+        if P.ARM_A_WITHDRAWN_CHECK:
+            raise ValueError("a plan whose steps tell arm A a message needs --arm-a-no-withdrawn-check: arm A is not told the withdrawn "
+                             "text, so the runner refusing its quotes of that text would remove them for it, and what arm A still rests on "
+                             "the withdrawn text would be 0 by construction, not by its own update")
+
+
 def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pathlib.Path, model: P.Model, workers: int, withdraw: dict | None,
         budget_usd: float | None = None, builder: P.Model | None = None, phase_timeout_s: float = 1800, builder_card: dict | None = None,
         checklist: str | None = None, team: list[P.Model] | None = None, max_calls: int = P.MAX_CALLS) -> dict:
@@ -328,10 +374,7 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
         if checklist is not None:  # the blind checklist written for this corpus (corpus_choice); a synthetic run may have none
             (out / "checklist.md").write_text(checklist, encoding="utf-8", newline="\n")
         withdraw = withdraw or P.default_withdrawal(docs)
-        for step in P.withdrawal_steps(withdraw):
-            for cand in step["candidates"]:
-                if step.get("report") not in docs or not cand.get("quote") or cand["quote"] not in docs[step["report"]] or cand["anchor"] not in cand["quote"]:
-                    raise ValueError("withdrawal must name a selected report and an exact quote in it (with its anchor)")
+        check_withdrawal(withdraw, docs)
         save_json(out / "withdrawal.json", withdraw)
         # one brake per arm (S1: the kernel's arm spent the shared brake and arm A stopped before its last withdrawal step)
         budgets = {arm: P.Budget(budget_usd) if budget_usd is not None else None for arm in ("C", "A")}
@@ -424,7 +467,8 @@ def run(manifest: pathlib.Path, repo: pathlib.Path, reports: list[str], out: pat
                                      **({"circles_refiner":{"model":P.CIRCLES_REFINER.name,"refine_budget_s":P.REFINE_BUDGET_S,"timeout_s":getattr(P.CIRCLES_REFINER,"timeout_s",None)}} if P.CIRCLES_REFINER is not None else {}), "agy_timeout_s": P.AGY_TIMEOUT_S, "agent_timeout_s": P.AGENT_TIMEOUT_S,
                                      **({"graph_quality":P.GRAPH_QUALITY} if P.GRAPH_QUALITY else {}),"ontology_revisions":P.ONTOLOGY_REVISIONS,"ontology_review":P.ONTOLOGY_REVIEW,**({"unattested_at_end":True} if P.UNATTESTED_AT_END else {}),"ontology_thresholds":P.ONTOLOGY_THRESHOLDS, "answer_timeout_s": P.ANSWER_TIMEOUT_S,**({"agent_attempts":P.AGENT_ATTEMPTS} if P.AGENT_ATTEMPTS is not None else {}),**({"arm_a_answer":P.ARM_A_ANSWER} if P.ARM_A_ANSWER!="direct" else {}),**({"arm_a_reduce":P.ARM_A_REDUCE} if P.ARM_A_REDUCE!="single" else {}),**({"arm_a_orchestration":P.ARM_A_ORCHESTRATION} if P.ARM_A_ORCHESTRATION!="runner" else {}),**({"build_scope":P.BUILD_SCOPE} if P.BUILD_SCOPE!="full" else {})},
                    "strong_reader": {"arm_a": P.ARM_A_MODE, "max_lines": P.MAX_LINES, "pairs_only": P.PAIRS_ONLY, "link_checker": P.LINK_CHECKER,
-                                     "whole_reader": P.WHOLE_READER, "whole_steps": P.WHOLE_STEPS, "whole_links": P.WHOLE_LINKS},
+                                     "whole_reader": P.WHOLE_READER, "whole_steps": P.WHOLE_STEPS, "whole_links": P.WHOLE_LINKS,
+                                     "arm_a_withdrawn_check": P.ARM_A_WITHDRAWN_CHECK},
                    "team": [{"agent": f"w{i}", "model": m.name, "config": getattr(m, "config", None)} for i, m in enumerate(team, start=1)] if team else None,
                    "backpressure": {"records": P.BACKPRESSURE_RECORDS, "per_task": P.BACKPRESSURE_PER_TASK} if P.BACKPRESSURE_RECORDS else None,
                    "withdrawn": c.get("withdrawn"), "spend": spend,
@@ -694,10 +738,11 @@ def main() -> None:
     ap.add_argument("--reuse-arm-c", type=pathlib.Path,
                     help="take arm C of this earlier finished run on the same inputs as it ended, and run only arm A")
     ap.add_argument("--model", default="stub",
-                    help="stub (deterministic, free); deepseek: the DeepSeek API (key from DEEPSEEK_API_KEY); sonnet / haiku / opus: "
-                         "Claude Sonnet 5.5 / Haiku 5.5 / Opus 5.5 through Claude Code on the owner's Max plan (the brake counts its "
-                         "API-equivalent cost); codex:<id> or gpt-<...>: a Codex model; agy:<id>: the Antigravity CLI (AGY_BIN or agy on "
-                         "PATH); the closed layer adds its own models")
+                    help="stub (deterministic, free); deepseek: the DeepSeek API (key from DEEPSEEK_API_KEY); sonnet / haiku / opus / "
+                         "fable: Claude Sonnet 5.5 / Haiku 5.5 / Opus 5.5 / Fable 5.2 through Claude Code on the owner's Max plan (the "
+                         "brake counts its API-equivalent cost; fable has no default --budget-usd, and a call may last 1200 s); "
+                         "codex:<id> or gpt-<...>: a Codex model; agy:<id>: the Antigravity CLI (AGY_BIN or agy on PATH); the closed "
+                         "layer adds its own models")
     ap.add_argument("--effort", default="medium", help="the effort of a sonnet model (low, medium, high, xhigh, max)")
     ap.add_argument("--budget-usd", type=float, default=None,
                     help="the money brake of each arm (default: 2.0 for deepseek, 15.0 API-equivalent for sonnet)")
@@ -720,9 +765,17 @@ def main() -> None:
     ap.add_argument("--withdraw-report", help="the report path of --withdraw")
     ap.add_argument("--reports", type=pathlib.Path, help="a file of the corpus' report paths, one per line; needs its own --checklist "
                          "and --withdrawal-plan (or --withdraw). Without it the run is the first pilot's private set (the closed layer)")
+    ap.add_argument("--withdraw-preview", action="store_true",
+                    help="before each planned withdrawal the owner asks audit_withdraw_preview (it writes nothing); the run keeps the answer")
     ap.add_argument("--withdrawal-plan", type=pathlib.Path,
                     help='a JSON withdrawal plan fixed before the run: {"steps": [{"name": "2A", "report": <path>, "candidates": '
-                         '[{"anchor": <text>, "quote": <exact line holding it>}]}, ...]}')
+                         '[{"anchor": <text>, "quote": <exact line holding it>}]}, ...]}, one candidate of a step withdrawn; '
+                         '{"name": ..., "report": <path>, "whole": true} withdraws every byte of the report; {"name": ..., "all": true, '
+                         '"candidates": [{"report": <path>, "anchor": ..., "quote": ...}, ...]} withdraws each candidate in the same '
+                         'phase. Any step may carry a "message": what arm A is told of it in place of the withdrawn text')
+    ap.add_argument("--arm-a-no-withdrawn-check", action="store_true",
+                    help="arm A's quotes that overlap withdrawn text are not refused (their bytes are still checked): for a plan whose "
+                         "messages tell arm A of a withdrawal without its text")
     ap.add_argument("--checklist", type=pathlib.Path, help="the blind checklist written for the corpus of --reports")
     ap.add_argument("--questions", type=pathlib.Path,
                     help='the research questions of the corpus of --reports, fixed before the run: a JSON list of {"id", "text", '
@@ -739,7 +792,7 @@ def main() -> None:
     ap.add_argument("--team", metavar="PARTNER",
                     help="the team comparison: the --model agent leads and PARTNER reads and checks beside it, "
                          "with the kernel against the same two without it (shared notes, the lead answers); PARTNER is a Codex model such "
-                         "as gpt-6.1-sol, or opus, sonnet, haiku or stub; the strong-reader settings otherwise, --workers is not used")
+                         "as gpt-6.1-sol, or fable, opus, sonnet, haiku or stub; the strong-reader settings otherwise, --workers is not used")
     ap.add_argument("--team-effort", default="medium", help="reasoning effort of a Codex partner")
     ap.add_argument("--team-models", help="comma-separated reader models: aliases, agy:<id>, codex:<id>")
     ap.add_argument("--checker-model", help="the separate link checker (default: the lead model)")
@@ -747,7 +800,7 @@ def main() -> None:
     ap.add_argument("--circles", action="store_true", help="alternate durable reading waves and concurrent BUILD")
     ap.add_argument("--wave-sections", type=int, help="reading sections per circle (default: number of readers)")
     ap.add_argument("--circles-refiner", help="circles +1: the model of the swarm's independent graph builder that refines every circle "
-                    "after the swarm's BUILD (sonnet, haiku, opus or agy:<id>)")
+                    "after the swarm's BUILD (sonnet, haiku, opus, fable or agy:<id>)")
     ap.add_argument("--refine-budget-s", type=float, default=300.0, help="the longest REFINE of a circle; past it the swarm goes on")
     ap.add_argument("--refiner-timeout-s", type=float, default=240.0, help="the bound of one refiner call")
     ap.add_argument("--term-hygiene",action="store_true")
@@ -856,6 +909,8 @@ def main() -> None:
     if a.gap_pass < 0 or (a.gap_units is not None and not 4 <= a.gap_units <= 8):
         sys.exit("--gap-pass must be 0 (off) or positive; --gap-units 4..8")
     P.GAP_PASS, P.GAP_UNITS, P.GAP_PROFILE = a.gap_pass, a.gap_units, a.gap_profile
+    P.WITHDRAW_PREVIEW = a.withdraw_preview
+    P.ARM_A_WITHDRAWN_CHECK = not a.arm_a_no_withdrawn_check
     if a.strong_reader:
         if a.workers != 1:
             sys.exit("--strong-reader reads with one agent: give --workers 1")
@@ -914,7 +969,7 @@ def main() -> None:
         if not a.circles:sys.exit("--circles-refiner requires --circles")
         if not (math.isfinite(a.refine_budget_s) and a.refine_budget_s > 0 and math.isfinite(a.refiner_timeout_s) and a.refiner_timeout_s > 0):
             sys.exit("--refine-budget-s and --refiner-timeout-s must be finite and positive")
-        claude = {"sonnet": P.CLAUDE_MODEL, "haiku": P.CLAUDE_HAIKU, "opus": P.CLAUDE_OPUS}.get(a.circles_refiner)
+        claude = {"sonnet": P.CLAUDE_MODEL, "haiku": P.CLAUDE_HAIKU, "opus": P.CLAUDE_OPUS, "fable": P.CLAUDE_FABLE}.get(a.circles_refiner)
         P.CIRCLES_REFINER = (P.ClaudeCliModel(model=claude, timeout_s=a.refiner_timeout_s) if claude
                              else P.make_model(a.circles_refiner, timeout_s=a.refiner_timeout_s))
         P.REFINE_BUDGET_S = a.refine_budget_s
@@ -996,8 +1051,9 @@ def main() -> None:
             return versions_selftest(a.out, whole=P.WHOLE_READER)
         return selftest(a.workers)
     if a.control:
-        if a.model in ("sonnet", "haiku", "opus"):
-            claude = P.ClaudeCliModel(model={"haiku": P.CLAUDE_HAIKU, "opus": P.CLAUDE_OPUS}.get(a.model, P.CLAUDE_MODEL), effort=a.effort)
+        if a.model in ("sonnet", "haiku", "opus", "fable"):
+            claude = P.ClaudeCliModel(model={"haiku": P.CLAUDE_HAIKU, "opus": P.CLAUDE_OPUS, "fable": P.CLAUDE_FABLE}.get(a.model, P.CLAUDE_MODEL),
+                                      effort=a.effort)
             call = P.call_model(claude, "This is a configuration check. Reply with the single word OK.",
                                 call_id="control", arm="-", role="CONTROL", phase=0)
             print(json.dumps({"ok": call.ok, "error": call.error, "text": call.text, "usage": call.usage, "cost_usd": call.cost_usd,

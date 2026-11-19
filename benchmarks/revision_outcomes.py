@@ -1,6 +1,6 @@
 """What a withdrawal cost and what it took with it, counted from a run's files with no model and no judgement.
 
-For each side of a run folder and each withdrawal:
+For each side of a run folder and each withdrawal step (one phase; a step may withdraw several texts, then counted together):
 
   calls           model calls after the withdrawal, split into the withdrawn page, the assembly of the answer, and other pages
   tokens          the tokens of those calls for each model apart: each model cuts text its own way, so its tokens are its own unit
@@ -61,11 +61,11 @@ def page_of(folder: pathlib.Path, report: str) -> str | None:
     return path.read_bytes().decode("utf-8") if path.is_file() else None
 
 
-def where(call: dict, context: dict, page: str, doc_ids: set[str]) -> str:
+def where(call: dict, context: dict, pages: list[str], doc_ids: set[str]) -> str:
     if context.get("answer_stage") == "reduce" or context.get("kind") == "SUMMARIZE" or call.get("role") == "SUMMARIZE":
         return "assembly"
     named = f"{context.get('report')} {context.get('key')}"
-    return "withdrawn_page" if page in named or any(doc in named for doc in doc_ids) else "other_pages"
+    return "withdrawn_page" if any(page in named for page in pages) or any(doc in named for doc in doc_ids) else "other_pages"
 
 
 def tokens(call: dict) -> int:
@@ -85,27 +85,34 @@ def outcomes(folder: pathlib.Path) -> list[dict]:
         run = json.loads(side.read_text(encoding="utf-8"))
         if (run.get("phase2") or {}).get("status") == "SKIPPED" or not (run.get("phase1") or {}).get("answers"):
             continue
+        # one row per phase: a step that withdrew several texts (a whole report, or every candidate of an all step) is one phase
+        # of calls, counted once, and touches what any of its texts touches
+        phases: dict[int, list[dict]] = {}
         for step in plan:
-            n = step["phase"]
+            phases.setdefault(step["phase"], []).append(step)
+        for n, texts in phases.items():
+            reports = list(dict.fromkeys(t["report"] for t in texts))
             before, after = (run.get(f"phase{n - 1}") or {}).get("answers") or {}, (run.get(f"phase{n}") or {}).get("answers") or {}
-            doc_ids = {q["doc_id"] for a in before.values() for c in a.get("claims") or [] for q in c.get("quotes") or [] if q.get("doc_id") and q.get("report") == step["report"]}
+            doc_ids = {q["doc_id"] for a in before.values() for c in a.get("claims") or [] for q in c.get("quotes") or [] if q.get("doc_id") and q.get("report") in reports}
             spent = {"withdrawn_page": 0, "assembly": 0, "other_pages": 0}
             by_model: dict[str, int] = {}
             sent = received = 0
             for call in calls:
                 if call.get("phase") == n and call.get("arm") == arm:
-                    spent[where(call, contexts.get(call.get("call_id")) or {}, step["report"], doc_ids)] += 1
+                    spent[where(call, contexts.get(call.get("call_id")) or {}, reports, doc_ids)] += 1
                     model = call.get("model") or "unknown"
                     by_model[model] = by_model.get(model, 0) + tokens(call)
                     sent += call.get("prompt_bytes") or 0
                     received += len((call.get("text") or "").encode("utf-8"))
             had, has = cited(before), cited(after)
-            page = page_of(folder, step["report"])
-            hit = {q for q in had if touched(q, step, page)}
-            rows.append({"run": folder.name, "side": arm, "step": step["step"], "calls": sum(spent.values()), **spent, "tokens_by_model": dict(sorted(by_model.items())), "bytes_sent": sent, "bytes_received": received,
-                         "page_found": page is not None, "quotes_before": len(had),
+            pages = {report: page_of(folder, report) for report in reports}
+            hit = {q for q in had if any(touched(q, t, pages[t["report"]]) for t in texts)}
+            stored = [stored_after_withdrawal(folder, t, pages[t["report"]]) for t in texts] if arm == "C" else []
+            rows.append({"run": folder.name, "side": arm, "step": texts[0]["step"], **({"texts": len(texts)} if len(texts) > 1 else {}),
+                         "calls": sum(spent.values()), **spent, "tokens_by_model": dict(sorted(by_model.items())), "bytes_sent": sent, "bytes_received": received,
+                         "page_found": all(page is not None for page in pages.values()), "quotes_before": len(had),
                          "quotes_touched": len(hit), "quotes_untouched_not_cited_after": len((had - hit) - has), "touched_still_cited": len(hit & has),
-                         **({"withdrawn_text_stored_after": stored_after_withdrawal(folder, step, page)} if arm == "C" else {})})
+                         **({"withdrawn_text_stored_after": None if all(s is None for s in stored) else sum(s or 0 for s in stored)} if arm == "C" else {})})
     return rows
 
 
