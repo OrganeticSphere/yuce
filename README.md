@@ -247,6 +247,10 @@ beside the journal with two tokens, `agent` for your agent and `owner` for you, 
 `agent` with the bridge entry below (`--agent-id agent`, its token in `SBGK_MCP_TOKEN`). `about` names the words your documents
 use for the topic: if no document holds any of them, the server says so at the start and in `audit_status`.
 
+`--unit-is-task` (off by default) is for a run whose documents are a plan: each unit is a task to do, and an answer that leaves a
+unit with nothing accepted does not close it; the unit is handed out again until the run's attempts run out. Leave it off for a
+reading run, where it would turn an honest "nothing here" into retries. A run pins the switch, on or off, with its other settings.
+
 The same flags fit in one file: `sbgk audit-serve --settings settings.json`, with relative paths taken from the file's folder.
 `examples/settings/` holds one you can run as it is.
 

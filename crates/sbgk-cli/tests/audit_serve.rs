@@ -261,6 +261,35 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(own.rpc("shutdown", json!({}))["result"], json!({}));
 }
 
+/// `--corpus-description` names the documents in the directives and is pinned with the run: a run goes on only with its words.
+#[test]
+fn the_words_a_run_names_its_documents_by_are_its_own_and_stay_with_it() {
+    let fx = Fixture::new("corpuswords");
+    let words = ["--corpus-description".to_string(), "a set of clinical study reports".to_string()];
+    let server = Server::start(&[fx.args(true), words.to_vec()].concat());
+    let mut w1 = Client::connect(server.port, W1);
+    let t = w1.call("audit_acquire", json!({}));
+    assert!(t["prompt"].as_str().unwrap().contains("an audit swarm over a set of clinical study reports."), "{t}");
+    drop(server);
+    // the run pinned them: it is not resumed without them, nor with other words
+    for given in [vec![], vec!["--corpus-description".to_string(), "other words".to_string()]] {
+        let out = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(fx.args(false)).args(&given).output().unwrap();
+        assert!(!out.status.success(), "{given:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("corpus_description"), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let server = Server::start(&[fx.args(false), words.to_vec()].concat());
+    assert_eq!(server.hello["audit"]["resumed"], true, "{}", server.hello);
+    // words that are no single line are refused before a run starts
+    let bad = Fixture::new("corpuswordsbad");
+    let out = Command::new(BIN)
+        .args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"])
+        .args(bad.args(true))
+        .args(["--corpus-description", "two\nlines"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("--corpus-description"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
 #[test]
 fn a_run_completes_on_the_wire_and_resumes_from_the_journal_after_a_kill() {
     let fx = Fixture::new("run");
@@ -268,7 +297,9 @@ fn a_run_completes_on_the_wire_and_resumes_from_the_journal_after_a_kill() {
     let mut w1 = Client::connect(server.port, W1);
     let t = w1.call("audit_acquire", json!({}));
     assert_eq!(t["kind"], "EXTEND", "{t}");
-    assert!(t["prompt"].as_str().unwrap().contains("over a corpus of engineering reports."), "the words of the measured runs: {t}");
+    // the documents are named neutrally unless the run names them (0.2.3; the runs before said "a corpus of engineering reports")
+    assert!(t["prompt"].as_str().unwrap().contains("an audit swarm over the provided source documents."), "{t}");
+    assert!(!t["prompt"].as_str().unwrap().contains("engineering reports"), "{t}");
     let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
     assert_eq!(r["status"], "COMMITTED", "{r}");
     drop(server); // killed: nothing flushed beyond the journal
