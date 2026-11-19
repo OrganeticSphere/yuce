@@ -35,6 +35,10 @@
 * **A corpus can bring its own research questions.** `benchmarks/run_pilot_ac.py --questions <file>` takes a JSON list of
   questions with their topics (default: RQ1 and RQ2, as before), checks it before any work, gives it to the kernel and records it
   in the run's snapshot. `benchmarks/test_questions_option.py` checks the file and a stub run that answers each question.
+* **`audit_leases`: the owner reads the tasks out now.** A read-only tool of the owner on a running `sbgk audit-serve`: of each
+  open lease its task id, the kind and the key of its work, the agent that holds it and the milliseconds left; never the text of a
+  task. It takes no step of the run and writes no frame, like the other reading tools, and it is refused to every other role.
+  `Client.leases()` in the Python client. The rules and the journal format do not change.
 
 ## 0.2.2 (2026-11-15)
 

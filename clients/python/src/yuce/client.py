@@ -195,6 +195,11 @@ class Client:
         """Counters and the roots of the run."""
         return self.call("audit_status", ontology=ontology, telemetry=telemetry)
 
+    def leases(self) -> dict:
+        """The tasks out now: of each open lease its task id, the kind and the key of its work, the agent and the milliseconds
+        left. It only reads."""
+        return self.call("audit_leases")
+
     def record(self, record: str) -> dict:
         """One record with its basis and whether it is still grounded."""
         return self.call("audit_record", record=record)

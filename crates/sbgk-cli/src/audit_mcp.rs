@@ -49,8 +49,9 @@ use std::time::{Duration, Instant};
 const PROTOCOL: &str = "2025-06-18";
 /// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, not even what the
 /// dispatcher keeps pending (see `reads_only`), and stay open after the run is closed (a preview of a withdrawal then answers with
-/// the refusal the withdrawal would get).
-const READ_TOOLS: [&str; 6] = ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview"];
+/// the refusal the withdrawal would get). `audit_leases` is one of them: it reads the dispatcher's open leases and takes no step.
+const READ_TOOLS: [&str; 7] =
+    ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview", "audit_leases"];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
 /// Longest `max_wait_ms` an `audit_acquire` can ask for.
@@ -90,6 +91,7 @@ impl Role {
             Role::Builder => &["audit_next_card", "audit_submit_ops", "audit_builder_failure"],
             Role::Owner => &[
                 "audit_status",
+                "audit_leases",
                 "audit_links",
                 "audit_link_status",
                 "audit_concept_status",
@@ -476,6 +478,11 @@ fn tool_defs() -> Vec<Value> {
             schema(json!({"ontology":{"type":"boolean"},"telemetry":{"type":"boolean"}}), &[]),
         ),
         t(
+            "audit_leases",
+            "The tasks out now: of each open lease its task id, the kind and the key of its work, the agent that holds it and the milliseconds left. Never the text of a task. It only reads: no step of the run, nothing written.",
+            schema(json!({}), &[]),
+        ),
+        t(
             "audit_links",
             "Links of the graph with full ids, optionally of one status.",
             schema(json!({"status": {"type": "string", "enum": ["proposed", "accepted", "rejected"]}}), &[]),
@@ -860,6 +867,11 @@ impl AuditServer {
                 Err(e) => e,
             },
             "audit_active_claims" => read::active_claims(&g.state, args.get("doc_id").and_then(Value::as_str), limit_arg(args)),
+            "audit_leases" => {
+                let leases = g.dispatch.open_leases(now);
+                json!({"status": "LEASES", "open": leases.len(), "leases": leases,
+                       "meaning": "the tasks handed out and not yet returned, as the dispatcher holds them now; a lease with 0 ms left is taken back by the next call that coordinates"})
+            }
             "audit_coverage" => match args.get("unit_status").and_then(Value::as_str) {
                 Some(status) if !UNIT_STATUSES.contains(&status) => bad_arg(format!("'unit_status' is one of {}", UNIT_STATUSES.join(", "))),
                 status => read::coverage(&g.state, g.state.entries().unwrap_or(0), args.get("doc_id").and_then(Value::as_str), status, limit_arg(args)),

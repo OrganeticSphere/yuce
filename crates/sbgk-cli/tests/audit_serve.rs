@@ -233,7 +233,11 @@ fn rights_come_from_the_subject_token_on_every_method() {
     assert_eq!(gb.tools(), ["audit_next_card", "audit_submit_ops"]);
     assert_eq!(gb.call("audit_acquire", json!({}))["code"], -32003);
     let mut own = Client::connect(server.port, OWN);
-    assert_eq!(own.tools().len(), 16, "nine tools of 0.1, the four reading tools of 0.2, audit_seal and the coverage of 0.2.1, the preview of 0.2.2");
+    assert_eq!(
+        own.tools().len(),
+        17,
+        "nine tools of 0.1, the four reading tools of 0.2, audit_seal and the coverage of 0.2.1, the preview of 0.2.2, audit_leases"
+    );
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
     // the lease belongs to the authenticated subject, whatever agent_id the client claims
@@ -2189,6 +2193,75 @@ fn the_coverage_table_is_read_on_the_wire_over_the_journal_and_from_the_index() 
     assert_eq!((&none["summary"]["gap_pass"], none["packs"].as_array().map(Vec::len)), (&json!(false), Some(0)), "{none}");
 }
 
+/// `audit_leases` shows the owner the tasks out now and nothing else: of each open lease its task id, the kind and the key of its
+/// work, the agent that holds it and the milliseconds left, without the text of the task. It is the owner's alone, takes no step
+/// of the run and writes no frame; a task handed in is no longer listed, and the list is still read after the run is closed.
+#[test]
+fn the_owner_reads_the_tasks_out_now_and_the_reading_writes_nothing() {
+    let fx = Fixture::new("leases");
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
+    // the owner's alone: no other role lists it, and a call with another token is refused
+    assert!(own.tools().iter().any(|t| t == "audit_leases"));
+    for other in [&mut w1, &mut gb] {
+        assert!(!other.tools().iter().any(|t| t == "audit_leases"));
+        let refused = other.call("audit_leases", json!({}));
+        assert_eq!(refused["code"], -32003, "{refused}");
+    }
+    let none = own.call("audit_leases", json!({}));
+    assert_eq!((none["status"].as_str(), none["open"].as_u64(), none["leases"].as_array().map(Vec::len)), (Some("LEASES"), Some(0), Some(0)), "{none}");
+
+    // two agents take a task each: both are listed, with exactly the five fields and no text of a task
+    let (t1, t2) = (w1.call("audit_acquire", json!({"max_wait_ms": 200})), w2.call("audit_acquire", json!({"max_wait_ms": 200})));
+    assert_eq!((t1["status"].as_str(), t2["status"].as_str()), (Some("DIRECTIVE"), Some("DIRECTIVE")), "{t1} {t2}");
+    let wal = fx.p("run.wal");
+    let before = std::fs::read(&wal).unwrap();
+    let out = own.call("audit_leases", json!({}));
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "the reading wrote no frame");
+    assert_eq!(out["open"], 2, "{out}");
+    let leases = out["leases"].as_array().unwrap();
+    for (lease, (task, agent)) in leases.iter().zip([(&t1, "w1"), (&t2, "w2")]) {
+        let mut fields: Vec<&str> = lease.as_object().unwrap().keys().map(String::as_str).collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["agent", "key", "kind", "ms_left", "task_id"], "{lease}");
+        assert_eq!((&lease["task_id"], &lease["kind"], &lease["key"], lease["agent"].as_str()), (&task["task_id"], &task["kind"], &task["key"], Some(agent)));
+        let left = lease["ms_left"].as_u64().unwrap();
+        assert!(left > 0 && left <= task["expires_at_ms"].as_u64().unwrap(), "{lease}");
+    }
+    let text = out.to_string();
+    assert!(!text.contains("Topic A is reported") && !text.contains("prompt"), "no text of a task: {text}");
+    // read again and again, the list is the same but for the time left, and the journal's bytes are as they were
+    for _ in 0..5 {
+        let again = own.call("audit_leases", json!({}));
+        assert_eq!(again["open"], 2, "{again}");
+    }
+    assert_eq!(own.call("audit_status", json!({"telemetry": true}))["leases"], 2);
+    assert_eq!(std::fs::read(&wal).unwrap(), before, "seven readings wrote no frame");
+
+    // a task handed in is no longer listed
+    assert_eq!(w1.call("audit_submit", json!({"task_id": t1["task_id"], "lines": answer(&t1)}))["status"], "COMMITTED");
+    let out = own.call("audit_leases", json!({}));
+    assert_eq!((out["open"].as_u64(), out["leases"][0]["agent"].as_str()), (Some(1), Some("w2")), "{out}");
+    assert_eq!(w2.call("audit_submit", json!({"task_id": t2["task_id"], "lines": answer(&t2)}))["status"], "COMMITTED");
+    // the run goes to its end and is closed: the list is still read, and it is empty
+    for _ in 0..20 {
+        catch_up(&mut gb);
+        let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+        match t["status"].as_str().unwrap() {
+            "COMPLETE" => break,
+            "WAIT" => continue,
+            _ => {}
+        }
+        assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    assert_eq!(own.call("audit_close", json!({}))["status"], "CLOSED");
+    let closed = std::fs::read(&wal).unwrap();
+    let out = own.call("audit_leases", json!({}));
+    assert_eq!((out["status"].as_str(), out["open"].as_u64()), (Some("LEASES"), Some(0)), "{out}");
+    assert_eq!(std::fs::read(&wal).unwrap(), closed);
+}
+
 /// The preview writes nothing even while the dispatcher keeps an entry pending (Codex review of e7af1bfc, WPRE-01): an agent's
 /// lease expired and its failure waits to be written, its long poll waits, and the owner's preview leaves the journal's bytes as
 /// they are; the pending failure is then written by the next call that coordinates, the long poll's own.
@@ -2243,6 +2316,7 @@ fn the_reading_tools_leave_the_dispatchers_pending_entries_to_the_calls_that_coo
     let started = Instant::now();
     let reads = [
         ("audit_status", json!({"telemetry": true})),
+        ("audit_leases", json!({})),
         ("audit_links", json!({})),
         ("audit_dependents", json!({"doc_id": doc})),
         ("audit_active_claims", json!({})),
