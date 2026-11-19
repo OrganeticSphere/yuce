@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+* **A run pins whether its units are tasks, on or off.** `--unit-is-task` stays off by default; a run now pins `unit_is_task:
+  true` or `false` in the settings it starts with, so its journal says which way it ran. A journal before 0.2.3 pinned the switch
+  only when on: one without it reads as off, goes on as a reading run and is not resumed as a plan run. The switch is for plans,
+  where an answer that leaves a unit with nothing accepted must not close it; in a reading run it would turn an honest "nothing
+  here" into retries, and the section into one left unresolved.
+* **The directives name the documents neutrally, and a run can name them itself.** The directives began "You are one agent of an
+  audit swarm over a corpus of engineering reports", whatever the documents were. They now say "over the provided source
+  documents", and `sbgk audit-serve --corpus-description <words>` gives the words a run's documents are named by (one line, at
+  most 200 bytes). The words given are pinned with the run: it goes on only with the same words. A run on an opaque corpus keeps
+  "a source document corpus". To repeat a run measured before 0.2.3 word for word, give it `--corpus-description "a corpus of
+  engineering reports"`.
+* **A run pins the bound of its loss rereads.** `--auto-rereads` (20 unless given) is written into the settings a run pins at its
+  start (`auto_reread_limit`), and a run is not resumed under another bound. A journal started before 0.2.3 pins none and goes on
+  under any bound, as before, by its settings checkpoint and by the settings hash of its genesis alike.
 * **A reading given up is no reading in the coverage table.** A section whose first reading was given up with nothing recorded was
   counted as read: closed by an answer abandoned after refused ones, or closed unresolved, or out of attempts, and no loss reread
   of it stored a record either. Its units came out `left_by_budget`, or `empty` under a pack of the gap pass, and `complete` could

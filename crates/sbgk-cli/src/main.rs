@@ -133,6 +133,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "circles",
     "circles-refiner",
     "concept-functions",
+    "corpus-description",
     "docs",
     "dynamic-roles",
     "evolution-cards",
@@ -1008,7 +1009,10 @@ Audit server for a team of agents:
                 --docs <folder> [--select <list>] --run-id for your own UTF-8 text files, and --wal --subjects --questions
                 --listen; the measured v0.1 profile for a team of three or more, --profile solo for one agent, --profile custom
                 to take every flag as given.
-                Started again on an existing --wal without --manifest or --docs, it resumes that run
+                Started again on an existing --wal without --manifest or --docs, it resumes that run.
+                --unit-is-task (off by default) is for a plan, where each unit is a task to do: an answer that leaves a unit
+                with nothing accepted does not close it. In a reading run it turns an honest empty answer into retries.
+                --corpus-description <words> names the documents in the directives (default: the provided source documents)
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the

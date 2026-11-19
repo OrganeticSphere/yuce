@@ -37,6 +37,10 @@ pub mod circles;
 // reading units and withdrawn text (Probe 1 findings 5, 4, 3, 11)
 mod units;
 
+/// The words the directives name the documents by when the run gives none (0.2.3): "an audit swarm over the provided source
+/// documents". The measured runs before 0.2.3 said "a corpus of engineering reports", whatever the documents were.
+pub const DEFAULT_CORPUS: &str = "the provided source documents";
+
 #[derive(Debug, Clone)]
 pub struct DispatchConfig {
     pub ttl_ms: u64,
@@ -44,8 +48,9 @@ pub struct DispatchConfig {
     pub agent_attempts: Option<u32>,
     /// Explicit transport deadline of SUMMARY/ANSWER only; None preserves historical leases.
     pub answer_timeout_ms: Option<u64>,
-    /// What the agents are told they read. A run on pinned reports keeps the words its measured runs had.
-    pub corpus: &'static str,
+    /// What the agents are told they read, as the words after "an audit swarm over": neutral by default (0.2.3; the measured runs
+    /// before it said "a corpus of engineering reports"), and what `--corpus-description` gives.
+    pub corpus: String,
     /// Upper bound of one report section handed to an agent (UTF-8 bytes).
     pub section_bytes: usize,
     /// Records shown as support (cone) or as already established.
@@ -114,7 +119,7 @@ impl Default for DispatchConfig {
             ttl_ms: 600_000,
             agent_attempts: None,
             answer_timeout_ms: None,
-            corpus: "a corpus of engineering reports",
+            corpus: DEFAULT_CORPUS.to_string(),
             section_bytes: 6000,
             max_cone: 12,
             max_known: 12,

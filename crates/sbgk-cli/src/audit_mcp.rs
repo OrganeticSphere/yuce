@@ -1673,8 +1673,14 @@ struct CoverageMode {
     ontology_review: bool,
     answer_timeout_ms: Option<u64>,
     build_scope: &'static str,
-    /// `--unit-is-task`, the plan profile: pinned only when on, so the settings of a run without it are those of every run before it
+    /// `--unit-is-task`, the plan profile: off unless given, and pinned in every run since 0.2.3, on or off (the architect's
+    /// decision of 18.11.2026, part I, A); a journal before it pins it only when on, and a journal without it reads as off
     unit_is_task: bool,
+    /// `--auto-rereads`, the bound of the loss rereads: pinned in every run since 0.2.3 (the architect's decision of 18.11.2026, part I,
+    /// A: the bounds of a run stand in its start checkpoint); a journal before it pins none, and goes on under any bound, as before
+    auto_reread_limit: usize,
+    /// `--corpus-description`, the words the directives name the documents by: pinned when given, so a run goes on with its words
+    corpus_description: Option<String>,
 }
 fn coverage_context(
     section_bytes: usize,
@@ -1684,7 +1690,18 @@ fn coverage_context(
     circles: Option<&sbgk_core::audit::directives::circles::CircleConfig>,
     mode: CoverageMode,
 ) -> Value {
-    let CoverageMode { ontology_review, answer_timeout_ms, agent_attempts, unattested_at_end, graph_quality, circle_refiner, build_scope, unit_is_task } = mode;
+    let CoverageMode {
+        ontology_review,
+        answer_timeout_ms,
+        agent_attempts,
+        unattested_at_end,
+        graph_quality,
+        circle_refiner,
+        build_scope,
+        unit_is_task,
+        auto_reread_limit,
+        corpus_description,
+    } = mode;
     // the rule the sections are cut by: a run cut by another one is not taken up again (HDR-R01)
     let mut context = json!({"format": "r2r-audit-mcp-coverage/1", "section_bytes": section_bytes,
                              "section_rule": sbgk_core::audit::directives::SECTION_RULE});
@@ -1701,8 +1718,10 @@ fn coverage_context(
     if unattested_at_end {
         context["unattested_at_end"] = json!(true);
     }
-    if unit_is_task {
-        context["unit_is_task"] = json!(true);
+    context["unit_is_task"] = json!(unit_is_task);
+    context["auto_reread_limit"] = json!(auto_reread_limit);
+    if let Some(words) = corpus_description {
+        context["corpus_description"] = json!(words);
     }
     if ontology_review {
         context["ontology_review"] = json!(true);
@@ -1732,8 +1751,44 @@ fn coverage_context(
     context
 }
 
+/// The settings a journal pins since 0.2.3 and a journal before it does not, with how such a journal reads the absent key: as
+/// that value (`unit_is_task`: a journal before 0.2.3 pinned it only when on), or `None`, under any value (it was not pinned then).
+const PINNED_SINCE_0_2_3: [(&str, Option<bool>); 2] = [("unit_is_task", Some(false)), ("auto_reread_limit", None)];
+
+/// The settings `given` as a journal whose pinned settings are `stored` pinned them: without a key pinned since 0.2.3 that the
+/// journal lacks, when the given value reads the same as its absence. A journal of 0.2.3 has the keys and is compared as it is.
+fn as_pinned_by(stored: Option<&Value>, given: &Value) -> Value {
+    let mut out = given.clone();
+    for (key, absent_reads) in PINNED_SINCE_0_2_3 {
+        let absent = stored.is_none_or(|s| s.get(key).is_none());
+        if absent && absent_reads.is_none_or(|v| given.get(key) == Some(&json!(v))) {
+            out.as_object_mut().map(|o| o.remove(key));
+        }
+    }
+    out
+}
+
+/// The settings `given` in the form this journal pins them, so that a check and the checkpoint a start writes agree on every later
+/// start (Codex's PR60-R1 of ea6fc1d8: a run before 0.2.3, cut off after its genesis, passed the check by the form without the keys
+/// pinned since, got the checkpoint of the full form, and was refused at its next start). A journal with the checkpoint is held
+/// against it; without one, a genesis that pins the form without those keys is a run before 0.2.3, and so is its checkpoint; any
+/// other journal, a new run's among them, pins the settings as given.
+fn settings_as_pinned(state: &AuditState, given: &Value) -> Value {
+    if let Some(checkpoint) = state.checkpoint(COVERAGE_CHECKPOINT) {
+        return as_pinned_by(Some(&checkpoint["context"]), given);
+    }
+    let hash = sbgk_core::audit::state::settings_hash;
+    let legacy = as_pinned_by(None, given);
+    match state.genesis_meta() {
+        Some(meta) if meta.settings_hash != hash(given) && meta.settings_hash == hash(&legacy) => legacy,
+        _ => given.clone(),
+    }
+}
+
 /// Whether a journal can go on under these settings: read only, so a refused start leaves the journal as it was.
 fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, resumed: bool) -> Result<(), String> {
+    // a journal before 0.2.3 lacks the settings pinned since: it is held against the settings without them (`PINNED_SINCE_0_2_3`)
+    let context = &settings_as_pinned(state, context);
     // a 0.2 journal names the hash of the canonical settings in its genesis; the checkpoint below still names what differs. A run the
     // library started names the empty settings: nothing is pinned there, and the checkpoint decides as before 0.2
     let unpinned = sbgk_core::audit::state::settings_hash(&json!({}));
@@ -1774,12 +1829,14 @@ fn check_coverage(state: &AuditState, context: &Value, section_bytes: usize, res
     Ok(())
 }
 
-/// Pins the settings of a new run; a run that has them stays as it is.
+/// Pins the settings of a new run; a run that has them stays as it is. A run before 0.2.3 cut off before its checkpoint gets the
+/// form its genesis pins, without the keys pinned since (`settings_as_pinned`), so it goes on as it started.
 fn bind_coverage(state: &mut AuditState, context: Value) -> Result<(), String> {
     // a 0.2 journal also pins their hash in its genesis (`settings_hash`); the checkpoint keeps them readable on resume
     if state.checkpoint(COVERAGE_CHECKPOINT).is_some() {
         return Ok(());
     }
+    let context = settings_as_pinned(state, &context);
     let checkpoint = json!({"key": COVERAGE_CHECKPOINT, "from": 0, "to": 0, "context": context});
     match state.submit_operations_id("audit-mcp-coverage-config", "kernel", &[], Some(checkpoint)) {
         Ok(result) if result["checkpointed"] == true && result["error"].is_null() => Ok(()),
@@ -2504,6 +2561,14 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
     // the graph builder's typed requests (U1): off unless the run gives a positive bound
     let max_requests: usize = a.num("builder-requests", 0);
     let auto_reread_limit: usize = a.num("auto-rereads", 20);
+    // what the directives call the documents (0.2.3): neutral unless the run names them; pinned with the run when given
+    let corpus_description = a.get("corpus-description").map(|words| {
+        let words = words.trim();
+        if words.is_empty() || words.len() > 200 || words.contains(['\n', '\r']) {
+            fail("--corpus-description: one line of 1 to 200 bytes that names the documents after \"an audit swarm over\", such as \"a set of clinical study reports\"");
+        }
+        words.to_string()
+    });
     // the gap pass (SPEC_V02_GAP_PASS): a profile file of tiers, its limit and pack size, or the two flags alone; off by default
     let mut gap = a.get("gap-profile").map_or_else(GapProfile::default, |p| {
         GapProfile::from_json(&read_json(p, "--gap-profile")).unwrap_or_else(|e| fail(&format!("--gap-profile: {}", e.to_json())))
@@ -2624,6 +2689,8 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
             unattested_at_end: a.sw("unattested-at-end"),
             build_scope,
             unit_is_task: a.sw("unit-is-task"),
+            auto_reread_limit,
+            corpus_description: corpus_description.clone(),
         },
     );
     // pinned with the run's settings: a run is not resumed with another gap pass (a run without one keeps its coverage bytes)
@@ -2651,7 +2718,13 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
     }
     bind_coverage(&mut state, coverage).unwrap_or_else(|error| fail(&error));
     let cfg = DispatchConfig {
-        corpus: if state.source_mode() == "opaque" { "a source document corpus" } else { DispatchConfig::default().corpus },
+        corpus: corpus_description.unwrap_or_else(|| {
+            if state.source_mode() == "opaque" {
+                "a source document corpus".to_string()
+            } else {
+                DispatchConfig::default().corpus
+            }
+        }),
         ttl_ms,
         answer_timeout_ms,
         agent_attempts,
@@ -2772,6 +2845,8 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "full",
             unit_is_task: false,
+            auto_reread_limit: 20,
+            corpus_description: None,
         };
         let current = coverage_context(128, &[], false, None, None, mode());
         assert_eq!(current["section_rule"], json!(sbgk_core::audit::directives::SECTION_RULE));
@@ -2792,7 +2867,7 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_setting_is_pinned_only_when_on_and_a_run_is_not_resumed_with_it_changed() {
+    fn the_plan_setting_is_pinned_on_or_off_and_a_run_is_not_resumed_with_it_changed() {
         // Probe 1 findings 3 and 11: `--unit-is-task` changes what the dispatcher closes, so a run keeps the setting it started with
         let dir = std::env::temp_dir().join(format!("sbgk_unit_is_task_{}_{}", std::process::id(), unix_ms()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -2805,9 +2880,11 @@ mod tests {
             answer_timeout_ms: None,
             build_scope: "none",
             unit_is_task,
+            auto_reread_limit: 20,
+            corpus_description: None,
         };
         let (off, on) = (coverage_context(300, &[], false, None, None, mode(false)), coverage_context(300, &[], false, None, None, mode(true)));
-        assert!(off.get("unit_is_task").is_none(), "off, the settings are those of every run before the switch: {off}");
+        assert_eq!(off["unit_is_task"], json!(false), "pinned off too since 0.2.3: {off}");
         assert_eq!(on["unit_is_task"], json!(true));
         let run = |name: &str, settings: &Value| {
             let docs = vec![("plan.md".to_string(), b"## Task #1\n\nDirective REV_A: draw a circle.\n".to_vec())];
@@ -2821,6 +2898,74 @@ mod tests {
         assert!(check_coverage(&plan, &off, 300, true).unwrap_err().contains("unit_is_task"), "a plan run is not resumed as a reading run");
         assert_eq!(check_coverage(&plan, &on, 300, true), Ok(()));
         assert!(check_coverage(&run("reading", &off), &on, 300, true).is_err(), "nor a reading run as a plan run");
+        // a journal before 0.2.3 pinned the switch only when on: one without the key is a reading run, by its checkpoint and by
+        // the settings hash of its genesis alike
+        let mut before = off.clone();
+        before.as_object_mut().unwrap().remove("unit_is_task");
+        let old = run("before", &before);
+        assert_eq!(check_coverage(&old, &off, 300, true), Ok(()), "an old reading run goes on as one");
+        assert!(check_coverage(&old, &on, 300, true).unwrap_err().contains("unit_is_task"), "and is not resumed as a plan run");
+        let mut plan_before = on.clone();
+        plan_before.as_object_mut().unwrap().remove("auto_reread_limit");
+        assert_eq!(check_coverage(&run("plan_before", &plan_before), &on, 300, true), Ok(()), "an old plan run goes on as one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The architect's decision of 18.11.2026 (part I, A): the bounds of a run stand in its start checkpoint. The bound of the loss
+    /// rereads is pinned in every run since 0.2.3, and a run is not resumed under another; a journal before 0.2.3 pins none, and
+    /// goes on under any bound, as it did, by its checkpoint and by the settings hash of its genesis alike.
+    #[test]
+    fn the_bound_of_rereads_is_pinned_and_a_journal_before_it_goes_on_as_before() {
+        let dir = std::env::temp_dir().join(format!("sbgk_reread_bound_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = |auto_reread_limit, corpus_description: Option<&str>| CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            auto_reread_limit,
+            corpus_description: corpus_description.map(str::to_string),
+        };
+        let context = |n, words| coverage_context(300, &[], false, None, None, mode(n, words));
+        assert_eq!((context(20, None)["auto_reread_limit"].as_u64(), context(0, None)["auto_reread_limit"].as_u64()), (Some(20), Some(0)));
+        assert!(context(20, None).get("corpus_description").is_none(), "words are pinned only when the run gives them");
+        let run = |name: &str, settings: &Value, bind: bool| {
+            let docs = vec![("a.md".to_string(), b"# A\n\ntext\n".to_vec())];
+            let mut state = AuditState::prepare_from_docs(&AuditOntology::base(), name, docs).unwrap();
+            let spec = GenesisSpec { questions: json!([]), settings: settings.clone(), operator_meta: None };
+            state.start_journal(&dir.join(format!("{name}.wal")), &spec).unwrap();
+            if bind {
+                bind_coverage(&mut state, settings.clone()).unwrap();
+            }
+            state
+        };
+        // a run of 0.2.3 keeps its bound
+        let new = run("new", &context(20, None), true);
+        assert_eq!(check_coverage(&new, &context(20, None), 300, true), Ok(()));
+        assert!(check_coverage(&new, &context(5, None), 300, true).unwrap_err().contains("auto_reread_limit"), "not resumed under another bound");
+        // a run of 0.2.3 cut off before its checkpoint goes on by its genesis hash
+        assert_eq!(check_coverage(&run("cut", &context(20, None), false), &context(20, None), 300, true), Ok(()));
+        // a journal before 0.2.3 pinned no bound (nor the plan switch when off): it goes on under any bound, by its checkpoint and by
+        // its genesis hash alone
+        let mut before = context(20, None);
+        before.as_object_mut().unwrap().remove("auto_reread_limit");
+        before.as_object_mut().unwrap().remove("unit_is_task");
+        for bind in [true, false] {
+            let old = run(&format!("old{bind}"), &before, bind);
+            for n in [0, 20, 7] {
+                assert_eq!(check_coverage(&old, &context(n, None), 300, true), Ok(()), "bound {n}, checkpoint {bind}");
+            }
+            // what it did pin still holds
+            assert!(check_coverage(&old, &context(20, Some("other words")), 300, true).is_err(), "checkpoint {bind}");
+        }
+        // the words a run gives are pinned with it
+        let worded = run("worded", &context(20, Some("a set of plans")), true);
+        assert_eq!(check_coverage(&worded, &context(20, Some("a set of plans")), 300, true), Ok(()));
+        assert!(check_coverage(&worded, &context(20, None), 300, true).unwrap_err().contains("corpus_description"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2889,5 +3034,94 @@ mod tests {
             let v = for_swarm(json!({"status": "REPAIR_REQUIRED", "task_id": "T1-x", "failed_index": 1, "repair_scope": scope}));
             assert_eq!(v["repair_scope"], scope, "live run 10A-14: the filter dropped the dispatcher's marker");
         }
+    }
+}
+
+#[cfg(test)]
+mod codex_recovery_review {
+    use super::*;
+
+    /// Codex's PR60-R1 of ea6fc1d8, his case as he wrote it: a run before 0.2.3 cut off after its genesis resumes, the start binds its
+    /// settings, and it must resume again.
+    #[test]
+    fn codex_legacy_genesis_only_run_must_resume_twice_after_binding_coverage() {
+        let mode = CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            auto_reread_limit: 20,
+            corpus_description: None,
+        };
+        let current = coverage_context(300, &[], false, None, None, mode);
+        let mut legacy = current.clone();
+        for key in ["unit_is_task", "auto_reread_limit", "four_eyes"] {
+            legacy.as_object_mut().unwrap().remove(key);
+        }
+        let dir = std::env::temp_dir().join(format!("codex_genesis_only_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wal = dir.join("run.wal");
+        let mut state =
+            AuditState::prepare_from_docs(&AuditOntology::base(), "codex-legacy-cut", vec![("d.md".into(), b"# D\n\nThe source stands.\n".to_vec())]).unwrap();
+        state.start_journal(&wal, &GenesisSpec { questions: json!([]), settings: legacy, operator_meta: None }).unwrap();
+        assert!(state.checkpoint(COVERAGE_CHECKPOINT).is_none());
+        assert_eq!(check_coverage(&state, &current, 300, true), Ok(()), "first resume must work");
+        bind_coverage(&mut state, current.clone()).unwrap();
+        drop(state);
+        let state = AuditState::open(&wal).unwrap();
+        let second = check_coverage(&state, &current, 300, true);
+        eprintln!("LEGACY_SECOND_RESUME={second:?}; checkpoint={:?}", state.checkpoint(COVERAGE_CHECKPOINT));
+        assert_eq!(second, Ok(()), "the first successful resume must not make the next resume impossible");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The whole cycle, check, bind, close, open, check, for a genesis before 0.2.3 and one of 0.2.3, each cut off before its
+    /// checkpoint: each binds the form its genesis pins, goes on at every later start, and is refused under another bound once the
+    /// bound is pinned. The genesis check is not weakened: settings it does not pin are refused before and after the bind.
+    #[test]
+    fn a_start_cut_off_before_its_checkpoint_binds_the_form_its_genesis_pins_and_goes_on() {
+        let mode = |auto_reread_limit| CoverageMode {
+            graph_quality: Value::Null,
+            circle_refiner: None,
+            agent_attempts: None,
+            unattested_at_end: false,
+            ontology_review: false,
+            answer_timeout_ms: None,
+            build_scope: "none",
+            unit_is_task: false,
+            auto_reread_limit,
+            corpus_description: None,
+        };
+        let context = |n| coverage_context(300, &[], false, None, None, mode(n));
+        let dir = std::env::temp_dir().join(format!("sbgk_cut_cycle_{}_{}", std::process::id(), unix_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut legacy = context(20);
+        for key in PINNED_SINCE_0_2_3.map(|(k, _)| k) {
+            legacy.as_object_mut().unwrap().remove(key);
+        }
+        for (name, genesis, pins_bound) in [("before", legacy.clone(), false), ("current", context(20), true)] {
+            let wal = dir.join(format!("{name}.wal"));
+            let mut state =
+                AuditState::prepare_from_docs(&AuditOntology::base(), name, vec![("d.md".into(), b"# D\n\nThe source stands.\n".to_vec())]).unwrap();
+            state.start_journal(&wal, &GenesisSpec { questions: json!([]), settings: genesis.clone(), operator_meta: None }).unwrap();
+            assert_eq!(check_coverage(&state, &context(20), 300, true), Ok(()), "{name}");
+            let mut other = context(20);
+            other["section_bytes"] = json!(400);
+            assert!(check_coverage(&state, &other, 400, true).is_err(), "{name}: the genesis check holds");
+            bind_coverage(&mut state, context(20)).unwrap();
+            assert_eq!(state.checkpoint(COVERAGE_CHECKPOINT).unwrap()["context"], genesis, "{name}: the form its genesis pins");
+            drop(state);
+            for _ in 0..2 {
+                let state = AuditState::open(&wal).unwrap();
+                assert_eq!(check_coverage(&state, &context(20), 300, true), Ok(()), "{name}");
+                assert_eq!(check_coverage(&state, &context(3), 300, true).is_ok(), !pins_bound, "{name}: another bound");
+                assert!(check_coverage(&state, &other, 400, true).is_err(), "{name}: still held");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
