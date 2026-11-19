@@ -3793,6 +3793,16 @@ impl Dispatcher {
         self.leases.len()
     }
 
+    /// The open leases at `now`, for the owner of a running server (`audit_leases`): of each, its task id, the kind and the key
+    /// of its work, the agent that holds it and the milliseconds left. Never the text of a task. Nothing is taken back or
+    /// changed here: a lease past its time shows 0 left until a call that coordinates takes it back.
+    pub fn open_leases(&self, now: u64) -> Vec<Value> {
+        self.leases
+            .iter()
+            .map(|(task, l)| json!({"task_id": task, "kind": l.kind.name(), "key": l.key, "agent": l.agent, "ms_left": l.expires_ms.saturating_sub(now)}))
+            .collect()
+    }
+
     /// Offline replay of a recorded run only (examples/replay_step1.rs), never a live one: the lease a recorded task had, with the
     /// records it had stored under its local ids, so a recorded answer goes through `submit` as it would now. Its store submissions
     /// are numbered from 1001 on, apart from the recorded ones of the same task.
