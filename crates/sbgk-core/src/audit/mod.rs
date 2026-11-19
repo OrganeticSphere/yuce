@@ -16,6 +16,7 @@
 mod answer_guidance;
 pub mod builder;
 pub mod directives;
+pub mod follow;
 pub mod index;
 #[cfg(test)]
 pub(crate) mod mem;

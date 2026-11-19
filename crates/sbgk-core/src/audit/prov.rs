@@ -178,6 +178,300 @@ struct Period {
     end: Option<(usize, &'static str, Vec<usize>)>,
 }
 
+/// What the export keeps of a frame: its command, who wrote it, its hash and, of a seal, the roots it names.
+struct FrameFact {
+    command: String,
+    actor: Option<String>,
+    head: Hash,
+    seal: Option<[Option<String>; 2]>,
+}
+
+/// The export of a journal, built a frame at a time: `frame` takes each frame in the journal's order with the state after it, and
+/// `document` gives the export of the frames taken so far. `export_at` runs it over a journal read whole; a reader that follows a
+/// growing journal (`follow.rs`) runs it over each frame as it is written, so both give the same document for the same frames.
+#[derive(Default)]
+pub struct Tracker {
+    frames: Vec<FrameFact>,
+    /// The records accepted by the end of each frame, after a leading 0.
+    counts: Vec<usize>,
+    versions: Vec<Version>,
+    current: BTreeMap<String, (Hash, usize)>,
+    periods: Vec<Period>,
+    ended: usize,
+    open: Vec<Option<usize>>,
+    prev: Vec<bool>,
+    position: HashMap<RecordId, usize>,
+    /// The operation of a batch that accepted a record (records accepted outside a batch are at operation 0).
+    record_op: HashMap<String, usize>,
+}
+
+impl Tracker {
+    pub fn new() -> Self {
+        Self { counts: vec![0], ..Self::default() }
+    }
+
+    /// The frames taken so far, the genesis included.
+    pub fn frames(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// The periods of standing that ended in the frames taken so far.
+    pub fn ended(&self) -> usize {
+        self.ended
+    }
+
+    /// The next frame of the journal: `state` is the state after it, `payload` its payload (the genesis for the first frame) and
+    /// `head` its hash.
+    pub fn frame(&mut self, state: &AuditState, payload: &Value, head: Hash) {
+        let k = self.frames.len();
+        let command = if k == 0 { "genesis".to_string() } else { payload["command"]["kind"].as_str().unwrap_or_default().to_string() };
+        let seal = (command == "seal").then(|| ["log_root", "audit_root"].map(|field| payload["command"]["seal"][field].as_str().map(str::to_string)));
+        let actor = payload.get("actor").and_then(Value::as_str).map(str::to_string);
+        let unchanging = matches!(command.as_str(), "seal" | "close");
+        self.frames.push(FrameFact { command, actor, head, seal });
+        self.counts.push(state.record_count());
+        // the versions in the order the frame put them: a batch can put a document more than once, and the state at the frame's
+        // end shows the last one only (Codex review of 32aff362, PROV-02: an observation on the version in between lost its source)
+        let ops = if k == 0 { FrameOps { puts: Vec::new(), accepted: Vec::new(), operations: 0 } } else { frame_ops(payload) };
+        let (current, versions) = (&mut self.current, &mut self.versions);
+        let mut add = |doc: &str, op: usize, id: Hash| {
+            if current.get(doc).map(|c| c.0) != Some(id) {
+                let previous = current.get(doc).map(|c| c.1);
+                current.insert(doc.to_string(), (id, versions.len()));
+                versions.push(Version { doc: doc.to_string(), frame: k, op, id, previous });
+            }
+        };
+        for (op, doc, id) in &ops.puts {
+            if let Some(id) = id {
+                add(doc, *op, *id);
+            }
+        }
+        // the genesis, and a put whose outcome names no version (journals of the first formats): the version at the frame's end,
+        // after its operations
+        for (doc, id) in state.document_versions() {
+            add(&doc, ops.operations, id);
+        }
+        self.record_op.extend(ops.accepted.into_iter().map(|(op, id)| (id, op)));
+        for i in self.position.len()..state.record_count() {
+            self.position.insert(state.record_at(i).id, i);
+        }
+        // a seal or a close changes no record's standing
+        if unchanging && self.prev.len() == state.record_count() {
+            return;
+        }
+        let now = state.standing();
+        self.open.resize(now.len(), None);
+        for (i, stands) in now.iter().copied().enumerate() {
+            let was = self.prev.get(i).copied().unwrap_or(false);
+            if !was && stands {
+                self.open[i] = Some(self.periods.len());
+                self.periods.push(Period { record: i, from: k, end: None });
+            } else if was && !stands {
+                let r = state.record_at(i);
+                let end = if r.kind == RecordKind::Observe {
+                    let replaced = state.quote_fate(&r.id).is_some_and(|f| f["cause"] == "version_replaced");
+                    (k, if replaced { "new_version" } else { "withdrawn" }, Vec::new())
+                } else {
+                    let grounds = r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b]));
+                    let mut fallen: Vec<usize> = grounds.filter_map(|g| self.position.get(g).copied()).filter(|g| !now[*g]).collect();
+                    fallen.sort_unstable();
+                    fallen.dedup();
+                    (k, if fallen.is_empty() { "answer" } else { "basis" }, fallen)
+                };
+                if let Some(p) = self.open[i].take() {
+                    self.periods[p].end = Some(end);
+                    self.ended += 1;
+                }
+            }
+        }
+        self.prev = now;
+    }
+
+    /// The export of the frames taken so far. `state` is the state after them, or after later frames of the same journal: a
+    /// record, once accepted, is the same in both. `live` says a writer held the journal while it was read.
+    pub fn document(&self, state: &AuditState, live: bool) -> KResult<ProvExport> {
+        let frames = self.frames.len();
+        if frames == 0 {
+            return Err(KernelError::new(Code::BadField, "an export needs the genesis frame of its journal").field("wal"));
+        }
+        let (counts, versions, periods) = (&self.counts, &self.versions, &self.periods);
+        let run = state.run_id().to_string();
+        let base = format!("urn:yuce:{}:", part(&run));
+        let frame_iri = |k: usize| format!("{base}frame:{k}");
+        let record_iri = |id: &RecordId| format!("{base}record:{}", to_hex(&id.0));
+        let agent_iri = |a: &str| format!("{base}agent:{}", part(a));
+        let doc_iri = |d: &str| format!("{base}doc:{}", part(d));
+        let version_iri = |v: &Version| format!("{base}version:{}:{}:{}", part(&v.doc), v.frame, v.op);
+        let seal_iri = |n: usize| format!("{base}seal:{n}");
+        let mut nodes: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+        let mut named: BTreeSet<usize> = BTreeSet::new();
+        let mut agents: BTreeSet<String> = BTreeSet::new();
+
+        // the documents and their versions
+        let mut by_doc: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (i, v) in versions.iter().enumerate() {
+            let mut n = node(&["prov:Entity", "yuce:DocumentVersion"]);
+            set(&mut n, "prov:specializationOf", json!(doc_iri(&v.doc)));
+            set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(v.frame)));
+            set(&mut n, "yuce:versionId", json!(to_hex(&v.id)));
+            if let Some(p) = v.previous {
+                set(&mut n, "prov:wasRevisionOf", json!(version_iri(&versions[p])));
+            }
+            named.insert(v.frame);
+            nodes.insert(version_iri(v), n);
+            by_doc.entry(v.doc.as_str()).or_default().push(i);
+        }
+        for doc in by_doc.keys() {
+            let mut n = node(&["prov:Entity", "yuce:Document"]);
+            set(&mut n, "yuce:docId", json!(doc));
+            nodes.insert(doc_iri(doc), n);
+        }
+
+        // the records: who wrote them, in which frame, on what they rest, and an observation's quote
+        let records = counts[frames];
+        let frame_of = |i: usize| counts[1..=frames].partition_point(|&c| c <= i);
+        for i in 0..records {
+            let r = state.record_at(i);
+            let k = frame_of(i);
+            let mut n = node(&["prov:Entity", "yuce:Record"]);
+            set(&mut n, "yuce:kind", json!(r.kind.name()));
+            set(&mut n, "yuce:recordId", json!(to_hex(&r.id.0)));
+            set(&mut n, "prov:wasAttributedTo", json!(agent_iri(&r.author)));
+            set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(k)));
+            agents.insert(r.author.clone());
+            named.insert(k);
+            let grounds: Vec<String> = r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b])).map(record_iri).collect();
+            if !grounds.is_empty() {
+                set(&mut n, "prov:wasDerivedFrom", sorted(grounds));
+            }
+            if let Some(text) = r.quote.as_ref().or(r.text.as_ref()) {
+                set(&mut n, "prov:value", json!(text));
+            }
+            if let Some(stance) = &r.status {
+                set(&mut n, "yuce:stance", json!(stance));
+            }
+            if let Some((from, rel, to)) = &r.ends {
+                set(&mut n, "yuce:rel", json!(rel));
+                set(&mut n, "yuce:from", json!(record_iri(from)));
+                set(&mut n, "yuce:to", json!(record_iri(to)));
+            }
+            if let Some((_, version, start, end)) = state.evidence_binding(&r.id) {
+                // the version current when the observation was accepted: the last one of its document with these bytes put before the
+                // record's frame, or before its operation in the same batch. An observation always has one: an export without it would
+                // lose what the observation quotes, so there is no export (Codex review of 32aff362, PROV-02)
+                let at = (k, self.record_op.get(&to_hex(&r.id.0)).copied().unwrap_or(0));
+                let quoted = r
+                    .doc_id
+                    .as_deref()
+                    .and_then(|d| by_doc.get(d))
+                    .and_then(|list| list.iter().rev().map(|v| &versions[*v]).find(|v| (v.frame, v.op) < at && v.id == version))
+                    .ok_or_else(|| {
+                        KernelError::new(Code::BadField, format!("the export finds no version of its document for the quote of record {}", to_hex(&r.id.0)))
+                            .field("wal")
+                    })?;
+                set(&mut n, "prov:wasQuotedFrom", json!(version_iri(quoted)));
+                set(&mut n, "yuce:start", json!(start));
+                set(&mut n, "yuce:end", json!(end));
+            }
+            nodes.insert(record_iri(&r.id), n);
+        }
+
+        // the periods in which records stood, and why each one that ended stopped
+        for p in periods {
+            let r = state.record_at(p.record);
+            let hex = to_hex(&r.id.0);
+            let mut n = node(&["prov:Entity", "yuce:Standing"]);
+            set(&mut n, "prov:specializationOf", json!(record_iri(&r.id)));
+            set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(p.from)));
+            named.insert(p.from);
+            if let Some((k, why, fallen)) = &p.end {
+                let invalidation = format!("{base}invalidation:{hex}:{k}");
+                set(&mut n, "prov:wasInvalidatedBy", json!(frame_iri(*k)));
+                set(&mut n, "prov:qualifiedInvalidation", json!(invalidation));
+                let mut q = node(&["prov:Invalidation"]);
+                set(&mut q, "prov:activity", json!(frame_iri(*k)));
+                set(&mut q, "yuce:reason", json!(why));
+                if !fallen.is_empty() {
+                    set(&mut q, "yuce:fallenBy", sorted(fallen.iter().map(|g| record_iri(&state.record_at(*g).id)).collect()));
+                }
+                nodes.insert(invalidation, q);
+                named.insert(*k);
+            }
+            nodes.insert(format!("{base}standing:{hex}:{}", p.from), n);
+        }
+
+        // the seals
+        let seals: Vec<(usize, Hash)> = state.seals().iter().filter(|(n, _)| *n < frames).copied().collect();
+        for (n, seal_hash) in &seals {
+            let mut s = node(&["prov:Entity", "yuce:Seal"]);
+            set(&mut s, "prov:wasGeneratedBy", json!(frame_iri(*n)));
+            set(&mut s, "yuce:sealHash", json!(to_hex(seal_hash)));
+            let roots = self.frames[*n].seal.as_ref();
+            for (i, key) in ["yuce:logRoot", "yuce:auditRoot"].into_iter().enumerate() {
+                if let Some(root) = roots.and_then(|r| r[i].as_ref()) {
+                    set(&mut s, key, json!(root));
+                }
+            }
+            named.insert(*n);
+            nodes.insert(seal_iri(*n), s);
+        }
+
+        // the frames named above, each informed by the one named before it
+        let mut before: Option<usize> = None;
+        for k in &named {
+            let fact = &self.frames[*k];
+            let mut f = node(&["prov:Activity"]);
+            set(&mut f, "yuce:frame", json!(k));
+            set(&mut f, "yuce:frameHash", json!(to_hex(&fact.head)));
+            set(&mut f, "yuce:command", json!(fact.command));
+            if let Some(actor) = &fact.actor {
+                set(&mut f, "prov:wasAssociatedWith", json!(agent_iri(actor)));
+                agents.insert(actor.clone());
+            }
+            if let Some(b) = before {
+                set(&mut f, "prov:wasInformedBy", json!(frame_iri(b)));
+            }
+            before = Some(*k);
+            nodes.insert(frame_iri(*k), f);
+        }
+
+        // the subjects: the kernel is software; of the others the journal knows only their ids
+        for a in &agents {
+            let mut n = node(if a == "kernel" { &["prov:Agent", "prov:SoftwareAgent"] } else { &["prov:Agent"] });
+            set(&mut n, "yuce:subject", json!(a));
+            nodes.insert(agent_iri(a), n);
+        }
+
+        // the export itself
+        let wal_head = self.frames[frames - 1].head;
+        let export_id = format!("{base}export:{frames}");
+        let mut e = node(&["prov:Entity", "yuce:Export"]);
+        set(&mut e, "yuce:format", json!(FORMAT));
+        set(&mut e, "yuce:runId", json!(run));
+        set(&mut e, "yuce:frames", json!(frames));
+        set(&mut e, "yuce:walHead", json!(to_hex(&wal_head)));
+        if let Some((n, _)) = seals.last() {
+            set(&mut e, "yuce:lastSeal", json!(seal_iri(*n)));
+        }
+        nodes.insert(export_id.clone(), e);
+
+        let count = nodes.len();
+        let graph: Vec<Value> = nodes
+            .into_iter()
+            .map(|(id, mut n)| {
+                n.insert("@id".into(), json!(id));
+                Value::Object(n)
+            })
+            .collect();
+        let mut document = json!({"@context": context(), "@graph": graph});
+        let content_hash = sha256(to_jcs(&document).as_bytes());
+        if let Some(e) = document["@graph"].as_array_mut().and_then(|g| g.iter_mut().find(|n| n["@id"] == export_id.as_str())) {
+            e["yuce:contentHash"] = json!(to_hex(&content_hash));
+        }
+        Ok(ProvExport { document, content_hash, run_id: run, frames, wal_head, nodes: count, live })
+    }
+}
+
 /// The export of the journal at `path`, checked whole first as `audit-verify` checks it.
 pub fn export(path: &Path) -> KResult<ProvExport> {
     export_at(path, None)
@@ -203,255 +497,14 @@ pub fn export_at(path: &Path, upto: Option<usize>) -> KResult<ProvExport> {
     if frames == 0 || frames > all {
         return Err(KernelError::new(Code::BadField, format!("the journal has {all} frames, not {frames}")).field("wal"));
     }
-    let command_of = |k: usize| -> String {
-        if k == 0 {
-            "genesis".to_string()
-        } else {
-            scan.payloads[k]["command"]["kind"].as_str().unwrap_or_default().to_string()
-        }
-    };
-    let mut counts = vec![0usize];
-    let mut versions: Vec<Version> = Vec::new();
-    let mut current: BTreeMap<String, (Hash, usize)> = BTreeMap::new();
-    let mut periods: Vec<Period> = Vec::new();
-    let mut open: Vec<Option<usize>> = Vec::new();
-    let mut prev: Vec<bool> = Vec::new();
-    let mut position: HashMap<RecordId, usize> = HashMap::new();
-    // the operation of a batch that accepted a record (records accepted outside a batch are at operation 0)
-    let mut record_op: HashMap<String, usize> = HashMap::new();
-    let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, _| {
+    let mut tracker = Tracker::new();
+    let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, head| {
         let k = m - 1;
-        if k >= frames {
-            return;
+        if k < frames {
+            tracker.frame(state, &scan.payloads[k], head);
         }
-        counts.push(state.record_count());
-        // the versions in the order the frame put them: a batch can put a document more than once, and the state at the frame's
-        // end shows the last one only (Codex review of 32aff362, PROV-02: an observation on the version in between lost its source)
-        let ops = if k == 0 { FrameOps { puts: Vec::new(), accepted: Vec::new(), operations: 0 } } else { frame_ops(&scan.payloads[k]) };
-        let mut add = |doc: &str, op: usize, id: Hash| {
-            if current.get(doc).map(|c| c.0) != Some(id) {
-                let previous = current.get(doc).map(|c| c.1);
-                current.insert(doc.to_string(), (id, versions.len()));
-                versions.push(Version { doc: doc.to_string(), frame: k, op, id, previous });
-            }
-        };
-        for (op, doc, id) in &ops.puts {
-            if let Some(id) = id {
-                add(doc, *op, *id);
-            }
-        }
-        // the genesis, and a put whose outcome names no version (journals of the first formats): the version at the frame's end,
-        // after its operations
-        for (doc, id) in state.document_versions() {
-            add(&doc, ops.operations, id);
-        }
-        record_op.extend(ops.accepted.into_iter().map(|(op, id)| (id, op)));
-        for i in position.len()..state.record_count() {
-            position.insert(state.record_at(i).id, i);
-        }
-        // a seal or a close changes no record's standing
-        if matches!(command_of(k).as_str(), "seal" | "close") && prev.len() == state.record_count() {
-            return;
-        }
-        let now = state.standing();
-        open.resize(now.len(), None);
-        for (i, stands) in now.iter().copied().enumerate() {
-            let was = prev.get(i).copied().unwrap_or(false);
-            if !was && stands {
-                open[i] = Some(periods.len());
-                periods.push(Period { record: i, from: k, end: None });
-            } else if was && !stands {
-                let r = state.record_at(i);
-                let end = if r.kind == RecordKind::Observe {
-                    let replaced = state.quote_fate(&r.id).is_some_and(|f| f["cause"] == "version_replaced");
-                    (k, if replaced { "new_version" } else { "withdrawn" }, Vec::new())
-                } else {
-                    let grounds = r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b]));
-                    let mut fallen: Vec<usize> = grounds.filter_map(|g| position.get(g).copied()).filter(|g| !now[*g]).collect();
-                    fallen.sort_unstable();
-                    fallen.dedup();
-                    (k, if fallen.is_empty() { "answer" } else { "basis" }, fallen)
-                };
-                if let Some(p) = open[i].take() {
-                    periods[p].end = Some(end);
-                }
-            }
-        }
-        prev = now;
     })?;
-
-    let run = state.run_id().to_string();
-    let base = format!("urn:yuce:{}:", part(&run));
-    let frame_iri = |k: usize| format!("{base}frame:{k}");
-    let record_iri = |id: &RecordId| format!("{base}record:{}", to_hex(&id.0));
-    let agent_iri = |a: &str| format!("{base}agent:{}", part(a));
-    let doc_iri = |d: &str| format!("{base}doc:{}", part(d));
-    let version_iri = |v: &Version| format!("{base}version:{}:{}:{}", part(&v.doc), v.frame, v.op);
-    let seal_iri = |n: usize| format!("{base}seal:{n}");
-    let mut nodes: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
-    let mut named: BTreeSet<usize> = BTreeSet::new();
-    let mut agents: BTreeSet<String> = BTreeSet::new();
-
-    // the documents and their versions
-    let mut by_doc: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-    for (i, v) in versions.iter().enumerate() {
-        let mut n = node(&["prov:Entity", "yuce:DocumentVersion"]);
-        set(&mut n, "prov:specializationOf", json!(doc_iri(&v.doc)));
-        set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(v.frame)));
-        set(&mut n, "yuce:versionId", json!(to_hex(&v.id)));
-        if let Some(p) = v.previous {
-            set(&mut n, "prov:wasRevisionOf", json!(version_iri(&versions[p])));
-        }
-        named.insert(v.frame);
-        nodes.insert(version_iri(v), n);
-        by_doc.entry(v.doc.as_str()).or_default().push(i);
-    }
-    for doc in by_doc.keys() {
-        let mut n = node(&["prov:Entity", "yuce:Document"]);
-        set(&mut n, "yuce:docId", json!(doc));
-        nodes.insert(doc_iri(doc), n);
-    }
-
-    // the records: who wrote them, in which frame, on what they rest, and an observation's quote
-    let records = counts[frames];
-    let frame_of = |i: usize| counts[1..=frames].partition_point(|&c| c <= i);
-    for i in 0..records {
-        let r = state.record_at(i);
-        let k = frame_of(i);
-        let mut n = node(&["prov:Entity", "yuce:Record"]);
-        set(&mut n, "yuce:kind", json!(r.kind.name()));
-        set(&mut n, "yuce:recordId", json!(to_hex(&r.id.0)));
-        set(&mut n, "prov:wasAttributedTo", json!(agent_iri(&r.author)));
-        set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(k)));
-        agents.insert(r.author.clone());
-        named.insert(k);
-        let grounds: Vec<String> = r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b])).map(record_iri).collect();
-        if !grounds.is_empty() {
-            set(&mut n, "prov:wasDerivedFrom", sorted(grounds));
-        }
-        if let Some(text) = r.quote.as_ref().or(r.text.as_ref()) {
-            set(&mut n, "prov:value", json!(text));
-        }
-        if let Some(stance) = &r.status {
-            set(&mut n, "yuce:stance", json!(stance));
-        }
-        if let Some((from, rel, to)) = &r.ends {
-            set(&mut n, "yuce:rel", json!(rel));
-            set(&mut n, "yuce:from", json!(record_iri(from)));
-            set(&mut n, "yuce:to", json!(record_iri(to)));
-        }
-        if let Some((_, version, start, end)) = state.evidence_binding(&r.id) {
-            // the version current when the observation was accepted: the last one of its document with these bytes put before the
-            // record's frame, or before its operation in the same batch. An observation always has one: an export without it would
-            // lose what the observation quotes, so there is no export (Codex review of 32aff362, PROV-02)
-            let at = (k, record_op.get(&to_hex(&r.id.0)).copied().unwrap_or(0));
-            let quoted = r
-                .doc_id
-                .as_deref()
-                .and_then(|d| by_doc.get(d))
-                .and_then(|list| list.iter().rev().map(|v| &versions[*v]).find(|v| (v.frame, v.op) < at && v.id == version))
-                .ok_or_else(|| {
-                    KernelError::new(Code::BadField, format!("the export finds no version of its document for the quote of record {}", to_hex(&r.id.0)))
-                        .field("wal")
-                })?;
-            set(&mut n, "prov:wasQuotedFrom", json!(version_iri(quoted)));
-            set(&mut n, "yuce:start", json!(start));
-            set(&mut n, "yuce:end", json!(end));
-        }
-        nodes.insert(record_iri(&r.id), n);
-    }
-
-    // the periods in which records stood, and why each one that ended stopped
-    for p in &periods {
-        let r = state.record_at(p.record);
-        let hex = to_hex(&r.id.0);
-        let mut n = node(&["prov:Entity", "yuce:Standing"]);
-        set(&mut n, "prov:specializationOf", json!(record_iri(&r.id)));
-        set(&mut n, "prov:wasGeneratedBy", json!(frame_iri(p.from)));
-        named.insert(p.from);
-        if let Some((k, why, fallen)) = &p.end {
-            let invalidation = format!("{base}invalidation:{hex}:{k}");
-            set(&mut n, "prov:wasInvalidatedBy", json!(frame_iri(*k)));
-            set(&mut n, "prov:qualifiedInvalidation", json!(invalidation));
-            let mut q = node(&["prov:Invalidation"]);
-            set(&mut q, "prov:activity", json!(frame_iri(*k)));
-            set(&mut q, "yuce:reason", json!(why));
-            if !fallen.is_empty() {
-                set(&mut q, "yuce:fallenBy", sorted(fallen.iter().map(|g| record_iri(&state.record_at(*g).id)).collect()));
-            }
-            nodes.insert(invalidation, q);
-            named.insert(*k);
-        }
-        nodes.insert(format!("{base}standing:{hex}:{}", p.from), n);
-    }
-
-    // the seals
-    let seals: Vec<(usize, Hash)> = state.seals().iter().filter(|(n, _)| *n < frames).copied().collect();
-    for (n, seal_hash) in &seals {
-        let p = &scan.payloads[*n]["command"]["seal"];
-        let mut s = node(&["prov:Entity", "yuce:Seal"]);
-        set(&mut s, "prov:wasGeneratedBy", json!(frame_iri(*n)));
-        set(&mut s, "yuce:sealHash", json!(to_hex(seal_hash)));
-        for (key, field) in [("yuce:logRoot", "log_root"), ("yuce:auditRoot", "audit_root")] {
-            if let Some(root) = p[field].as_str() {
-                set(&mut s, key, json!(root));
-            }
-        }
-        named.insert(*n);
-        nodes.insert(seal_iri(*n), s);
-    }
-
-    // the frames named above, each informed by the one named before it
-    let mut before: Option<usize> = None;
-    for k in &named {
-        let mut f = node(&["prov:Activity"]);
-        set(&mut f, "yuce:frame", json!(k));
-        set(&mut f, "yuce:frameHash", json!(to_hex(&scan.heads[*k])));
-        set(&mut f, "yuce:command", json!(command_of(*k)));
-        if let Some(actor) = scan.payloads[*k].get("actor").and_then(Value::as_str) {
-            set(&mut f, "prov:wasAssociatedWith", json!(agent_iri(actor)));
-            agents.insert(actor.to_string());
-        }
-        if let Some(b) = before {
-            set(&mut f, "prov:wasInformedBy", json!(frame_iri(b)));
-        }
-        before = Some(*k);
-        nodes.insert(frame_iri(*k), f);
-    }
-
-    // the subjects: the kernel is software; of the others the journal knows only their ids
-    for a in &agents {
-        let mut n = node(if a == "kernel" { &["prov:Agent", "prov:SoftwareAgent"] } else { &["prov:Agent"] });
-        set(&mut n, "yuce:subject", json!(a));
-        nodes.insert(agent_iri(a), n);
-    }
-
-    // the export itself
-    let export_id = format!("{base}export:{frames}");
-    let mut e = node(&["prov:Entity", "yuce:Export"]);
-    set(&mut e, "yuce:format", json!(FORMAT));
-    set(&mut e, "yuce:runId", json!(run));
-    set(&mut e, "yuce:frames", json!(frames));
-    set(&mut e, "yuce:walHead", json!(to_hex(&scan.heads[frames - 1])));
-    if let Some((n, _)) = seals.last() {
-        set(&mut e, "yuce:lastSeal", json!(seal_iri(*n)));
-    }
-    nodes.insert(export_id.clone(), e);
-
-    let count = nodes.len();
-    let graph: Vec<Value> = nodes
-        .into_iter()
-        .map(|(id, mut n)| {
-            n.insert("@id".into(), json!(id));
-            Value::Object(n)
-        })
-        .collect();
-    let mut document = json!({"@context": context(), "@graph": graph});
-    let content_hash = sha256(to_jcs(&document).as_bytes());
-    if let Some(e) = document["@graph"].as_array_mut().and_then(|g| g.iter_mut().find(|n| n["@id"] == export_id.as_str())) {
-        e["yuce:contentHash"] = json!(to_hex(&content_hash));
-    }
-    Ok(ProvExport { document, content_hash, run_id: run, frames, wal_head: scan.heads[frames - 1], nodes: count, live: scan.live })
+    tracker.document(&state, scan.live)
 }
 
 /// The content hash a document names: the SHA-256 of its canonical text without `yuce:contentHash`. A document whose named hash

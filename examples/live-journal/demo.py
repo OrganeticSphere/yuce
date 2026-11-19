@@ -115,18 +115,16 @@ def setup(work: pathlib.Path) -> dict:
     return tokens
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--html", required=True, type=pathlib.Path, help="the page to write")
-    ap.add_argument("--bin", help="path to the sbgk (or yuce) binary")
-    ap.add_argument("--keep", action="store_true", help="keep the work folder with the journal and the documents")
-    ap.add_argument("--states", type=pathlib.Path, help="also write the kernel's states at every frame here, for check_states.mjs")
-    a = ap.parse_args()
-    binary = find_binary(a.bin)
-    work = pathlib.Path(tempfile.mkdtemp(prefix="yuce_live_demo_"))
-    tokens = setup(work)
-    states = a.states or work / "states.json"
-    print(f"YuCe Live demo: three readers and an owner on three refund documents\n  binary {binary}\n  journal {work / 'run.wal'}")
+def step(text: str, ok: bool) -> bool:
+    print(f"  [{'ok' if ok else 'FAILED'}] {text}")
+    return ok
+
+
+def play(binary: pathlib.Path, work: pathlib.Path, tokens: dict, stage=None) -> bool:
+    """The scripted run against `sbgk audit-serve`, the journal in work/run.wal. `stage(name)` is called after each part of the
+    run, while the server still holds the journal, and once more as "stopped" after the server is gone; watch_demo.py looks at
+    the watched page there. Returns whether every step behaved as described."""
+    stage = stage or (lambda name: True)
     proc = subprocess.Popen([str(binary), "audit-serve", "--profile", "custom", "--build-scope", "none", "--listen", "127.0.0.1:0",
                              "--wal", str(work / "run.wal"), "--subjects", str(work / "subjects.json"), "--questions", str(work / "questions.json"),
                              "--manifest", str(work / "manifest.json"), "--repo", str(work / "repo"), "--select", str(work / "select.txt"),
@@ -142,10 +140,6 @@ def main() -> int:
         team = {who: Agent(port, tokens[who]) for who in TEAM}
         owner = Agent(port, tokens["owner"])
         titles, quote_ids = {}, {}
-
-        def step(text: str, ok: bool) -> bool:
-            print(f"  [{'ok' if ok else 'FAILED'}] {text}")
-            return ok
 
         def extend(who, t):
             p, doc = t["local_id_prefix"], t["key"].split(":", 1)[1].split("#", 1)[0]
@@ -190,17 +184,21 @@ def main() -> int:
             return ok
 
         good &= round_("EXTEND")
+        good &= stage("read")
         good &= step("the owner seals", owner.call("audit_seal").get("status") == "SEALED")
         good &= round_("SUMMARIZE", ANSWER)
         good &= step("the owner seals", owner.call("audit_seal").get("status") == "SEALED")
+        good &= stage("answered")
         doc2023 = next(d for d, title in titles.items() if title == "Refund policy 2023")
         gone = owner.call("audit_withdraw_text", doc_id=doc2023, exact_quote=WITHDRAWN)
         fallen = owner.call("audit_fallen", since=gone.get("since", 0))
         again = fallen.get("questions_to_answer_again")
         good &= step(f"the owner withdraws a sentence of the 2023 policy: {gone.get('status')}, {gone.get('fell')} records fell, "
                      f"to answer again {again}", gone.get("status") == "REVOKED" and gone.get("fell") == 8 and again == ["Q1", "Q2", "Q3"])
+        good &= stage("withdrawn")
         good &= round_("SUMMARIZE", AGAIN)
         good &= step("the owner seals", owner.call("audit_seal").get("status") == "SEALED")
+        good &= stage("answered again")
         for agent in (*team.values(), owner):
             agent.close()
     except (RuntimeError, KeyError, StopIteration, OSError, ValueError) as e:
@@ -208,6 +206,22 @@ def main() -> int:
     finally:
         proc.kill()
         proc.wait()
+    return good and stage("stopped")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--html", required=True, type=pathlib.Path, help="the page to write")
+    ap.add_argument("--bin", help="path to the sbgk (or yuce) binary")
+    ap.add_argument("--keep", action="store_true", help="keep the work folder with the journal and the documents")
+    ap.add_argument("--states", type=pathlib.Path, help="also write the kernel's states at every frame here, for check_states.mjs")
+    a = ap.parse_args()
+    binary = find_binary(a.bin)
+    work = pathlib.Path(tempfile.mkdtemp(prefix="yuce_live_demo_"))
+    tokens = setup(work)
+    states = a.states or work / "states.json"
+    print(f"YuCe Live demo: three readers and an owner on three refund documents\n  binary {binary}\n  journal {work / 'run.wal'}")
+    good = play(binary, work, tokens)
     if good:
         out = subprocess.run([sys.executable, str(HERE / "make_page.py"), "--wal", str(work / "run.wal"), "--out", str(a.html),
                               "--docs", str(work / "repo"), "--bin", str(binary), "--check", "all", "--coverage", "all",

@@ -26,7 +26,7 @@ pub(crate) const FORMAT_V3: &str = "sbgk-session-log/3";
 const DOMAIN: &[u8] = b"R2R-AUDIT-WAL/2";
 const HEADER_DOMAIN: &[u8] = b"R2R-FRAME-HDR/2\0";
 const BODY_DOMAIN: &[u8] = b"R2R-FRAME-BODY/2\0";
-const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LOG_BYTES: u64 = 1024 * 1024 * 1024;
 const FRAME_KEYS: [&str; 6] = ["format", "wal_op", "seq", "previous", "payload", "hash"];
 const FRAME_KEYS_V3: [&str; 3] = ["body", "hash", "header"];
@@ -219,6 +219,37 @@ pub(crate) fn writer_present(path: &Path) -> bool {
     }
 }
 
+/// What `read_tail` read: the bytes, whether a writer held the journal just before the read, and the bytes of the file after
+/// the ones read.
+pub(crate) struct TailRead {
+    pub bytes: Vec<u8>,
+    pub held: bool,
+    pub rest: u64,
+}
+
+/// At most `limit` bytes of the journal at `path` from byte `from` on, read as `AuditJournal::read` reads a journal: for reading
+/// only, without the writer's hold, within the limits of a journal. `None` when the file is shorter than `from`. A reader that
+/// follows a growing journal takes each new part of it this way (`follow.rs`).
+pub(crate) fn read_tail(path: &Path, from: u64, limit: u64) -> KResult<Option<TailRead>> {
+    let held = writer_present(path);
+    let mut file = File::open(path).map_err(|e| io_error("open", e))?;
+    let length = file.metadata().map_err(|e| io_error("metadata", e))?.len();
+    if length > MAX_LOG_BYTES {
+        return Err(error("audit WAL exceeds 1 GiB"));
+    }
+    if length < from {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(from)).map_err(|e| io_error("seek", e))?;
+    let mut bytes = Vec::new();
+    file.take(limit.min(MAX_LOG_BYTES + 1 - from)).read_to_end(&mut bytes).map_err(read_error)?;
+    let end = from + bytes.len() as u64;
+    if end > MAX_LOG_BYTES {
+        return Err(error("audit WAL exceeds 1 GiB"));
+    }
+    Ok(Some(TailRead { bytes, held, rest: length.saturating_sub(end) }))
+}
+
 /// A read refused by a lock over the whole file, which a server of 0.2.0 or earlier holds on Windows: said in words, since the
 /// system's own message names neither the server nor what to do.
 fn read_error(e: std::io::Error) -> KernelError {
@@ -290,6 +321,75 @@ fn encode(format: FrameFormat, seq: u64, previous: &Hash, payload: &Value, recor
         (FrameFormat::V3, Some(root)) => frame_v3(seq, previous, payload, root),
         (FrameFormat::V2, Some(_)) => Err(error("a sbgk-session-log/2 frame names no records root")),
         (FrameFormat::V3, None) => Err(error("a sbgk-session-log/3 frame needs its records root")),
+    }
+}
+
+/// The checks of a journal's frames, one complete frame at a time: what the check of a frame takes from the frames before it
+/// (the format the genesis fixed, the hash of the frame before, the frame's number). `AuditJournal::check` runs it over a
+/// whole file; a reader that follows a growing journal (`follow.rs`) runs it over each frame as it is written.
+pub(crate) struct FrameChain {
+    pub(crate) format: Option<FrameFormat>,
+    previous: Hash,
+    index: usize,
+}
+
+impl FrameChain {
+    pub(crate) fn new() -> Self {
+        Self { format: None, previous: ZERO_HASH, index: 0 }
+    }
+
+    /// The checks of the next frame, `line` without its newline: canonical JSON, sequence, previous hash and frame hash. Returns
+    /// its payload, its hash and, in a `/3` journal, the records root its header names.
+    pub(crate) fn frame(&mut self, line: &[u8]) -> KResult<(Value, Hash, Option<Hash>)> {
+        let (index, previous) = (self.index, self.previous);
+        if line.len() + 1 > MAX_FRAME_BYTES {
+            return Err(error(format!("audit WAL frame {index} exceeds 64 MiB")));
+        }
+        let mut value: Value = serde_json::from_slice(line).map_err(|e| error(format!("audit WAL frame {index}: bad JSON: {e}")))?;
+        let outer = value.as_object().ok_or_else(|| error(format!("audit WAL frame {index} must be an object")))?;
+        // the genesis frame fixes the format of the journal; a frame of the other format later fails that format's checks
+        let this = self.format.unwrap_or(if outer.contains_key("header") { FrameFormat::V3 } else { FrameFormat::V2 });
+        if this == FrameFormat::V3 {
+            let (body, head, records_root) = AuditJournal::check_v3(index, line, value, &previous)?;
+            self.accept(this, head);
+            return Ok((body, head, Some(records_root)));
+        }
+        if outer.get("format").and_then(Value::as_str) != Some(FORMAT) {
+            return Err(error(format!("audit WAL frame {index}: expected {FORMAT}; legacy or unknown format is not accepted")));
+        }
+        if outer.len() != FRAME_KEYS.len() || FRAME_KEYS.iter().any(|key| !outer.contains_key(*key)) {
+            return Err(error(format!("audit WAL frame {index} has missing or unknown fields")));
+        }
+        if line != to_jcs(&value).as_bytes() {
+            return Err(error(format!("audit WAL frame {index}: noncanonical JSON or duplicate fields")));
+        }
+        let seq = outer["seq"].as_u64().ok_or_else(|| error(format!("audit WAL frame {index}: seq must be a nonnegative integer")))?;
+        if seq != index as u64 {
+            return Err(error(format!("audit WAL frame {index}: sequence mismatch")));
+        }
+        let operation = if index == 0 { "genesis" } else { "audit" };
+        if outer["wal_op"] != operation {
+            return Err(error(format!("audit WAL frame {index}: expected wal_op {operation}")));
+        }
+        if outer["previous"].as_str().and_then(from_hex) != Some(previous) {
+            return Err(error(format!("audit WAL frame {index}: previous hash mismatch")));
+        }
+        let claimed = outer["hash"].as_str().and_then(from_hex).ok_or_else(|| error(format!("audit WAL frame {index}: invalid hash")))?;
+        value.as_object_mut().expect("checked object").remove("hash");
+        let canonical = to_jcs(&value);
+        let computed = sha256_parts(&[DOMAIN, canonical.as_bytes()]);
+        if claimed != computed {
+            return Err(error(format!("audit WAL frame {index}: hash mismatch")));
+        }
+        self.accept(this, computed);
+        Ok((value["payload"].take(), computed, None))
+    }
+
+    /// A frame passed its checks: the next one follows it.
+    fn accept(&mut self, format: FrameFormat, head: Hash) {
+        self.format = Some(format);
+        self.previous = head;
+        self.index += 1;
     }
 }
 
@@ -406,57 +506,15 @@ impl AuditJournal {
         let mut payloads = Vec::new();
         let mut heads = Vec::new();
         let mut records_roots = Vec::new();
-        let mut previous = ZERO_HASH;
-        let mut format = None;
-        for (index, line) in bytes[..complete - 1].split(|b| *b == b'\n').enumerate() {
-            if line.len() + 1 > MAX_FRAME_BYTES {
-                return Err(error(format!("audit WAL frame {index} exceeds 64 MiB")));
-            }
-            let mut value: Value = serde_json::from_slice(line).map_err(|e| error(format!("audit WAL frame {index}: bad JSON: {e}")))?;
-            let outer = value.as_object().ok_or_else(|| error(format!("audit WAL frame {index} must be an object")))?;
-            // the genesis frame fixes the format of the journal; a frame of the other format later fails that format's checks
-            let this = *format.get_or_insert(if outer.contains_key("header") { FrameFormat::V3 } else { FrameFormat::V2 });
-            if this == FrameFormat::V3 {
-                let (body, head, records_root) = Self::check_v3(index, line, value, &previous)?;
-                payloads.push(body);
-                heads.push(head);
-                records_roots.push(records_root);
-                previous = head;
-                continue;
-            }
-            if outer.get("format").and_then(Value::as_str) != Some(FORMAT) {
-                return Err(error(format!("audit WAL frame {index}: expected {FORMAT}; legacy or unknown format is not accepted")));
-            }
-            if outer.len() != FRAME_KEYS.len() || FRAME_KEYS.iter().any(|key| !outer.contains_key(*key)) {
-                return Err(error(format!("audit WAL frame {index} has missing or unknown fields")));
-            }
-            if line != to_jcs(&value).as_bytes() {
-                return Err(error(format!("audit WAL frame {index}: noncanonical JSON or duplicate fields")));
-            }
-            let seq = outer["seq"].as_u64().ok_or_else(|| error(format!("audit WAL frame {index}: seq must be a nonnegative integer")))?;
-            if seq != index as u64 {
-                return Err(error(format!("audit WAL frame {index}: sequence mismatch")));
-            }
-            let operation = if index == 0 { "genesis" } else { "audit" };
-            if outer["wal_op"] != operation {
-                return Err(error(format!("audit WAL frame {index}: expected wal_op {operation}")));
-            }
-            if outer["previous"].as_str().and_then(from_hex) != Some(previous) {
-                return Err(error(format!("audit WAL frame {index}: previous hash mismatch")));
-            }
-            let claimed = outer["hash"].as_str().and_then(from_hex).ok_or_else(|| error(format!("audit WAL frame {index}: invalid hash")))?;
-            value.as_object_mut().expect("checked object").remove("hash");
-            let canonical = to_jcs(&value);
-            let computed = sha256_parts(&[DOMAIN, canonical.as_bytes()]);
-            if claimed != computed {
-                return Err(error(format!("audit WAL frame {index}: hash mismatch")));
-            }
-            payloads.push(value["payload"].take());
-            heads.push(computed);
-            previous = computed;
+        let mut chain = FrameChain::new();
+        for line in bytes[..complete - 1].split(|b| *b == b'\n') {
+            let (payload, head, records_root) = chain.frame(line)?;
+            payloads.push(payload);
+            heads.push(head);
+            records_roots.extend(records_root);
         }
         Ok(JournalScan {
-            format: format.expect("a complete genesis frame"),
+            format: chain.format.expect("a complete genesis frame"),
             payloads,
             heads,
             records_roots,
