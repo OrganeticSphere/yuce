@@ -47,7 +47,13 @@ impl Folder {
             messages.push(call);
         }
         let text: String = messages.iter().map(|m| format!("{m}\n")).collect();
-        child.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+        // a command that refuses to start exits without reading its input: the write can find the pipe closed, and what is
+        // checked then is the exit and what the command said
+        match child.stdin.take().unwrap().write_all(text.as_bytes()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => panic!("writing to sbgk mcp: {e}"),
+        }
         let out = child.wait_with_output().unwrap();
         let lines = |b: &[u8]| String::from_utf8_lossy(b).lines().filter_map(|l| serde_json::from_str(l).ok()).collect::<Vec<Value>>();
         (lines(&out.stdout), lines(&out.stderr), out)
