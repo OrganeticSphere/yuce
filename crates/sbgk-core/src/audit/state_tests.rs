@@ -68,7 +68,7 @@ fn a_sync_failure_never_publishes_staged_state_and_recovery_deduplicates_the_una
     let seed_record = state.record(&seed.accepted[0]).unwrap();
     let seed_receipt = state.core.data.receipts[&("worker".into(), "seed".into())].outcome.value();
     let before = (state.engine_root(), state.audit_root(), state.session_root(), state.wal_head(), state.transaction_sequence(), state.head());
-    let engine_wal = state.core.session.wal.bytes.clone();
+    let engine_wal = state.core.session.wal.bytes();
     let engine_nodes = state.core.session.engine.node_count();
     let engine_seq = state.core.session.last_seq;
     let receipts = state.core.data.receipts.len();
@@ -80,7 +80,7 @@ fn a_sync_failure_never_publishes_staged_state_and_recovery_deduplicates_the_una
     assert_eq!(refused.failed_index, Some(0));
     assert!(refused.error.unwrap().message.contains("injected audit WAL sync failure"));
     assert_eq!((state.engine_root(), state.audit_root(), state.session_root(), state.wal_head(), state.transaction_sequence(), state.head()), before);
-    assert_eq!(state.core.session.wal.bytes, engine_wal);
+    assert_eq!(state.core.session.wal.bytes(), engine_wal);
     assert_eq!(state.core.session.engine.node_count(), engine_nodes);
     assert_eq!(state.core.session.last_seq, engine_seq);
     assert_eq!(state.core.data.receipts.len(), receipts);
@@ -146,7 +146,7 @@ fn semantic_replay_failure_preserves_the_unterminated_tail_even_when_frame_hashe
     // Prove this is not a framing/hash rejection. Do not finish recovery here:
     // the State layer has not yet accepted the command's claimed post-roots.
     let (journal, scan) = AuditJournal::open(&path.0).unwrap();
-    let payloads = scan.payloads;
+    let payloads = scan.payloads.to_vec();
     assert_eq!(payloads.len(), 2);
     assert_eq!(payloads[1]["audit_root"], json!(to_hex(&ZERO_HASH)));
     drop(journal);
@@ -354,13 +354,13 @@ fn a_copied_engine_changes_alone_and_equals_the_replay_of_its_wal() {
     };
     // a warm engine (its root computed at the commit) copied, the copy changed: the original stays as it was
     let core = &state.core;
-    let (root, nodes, wal) = (core.engine_root, core.session.engine.node_count(), core.session.wal.bytes.clone());
+    let (root, nodes, wal) = (core.engine_root, core.session.engine.node_count(), core.session.wal.bytes());
     let mut copy = core.fork_session().unwrap();
     bind(&mut copy, "probe");
     assert_ne!(copy.engine.root(), root);
-    assert_eq!(copy.engine.root(), replay(&copy.wal.bytes).root(), "the changed copy equals the replay of its own WAL");
+    assert_eq!(copy.engine.root(), replay(&copy.wal.bytes()).root(), "the changed copy equals the replay of its own WAL");
     let mut original = core.session.engine.clone();
-    assert_eq!((original.root(), core.session.engine.node_count(), &core.session.wal.bytes), (root, nodes, &wal), "the original is unchanged");
+    assert_eq!((original.root(), core.session.engine.node_count(), &core.session.wal.bytes()), (root, nodes, &wal), "the original is unchanged");
     assert_eq!(replay(&wal).root(), root);
     // a cold engine (changed, its root not computed yet) copied: both continue alike
     let mut cold = core.fork_session().unwrap();
@@ -370,9 +370,9 @@ fn a_copied_engine_changes_alone_and_equals_the_replay_of_its_wal() {
         let event = json!({"seq":s.last_seq+1,"op":"bind_evidence","local_id":"next","doc_id":"policy","exact_quote":"Prior witness."});
         s.apply_line(&to_jcs(&event)).unwrap();
     }
-    assert_eq!(cold.wal.bytes, twin.wal.bytes);
+    assert_eq!(cold.wal.bytes(), twin.wal.bytes());
     assert_eq!(cold.engine.root(), twin.engine.root());
-    assert_eq!(cold.engine.root(), replay(&cold.wal.bytes).root());
+    assert_eq!(cold.engine.root(), replay(&cold.wal.bytes()).root());
 }
 
 #[test]
@@ -408,7 +408,7 @@ fn verify_replays_like_open_but_leaves_every_byte_of_the_journal_including_a_tor
 /// What a resumed server goes on from, roots aside: the preimage of the state, the session's engine log and sequence, the telemetry.
 fn replayed(s: &AuditState) -> (String, Vec<u8>, u64, Hash, Vec<Value>) {
     let session = &s.core.session;
-    (s.core.legacy_preimage(), session.wal.bytes.clone(), session.last_seq, session.engine.clone().root(), s.telemetry_frames.clone())
+    (s.core.legacy_preimage(), session.wal.bytes(), session.last_seq, session.engine.clone().root(), s.telemetry_frames.clone())
 }
 
 /// `AuditState::verify` of the journal at `path`, on copies of the state or on the state itself: the states it visited, then what it
@@ -678,6 +678,36 @@ fn random_runs_replay_alike_on_the_state_and_on_copies() {
                 cursors.insert(key.clone(), value["to"].as_u64().unwrap_or(0));
             }
             assert_eq!(*s.core.support_flags(), s.core.support_flags_fresh(), "seed {seed} step {step}: kept flags");
+            // visibility by the cone of a record is the ordered pass over every record (0.2.5 stage 3)
+            let scopes = [
+                Scope { docs: vec!["a".into()], topic: None, ranges: Vec::new() },
+                Scope { docs: vec!["b".into()], topic: None, ranges: Vec::new() },
+                Scope { docs: vec!["a".into(), "b".into()], topic: None, ranges: Vec::new() },
+                Scope { docs: vec!["a".into(), "b".into()], topic: None, ranges: vec![("a".into(), 0, 22), ("b".into(), 10, 20)] },
+            ];
+            // the reverse indices are the filters of every record they replaced
+            let (mut by_doc, mut by_evidence): (HashMap<String, Vec<usize>>, HashMap<Hash, Vec<usize>>) = Default::default();
+            for (i, r) in s.core.data.records.iter().enumerate() {
+                if let Some(b) = s.core.data.evidence.get(&r.id) {
+                    by_doc.entry(r.doc_id.clone().unwrap()).or_default().push(i);
+                    by_evidence.entry(b.evidence).or_default().push(i);
+                }
+            }
+            assert_eq!((&*s.core.data.doc_observes, &s.core.data.evidence_records.to_map()), (&by_doc, &by_evidence), "seed {seed} step {step}: indices");
+            // and the records that name each ground or relation end, as a walk of every record finds them (Fable's review of stage 3, N2)
+            let mut by_ground: HashMap<RecordId, Vec<usize>> = HashMap::new();
+            for (i, r) in s.core.data.records.iter().enumerate() {
+                for ground in r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b])) {
+                    by_ground.entry(*ground).or_default().push(i);
+                }
+            }
+            assert_eq!(s.core.data.dependents.to_map(), by_ground, "seed {seed} step {step}: dependents");
+            assert_eq!(s.core.projection_hashes(), s.core.projection_hashes_of_rows(), "seed {seed} step {step}: projection hashes");
+            for r in s.core.data.records.iter() {
+                for sc in &scopes {
+                    assert_eq!(s.core.visible_in_scope(&r.id, sc), s.core.visible_in_scope_ordered(&r.id, sc), "seed {seed} step {step}: visibility");
+                }
+            }
             let _ = s.audit_root();
         }
         drop(s);
@@ -717,6 +747,57 @@ fn random_runs_replay_alike_on_the_state_and_on_copies() {
         assert_eq!(after[0], after[1], "seed {seed}: resumed alike");
     }
     assert!(ok_commands > 80 && failed_commands > 100 && concepts > 0, "{ok_commands} clean, {failed_commands} failed, {concepts} concepts");
+}
+
+/// Withdrawals by text over claims, relations between claims and claims of other tasks (0.2.5 stage 3): after every command the
+/// flags kept from the state before equal a fresh pass, the streamed projection hashes equal those of the rows, and a replay of the
+/// journal ends at the same roots.
+#[test]
+fn withdrawals_by_text_keep_the_flags_and_projections_a_fresh_pass_computes() {
+    let lines = ["Alpha one.", "Alpha two.", "Alpha three.", "Alpha four.", "Beta one.", "Beta two.", "Beta three."];
+    let mut withdrawn = 0;
+    for seed in 0..6u64 {
+        let mut rng = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut next = move |n: u64| {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) % n
+        };
+        let path = TempPath::new();
+        let docs = [
+            ("a".to_string(), b"Alpha one.\nAlpha two.\nAlpha three.\nAlpha four.\n".to_vec()),
+            ("b".to_string(), b"Beta one.\nBeta two.\nBeta three.\n".to_vec()),
+        ];
+        let mut s = AuditState::create(&path.0, &AuditOntology::base(), &docs, "texts", sha256(b"texts")).unwrap();
+        for step in 0..24u64 {
+            let line = lines[next(lines.len() as u64) as usize];
+            let doc = if line.starts_with("Alpha") { "a" } else { "b" };
+            if next(3) == 0 {
+                // a whole line, or a word of it that other quotes overlap
+                let text = if next(2) == 0 { line.to_string() } else { line.split(' ').nth(1).unwrap().to_string() };
+                withdrawn += usize::from(s.withdraw_text("owner", doc, &text).is_ok());
+            } else {
+                let scope = Scope { docs: vec![doc.into()], topic: None, ranges: Vec::new() };
+                let quote = if next(2) == 0 { line.to_string() } else { line.split(' ').next().unwrap().to_string() + " " + line.split(' ').nth(1).unwrap() };
+                let records = [
+                    json!({"kind":"observe","local_id":"o","doc_id":doc,"exact_quote":quote,"terms":["alpha"]}),
+                    json!({"kind":"claim","local_id":"c","text":format!("Claim {step}."),"subject":"alpha","stance":"reported","based_on":["o"]}),
+                    json!({"kind":"claim","local_id":"d","text":format!("Other {step}."),"subject":"alpha","stance":"reported","based_on":["o"]}),
+                    json!({"kind":"relation","local_id":"r","from":"d","rel":"supports","to":"c","based_on":["o"]}),
+                ];
+                let _ = s.submit_records_id(&format!("s{step}"), "w1", &format!("t{step}"), &scope, &records[..2 + 2 * next(2) as usize]);
+            }
+            assert_eq!(*s.core.support_flags(), s.core.support_flags_fresh(), "seed {seed} step {step}: kept flags");
+            let fresh = s.core.support_flags_fresh();
+            let standing: Vec<bool> = s.core.data.records.iter().map(|r| fresh.get(&r.id).is_some_and(|v| v.0)).collect();
+            assert_eq!(*s.core.standing_flags(), standing, "seed {seed} step {step}: standing by position");
+            assert_eq!(s.core.projection_hashes(), s.core.projection_hashes_of_rows(), "seed {seed} step {step}: projections");
+            assert_eq!(super::super::read::summary(&s), super::super::read::summary_of_snapshot(&s), "seed {seed} step {step}: summary");
+        }
+        let held = told(&s);
+        drop(s);
+        assert_eq!(told(&AuditState::open(&path.0).unwrap()), held, "seed {seed}: replay");
+    }
+    assert!(withdrawn > 10, "{withdrawn} withdrawals");
 }
 
 /// The roots a state answers with, and its record count: what an agent would have been told.
@@ -1653,4 +1734,124 @@ fn a_0_2_genesis_holds_the_limits_of_a_frame_before_anything_is_written() {
     let spec = GenesisSpec { operator_meta: Some(json!({"fits": fits, "n": (1u64 << 53) - 1})), ..v3_spec() };
     drop(AuditState::create_with(&path.0, &AuditOntology::base(), &docs, "genesis-limits", sha256(b"m"), &spec).unwrap());
     AuditState::verify(&path.0, &mut |_, _, _, _| {}).unwrap();
+}
+
+/// Two documents, three tasks: quotes, claims on them, a relation inside a task, a relation across tasks, an answer.
+fn run_for_the_dispatcher(path: &Path) -> AuditState {
+    let docs = [("a".to_string(), b"Alpha one.\nAlpha two.\nAlpha three.\n".to_vec()), ("b".to_string(), b"Beta one.\nBeta two.\n".to_vec())];
+    let mut s = AuditState::create_with(path, &AuditOntology::base(), &docs, "dispatcher-reads", sha256(b"m"), &v3_spec()).unwrap();
+    let quote = |local: &str, doc: &str, text: &str| json!({"kind":"observe","local_id":local,"doc_id":doc,"exact_quote":text,"terms":["witness"]});
+    let only = |doc: &str| Scope { docs: vec![doc.into()], topic: None, ranges: Vec::new() };
+    let first = s.submit_records_id(
+        "s1",
+        "w1",
+        "t1",
+        &only("a"),
+        &[
+            quote("o1", "a", "Alpha one."),
+            quote("o2", "a", "Alpha two."),
+            claim("c1", "One holds.", &["o1"]),
+            claim("c2", "Two holds.", &["o2"]),
+            json!({"kind":"relation","local_id":"r1","from":"c2","rel":"supports","to":"c1","based_on":["o1","o2"]}),
+            json!({"kind":"done","local_id":"d1","rq_id":"RQ1","directive_id":"t1","answer_ids":["c1"],"outcome":"answered"}),
+        ],
+    );
+    assert!(first.error.is_none(), "{:?}", first.error);
+    let second = s.submit_records_id("s2", "w2", "t2", &only("b"), &[quote("o3", "b", "Beta one."), claim("c3", "Beta holds.", &["o3"])]);
+    assert!(second.error.is_none(), "{:?}", second.error);
+    let both = Scope { docs: vec!["a".into(), "b".into()], topic: None, ranges: Vec::new() };
+    let at = |id: &RecordId| format!("@{}", to_hex(&id.0));
+    let across = json!({"kind":"relation","local_id":"r2","from":at(&second.accepted[1]),"rel":"supports","to":at(&first.accepted[2]),
+        "based_on":[at(&first.accepted[0]), at(&second.accepted[0])]});
+    let third = s.submit_records_id("s3", "w3", "t3", &both, &[across]);
+    assert!(third.error.is_none(), "{:?}", third.error);
+    s
+}
+
+#[test]
+fn a_short_id_is_found_by_the_index_as_a_pass_over_the_records_found_it() {
+    let path = TempPath::new();
+    let s = run_for_the_dispatcher(&path.0);
+    let by_a_pass = |name: &str| {
+        let found: Vec<RecordId> = s.records_since(0).iter().filter(|r| r.id.short() == name).map(|r| r.id).collect();
+        match found[..] {
+            [id] => Some(id),
+            _ => None,
+        }
+    };
+    let mut names = Vec::new();
+    for r in s.records_since(0) {
+        let (short, full) = (r.id.short(), to_hex(&r.id.0));
+        assert_eq!(s.record_by_short(&short), Some(r.id));
+        names.extend([
+            short.clone(),
+            short.to_uppercase(),
+            short[1..].to_string(),
+            format!("{short}0"),
+            short[..16].to_string(),
+            format!("@{full}"),
+            format!("@+{}", &full[..15]),
+        ]);
+        let other = if &full[..1] == "0" { "1" } else { "0" };
+        names.push(format!("@{other}{}", &full[1..16]));
+    }
+    names.extend(["".to_string(), "@".to_string(), "@zzzzzzzzzzzzzzzz".to_string(), "o1".to_string()]);
+    for name in &names {
+        assert_eq!(s.record_by_short(name), by_a_pass(name), "{name}");
+    }
+}
+
+#[test]
+fn the_records_shared_are_the_records_copied_from_any_cursor() {
+    let path = TempPath::new();
+    let s = run_for_the_dispatcher(&path.0);
+    for cursor in [0u64, 1, 4, 8, 9, 10, u64::MAX] {
+        let shared: Vec<RecordView> = s.records_shared(cursor).iter().map(|r| r.as_ref().clone()).collect();
+        assert_eq!(shared, s.records_since(cursor), "cursor {cursor}");
+    }
+    assert_eq!((s.records_shared(0).len(), s.records_shared(8).len(), s.records_shared(9).len()), (9, 1, 0));
+    // shared with the state, not copied: the same record behind both
+    assert!(Arc::ptr_eq(&s.records_shared(0)[3], &s.core.data.records[3]));
+    // a document's stamp is its present text's: a new text has another, the other document keeps its own
+    let (a, b) = (s.doc_stamp("a").unwrap(), s.doc_stamp("b").unwrap());
+    assert!(s.doc_stamp("no such document").is_none() && a != b);
+    let mut s = s;
+    s.put_document("owner", "a", b"Alpha one.\nAlpha two.\nAlpha three.\nAlpha four.\n").unwrap();
+    assert!(s.doc_stamp("a").unwrap() != a && s.doc_stamp("b").unwrap() == b);
+}
+
+#[test]
+fn records_whose_ids_share_the_first_eight_bytes_are_told_apart_by_a_longer_prefix_and_never_by_the_short_form() {
+    let path = TempPath::new();
+    let mut s = state(&path.0);
+    let report = s.submit_records_id("s1", "worker", "task", &scope(), &[observation("a", "Prior witness."), observation("b", "New witness.")]);
+    assert!(report.error.is_none(), "{:?}", report.error);
+    let (a, b) = (report.accepted[0], report.accepted[1]);
+    let prefix = |id: &RecordId, digits: usize| format!("@{}", &to_hex(&id.0)[..digits]);
+    assert_eq!(s.record_by_short(&prefix(&a, 16)), Some(a));
+    assert_eq!(s.core.resolve(&prefix(&a, 16), "worker", "task").unwrap(), a);
+    // No two ids of a real run are known to share eight bytes: b is given a's first eight, and its short form is marked shared,
+    // as the submit of such a record marks it.
+    let mut forged = a.0;
+    forged[8] ^= 0xff;
+    let at = s.core.data.records.iter().position(|r| r.id == b).unwrap();
+    Arc::make_mut(&mut Arc::make_mut(&mut s.core.data.records)[at]).id = RecordId(forged);
+    s.core.data.record_positions.insert(RecordId(forged), at);
+    let key: [u8; 8] = a.0[..8].try_into().unwrap();
+    s.core.data.short_positions.shard_mut(&key).insert(key, None);
+    let b = RecordId(forged);
+    assert_eq!(s.record_by_short(&prefix(&a, 16)), None, "a shared short form names no record");
+    let refused = s.core.resolve(&prefix(&a, 16), "worker", "task").unwrap_err();
+    assert!(refused.message.contains("ambiguous"), "{}", refused.message);
+    for digits in [17, 18, 40, 63, 64] {
+        assert_eq!(s.core.resolve(&prefix(&a, digits), "worker", "task").unwrap(), a, "{digits} digits");
+        assert_eq!(s.core.resolve(&prefix(&b, digits), "worker", "task").unwrap(), b, "{digits} digits");
+        let upper = format!("@{}", to_hex(&b.0)[..digits].to_ascii_uppercase());
+        assert_eq!(s.core.resolve(&upper, "worker", "task").unwrap(), b, "{digits} digits in capitals");
+    }
+    // a seventeenth digit that neither id has
+    let hex = to_hex(&a.0);
+    let neither = format!("@{}{:x}", &hex[..16], u8::from_str_radix(&hex[16..17], 16).unwrap() ^ 1);
+    let missing = s.core.resolve(&neither, "worker", "task").unwrap_err();
+    assert!(missing.message.contains("not found"), "{}", missing.message);
 }

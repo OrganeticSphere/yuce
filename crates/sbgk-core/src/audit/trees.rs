@@ -28,7 +28,12 @@ fn split(n: usize) -> usize {
 
 /// The leaf of one accepted record: `H("R2R-REC-LEAF/2", JCS(L))`.
 pub fn record_leaf(value: &Value) -> Hash {
-    sha256_parts(&[REC_LEAF, to_jcs(value).as_bytes()])
+    record_leaf_of_jcs(&to_jcs(value))
+}
+
+/// `record_leaf` of a value already in its JCS form.
+pub(crate) fn record_leaf_of_jcs(jcs: &str) -> Hash {
+    sha256_parts(&[REC_LEAF, jcs.as_bytes()])
 }
 
 /// The root of a frame's records tree over leaf hashes in acceptance order; a frame that accepted no record has the empty root.

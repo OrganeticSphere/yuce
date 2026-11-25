@@ -258,12 +258,12 @@ fn session_does_not_rebind_an_ambiguous_quote_or_revive_revoked_evidence() {
 #[test]
 fn wal_replay_container_reopen_and_time_travel_agree_on_exact_statuses() {
     let (mut session, ev, fact, derived) = session_graph();
-    let before = session.wal.bytes.len();
+    let before = session.wal.len();
     let before_root = session.engine.root();
     session.put_document("d", b"BBBBAAAACCCC");
     let after_root = session.engine.root();
     assert_ne!(before_root, after_root);
-    let mut replay = reconstruct_at_byte_offset(&session.wal.bytes).unwrap().engine;
+    let mut replay = reconstruct_at_byte_offset(&session.wal.bytes()).unwrap().engine;
     assert_eq!(replay.root(), after_root);
     for (id, expected) in [(ev, EV_STALE), (fact, ST_UNSUPPORTED), (derived, ST_UNSUPPORTED)] {
         assert_eq!(replay.status_of(&id), Some(expected));

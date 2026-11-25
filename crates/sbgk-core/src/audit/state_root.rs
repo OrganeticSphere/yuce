@@ -84,6 +84,9 @@ pub(super) struct StateTree {
     decisions_seen: usize,
     pub(super) dirty: Dirty,
     root: Option<Hash>,
+    /// The records leaf hashes (`trees::record_leaf`) of the records the last `sync` put, and the position of the first: the records
+    /// root of the frame that accepted them reads them instead of making their leaves a second time (0.2.5 stage 3).
+    pub(super) recent_leaves: (usize, Vec<Hash>),
 }
 
 fn lp(bytes: &[u8]) -> [u8; 4] {
@@ -171,14 +174,20 @@ pub(super) fn may_change_ontology(command: &Value) -> bool {
 impl StateTree {
     /// The tree of `data`, built from every value.
     pub(super) fn build(data: &Data) -> Self {
-        let mut tree =
-            Self { sections: (0..SECTIONS.len()).map(Section::empty).collect(), records_seen: 0, decisions_seen: 0, dirty: Dirty::default(), root: None };
+        let mut tree = Self {
+            sections: (0..SECTIONS.len()).map(Section::empty).collect(),
+            records_seen: 0,
+            decisions_seen: 0,
+            dirty: Dirty::default(),
+            root: None,
+            recent_leaves: (0, Vec::new()),
+        };
         tree.put(META, &to_jcs(&json!("manifest_hash")), Some(&to_jcs(&json!(to_hex(&data.manifest_hash)))));
         tree.put(META, &to_jcs(&json!("run_id")), Some(&to_jcs(&json!(data.run_id))));
         tree.put(META, &to_jcs(&json!("source_mode")), Some(&to_jcs(&json!(data.source_mode))));
         tree.dirty.meta = true;
         tree.dirty.sources = data.source_documents.keys().cloned().collect();
-        tree.dirty.locals = data.locals.keys().cloned().collect();
+        tree.dirty.locals = data.locals.iter().map(|((a, d, l), _)| (a.clone(), d.clone(), l.clone())).collect();
         tree.dirty.ordinals = data.task_ordinals.keys().cloned().collect();
         tree.dirty.mappings = data.mappings.keys().cloned().collect();
         tree.dirty.links = data.links.keys().copied().collect();
@@ -212,8 +221,15 @@ impl StateTree {
 
     /// Bring the tree to `data`: the appended records and decisions, the keys `dirty` names, the ontology when marked.
     pub(super) fn sync(&mut self, data: &Data) {
-        for r in &data.records[self.records_seen.min(data.records.len())..] {
-            self.put(RECORDS, &to_jcs(&json!(to_hex(&r.id.0))), Some(&to_jcs(&record_leaf_value(data, r))));
+        let start = self.records_seen.min(data.records.len());
+        if start < data.records.len() {
+            let mut leaves = Vec::with_capacity(data.records.len() - start);
+            for r in &data.records[start..] {
+                let value = to_jcs(&record_leaf_value(data, r));
+                leaves.push(super::trees::record_leaf_of_jcs(&value));
+                self.put(RECORDS, &to_jcs(&json!(to_hex(&r.id.0))), Some(&value));
+            }
+            self.recent_leaves = (start, leaves);
         }
         self.records_seen = data.records.len();
         for (n, d) in data.decisions.iter().enumerate().skip(self.decisions_seen) {
@@ -323,8 +339,14 @@ mod tests {
         let a = Section::empty(META);
         let b = Section::empty(RECORDS);
         assert_ne!(a.root, b.root);
-        let mut tree =
-            StateTree { sections: (0..SECTIONS.len()).map(Section::empty).collect(), records_seen: 0, decisions_seen: 0, dirty: Dirty::default(), root: None };
+        let mut tree = StateTree {
+            sections: (0..SECTIONS.len()).map(Section::empty).collect(),
+            records_seen: 0,
+            decisions_seen: 0,
+            dirty: Dirty::default(),
+            root: None,
+            recent_leaves: (0, Vec::new()),
+        };
         let before = tree.root();
         let copy = tree.clone();
         tree.put(CHECKPOINTS, "\"k\"", Some("1"));
@@ -338,8 +360,14 @@ mod tests {
         assert_eq!(other.root(), before, "a copy keeps its own buckets");
         // the same key and value in another section is another leaf
         other.put(LINKS, "\"k\"", Some("1"));
-        let mut third =
-            StateTree { sections: (0..SECTIONS.len()).map(Section::empty).collect(), records_seen: 0, decisions_seen: 0, dirty: Dirty::default(), root: None };
+        let mut third = StateTree {
+            sections: (0..SECTIONS.len()).map(Section::empty).collect(),
+            records_seen: 0,
+            decisions_seen: 0,
+            dirty: Dirty::default(),
+            root: None,
+            recent_leaves: (0, Vec::new()),
+        };
         third.put(CHECKPOINTS, "\"k\"", Some("1"));
         assert_ne!(other.root(), third.root());
     }
@@ -347,8 +375,14 @@ mod tests {
     /// The vectors of an independent implementation of the specification (SBGK/SPEC_V02_STEP2, sections 0 and 3).
     #[test]
     fn the_state_root_matches_the_vectors_of_an_independent_implementation() {
-        let mut tree =
-            StateTree { sections: (0..SECTIONS.len()).map(Section::empty).collect(), records_seen: 0, decisions_seen: 0, dirty: Dirty::default(), root: None };
+        let mut tree = StateTree {
+            sections: (0..SECTIONS.len()).map(Section::empty).collect(),
+            records_seen: 0,
+            decisions_seen: 0,
+            dirty: Dirty::default(),
+            root: None,
+            recent_leaves: (0, Vec::new()),
+        };
         assert_eq!(to_hex(&tree.root()), "b556e673e5dbadeb5200567af4cabbe567b5df849e56a5855059c861a9b15e99");
         tree.put(CHECKPOINTS, "\"k\"", Some("1"));
         assert_eq!(to_hex(&tree.root()), "f15a3ea89a48027f9efdab09899119438855dac1163714f384a1a7af757ed054");

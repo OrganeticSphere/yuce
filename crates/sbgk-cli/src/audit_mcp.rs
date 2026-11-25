@@ -1031,11 +1031,7 @@ fn record_arg(state: &AuditState, args: &Value) -> Result<RecordId, Value> {
     if let Some(h) = from_hex(name.trim_start_matches('@')) {
         return Ok(RecordId(h));
     }
-    let found: Vec<RecordId> = state.records_since(0).iter().filter(|r| r.id.short() == name).map(|r| r.id).collect();
-    match found[..] {
-        [id] => Ok(id),
-        _ => Err(bad_arg(format!("'{name}' names no single record"))),
-    }
+    state.record_by_short(name).ok_or_else(|| bad_arg(format!("'{name}' names no single record")))
 }
 
 /// The target of `dependents`: a record, or a document with an optional byte range of its current version.

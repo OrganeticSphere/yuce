@@ -95,7 +95,9 @@ pub(super) fn plan<S: AuditStore>(s: &S, circle: u64, readers: &[String]) -> Res
             }
         }
         if !basis.iter().any(|r| r.kind == RecordKind::Observe && s.is_answer_support(&r.id)) {
-            basis.extend(s.records_since(0).into_iter().rev().filter(|r| r.kind == RecordKind::Observe && s.is_answer_support(&r.id)).take(8));
+            basis.extend(
+                s.records_shared(0).iter().rev().filter(|r| r.kind == RecordKind::Observe && s.is_answer_support(&r.id)).take(8).map(|r| r.as_ref().clone()),
+            );
         }
         if basis.is_empty() {
             return Err(json!({"code":"NO_ONTOLOGY_REVIEW_BASIS","concept":id.short()}));

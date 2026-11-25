@@ -121,7 +121,7 @@ fn claim_text<S: AuditStore>(s: &S, r: &RecordView) -> String {
 /// not evidence: the reader decides on the quotes whether one is an earlier or a later state of the same thing. A claim without a
 /// dated report of its own gets none.
 pub fn related<S: AuditStore>(s: &S, of: &[RecordId], k: usize) -> Vec<(RecordId, Vec<RecordId>)> {
-    let claims = s.records_since(0).into_iter().filter(|r| pairable(s, r)).filter_map(|r| document(s, r.id).map(|d| (d, r))).collect::<Vec<_>>();
+    let claims = s.records_shared(0).iter().filter(|r| pairable(s, r)).filter_map(|r| document(s, r.id).map(|d| (d, r.as_ref().clone()))).collect::<Vec<_>>();
     let texts = claims.iter().map(|(_, r)| claim_text(s, r)).collect::<Vec<_>>();
     let vecs = tfidf(&texts);
     let dates = claims.iter().map(|(d, _)| date(s, d)).collect::<Vec<_>>();
@@ -154,7 +154,8 @@ fn lost_text<S: AuditStore>(s: &S, r: &RecordView) -> String {
 /// are before the reader already (the standing quotes a repair names under its fallen rows), and with two or three readers per
 /// section such claims took every place a fallen row has. Ties keep reading order. A retrieval, never a relation verdict.
 pub fn nearest<S: AuditStore>(s: &S, of: &[RecordId], shown: &BTreeSet<RecordId>) -> Vec<Vec<RecordId>> {
-    let pool = s.records_since(0).into_iter().filter(|r| pairable(s, r) && !r.based_on.iter().all(|b| shown.contains(b))).collect::<Vec<_>>();
+    let pool =
+        s.records_shared(0).iter().filter(|r| pairable(s, r) && !r.based_on.iter().all(|b| shown.contains(b))).map(|r| r.as_ref().clone()).collect::<Vec<_>>();
     let mut texts = pool.iter().map(|r| claim_text(s, r)).collect::<Vec<_>>();
     texts.extend(of.iter().map(|id| s.record(id).map(|r| lost_text(s, &r)).unwrap_or_default()));
     let vecs = tfidf(&texts);
@@ -180,7 +181,7 @@ pub fn nearest<S: AuditStore>(s: &S, of: &[RecordId], shown: &BTreeSet<RecordId>
 fn lexical_rows<S: AuditStore>(s: &S, cfg: &Value, explicit: &[Value]) -> Vec<Value> {
     let per_page = cfg["evolution_pairs_per_page"].as_u64().unwrap_or(1) as usize;
     let per_corpus = cfg["evolution_pairs_per_corpus"].as_u64().unwrap_or(1) as usize;
-    let claims = s.records_since(0).into_iter().filter(|r| pairable(s, r)).filter_map(|r| document(s, r.id).map(|d| (d, r))).collect::<Vec<_>>();
+    let claims = s.records_shared(0).iter().filter(|r| pairable(s, r)).filter_map(|r| document(s, r.id).map(|d| (d, r.as_ref().clone()))).collect::<Vec<_>>();
     let texts = claims.iter().map(|(_, r)| claim_text(s, r)).collect::<Vec<_>>();
     let vecs = tfidf(&texts);
     let pages = claims.iter().map(|(d, _)| logical_page(&s.document_label(d))).collect::<Vec<_>>();
@@ -288,10 +289,10 @@ fn concept_rows<S: AuditStore>(s: &S, cfg: &Value, explicit: &[Value]) -> Vec<Va
     for c in s.concepts().into_iter().filter(|c| c.selectable()) {
         let mapped = s.records_of(&c.id).into_iter().collect::<BTreeSet<_>>();
         let mut claims = s
-            .records_since(0)
-            .into_iter()
+            .records_shared(0)
+            .iter()
             .filter(|r| pairable(s, r) && cone(s, &[r.id]).iter().any(|r| mapped.contains(&r.id)))
-            .filter_map(|r| document(s, r.id).map(|d| (d, r)))
+            .filter_map(|r| document(s, r.id).map(|d| (d, r.as_ref().clone())))
             .collect::<Vec<_>>();
         claims.sort_by_key(|(d, r)| (docs.iter().position(|x| x == d), r.seq));
         // per new claim its best earlier claims, then the concept's best pairs; a pair seen under an earlier concept is not offered again

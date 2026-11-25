@@ -521,11 +521,24 @@ fn allowed_records(lease: &Lease, lines: &[Value]) -> Vec<RecordId> {
     if lease.own_run.is_empty() {
         return lease.issued.clone();
     }
-    let named: BTreeSet<String> = lines.iter().flat_map(references).collect();
-    let mut out: Vec<RecordId> = lease.issued.iter().chain(&lease.own_run).filter(|id| named.contains(&id.short())).copied().collect();
+    // a line names a record shown by its short id: compared as the bytes that id spells, where a string was made for every
+    // record shown to compare it with each name
+    let named: std::collections::HashSet<[u8; 8]> = lines.iter().flat_map(references).filter_map(|name| short_key(&name)).collect();
+    let mut out: Vec<RecordId> = lease.issued.iter().chain(&lease.own_run).filter(|id| named.contains(&first_bytes(id))).copied().collect();
     out.sort();
     out.dedup();
     out
+}
+
+/// The eight bytes a short id spells: `@` and 16 hex digits in lower case, as `RecordId::short` writes one; `None` for any other
+/// name. A name equals a record's short id exactly when these are the first bytes of the record's id.
+fn short_key(name: &str) -> Option<[u8; 8]> {
+    let hex = name.strip_prefix('@').filter(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))?;
+    u64::from_str_radix(hex, 16).ok().map(u64::to_be_bytes)
+}
+
+fn first_bytes(id: &RecordId) -> [u8; 8] {
+    id.0[..8].try_into().expect("an id of 32 bytes")
 }
 
 /// The names a line rests on or connects: its based_on, a relation's ends, a done line's answer_ids.
@@ -717,7 +730,13 @@ pub struct Dispatcher {
     /// Gap packs completed so far: the order the tier rule reads back (SPEC_V02_GAP_PASS section 4).
     gap_order: u64,
     pub stats: DispatchStats,
+    /// The sections of each document, by the stamp of the text they were cut from and the section size (`sections_of`). Derived
+    /// from the documents alone and never written: a restart cuts them again.
+    section_cuts: std::sync::Mutex<BTreeMap<String, SectionCut>>,
 }
+
+/// The stamp of a document's text, the section size, and the sections cut from that text at that size.
+type SectionCut = (crate::hash::Hash, usize, std::sync::Arc<Vec<(usize, usize)>>);
 
 impl Default for Dispatcher {
     /// A dispatcher without research questions, with its own nonce like any other.
@@ -1012,7 +1031,7 @@ const ENDING: &[&str] = &["deprecat", "remov", "replac", "no longer", "supersed"
 fn later_on_the_same_words<S: AuditStore>(s: &S) -> BTreeMap<RecordId, RecordId> {
     let date = |id: &RecordId| super::quality::evolution::document(s, *id).map(|d| super::quality::evolution::date(s, &d)).unwrap_or_default();
     let ends = |id: &RecordId| s.record(id).and_then(|r| r.text).is_some_and(|t| ENDING.iter().any(|m| t.to_ascii_lowercase().contains(m)));
-    let claims: Vec<RecordId> = s.records_since(0).into_iter().filter(|r| r.kind == RecordKind::Claim).map(|r| r.id).collect();
+    let claims: Vec<RecordId> = s.records_shared(0).iter().filter(|r| r.kind == RecordKind::Claim).map(|r| r.id).collect();
     super::quality::evolution::related(s, &claims, COMPANION_POOL)
         .into_iter()
         .filter_map(|(id, near)| {
@@ -1163,6 +1182,21 @@ pub fn unstored_problems<S: AuditStore>(
     lines: &[Value],
     unstored: &[(usize, Value)],
 ) -> Vec<Value> {
+    // The records shown, by the bytes of their short ids: the first of each in the order of `shown`, as a walk of `shown` found it.
+    // Made when a name first needs it. A walk of every record shown, with its short id written out, for every name of every line
+    // was most of what an answer cost in a long run whose agent may cite all it stored.
+    let by_short: std::cell::OnceCell<std::collections::HashMap<[u8; 8], RecordId>> = std::cell::OnceCell::new();
+    let shown_as = |n: &str| -> Option<RecordId> {
+        let key = short_key(n)?;
+        let index = by_short.get_or_init(|| {
+            let mut index = std::collections::HashMap::with_capacity(shown.len());
+            for id in shown {
+                index.entry(first_bytes(id)).or_insert(*id);
+            }
+            index
+        });
+        index.get(&key).copied()
+    };
     // Accepted aliases take precedence. Within a batch the first definition binds the name, including a forward reference:
     // store_items topologically orders the DAG and refuses later duplicate definitions without rebinding the first one.
     let kind_of = |n: &str, _before: usize| -> Option<String> {
@@ -1172,7 +1206,7 @@ pub fn unstored_problems<S: AuditStore>(
         if let Some(l) = lines.iter().find(|l| l.get("local_id").and_then(|x| x.as_str()) == Some(n)) {
             return Some(l.get("kind").and_then(|x| x.as_str()).unwrap_or("").to_string());
         }
-        shown.iter().find(|r| r.short() == n).and_then(|r| s.record(r)).map(|r| r.kind.name().to_string())
+        shown_as(n).and_then(|r| s.record(&r)).map(|r| r.kind.name().to_string())
     };
     // the quote a basis name stands for, bound the same way
     let quote_of = |n: &str, _before: usize| -> Option<String> {
@@ -1182,7 +1216,7 @@ pub fn unstored_problems<S: AuditStore>(
         if let Some(l) = lines.iter().find(|l| l.get("local_id").and_then(|x| x.as_str()) == Some(n)) {
             return l.get("exact_quote").and_then(|x| x.as_str()).map(str::to_string);
         }
-        shown.iter().find(|r| r.short() == n).and_then(|r| s.record(r)).and_then(|r| r.quote)
+        shown_as(n).and_then(|r| s.record(&r)).and_then(|r| r.quote)
     };
     let mut out = Vec::new();
     for (j, v) in unstored {
@@ -1456,7 +1490,26 @@ impl Dispatcher {
             seq: 0,
             gap_order: 0,
             stats: DispatchStats::default(),
+            section_cuts: std::sync::Mutex::default(),
         }
+    }
+
+    /// The sections of a document's present text (`sections`), cut once for each text: the work of a run is listed for every task
+    /// it gives out, and cutting every document anew for each listing read the whole corpus once per task. A store that stamps
+    /// its documents is asked for a text only when the stamp is new; any other store has its text cut every time, as before.
+    fn sections_of<S: AuditStore>(&self, s: &S, doc: &str) -> std::sync::Arc<Vec<(usize, usize)>> {
+        let max = self.cfg.section_bytes;
+        let stamp = s.doc_stamp(doc);
+        if let Some(stamp) = stamp {
+            if let Some((_, _, cut)) = self.section_cuts.lock().expect("section cuts poisoned").get(doc).filter(|(at, size, _)| *at == stamp && *size == max) {
+                return cut.clone();
+            }
+        }
+        let cut = std::sync::Arc::new(sections(doc, &s.doc_text(doc).unwrap_or_default(), max));
+        if let Some(stamp) = stamp {
+            self.section_cuts.lock().expect("section cuts poisoned").insert(doc.to_string(), (stamp, max, cut.clone()));
+        }
+        cut
     }
 
     fn expire(&mut self, now: u64) {
@@ -1582,7 +1635,7 @@ impl Dispatcher {
         let mut keys: BTreeSet<String> = self.all_work(s, &f).into_iter().map(|w| w.1).collect();
         // Recover every possible reread key, including completed keys no longer in the open queue.
         for doc in s.docs() {
-            for k in 0..sections(&doc, &s.doc_text(&doc).unwrap_or_default(), self.cfg.section_bytes).len() {
+            for k in 0..self.sections_of(s, &doc).len() {
                 keys.insert(format!("reread:{doc}#{k}"));
             }
         }
@@ -1718,8 +1771,7 @@ impl Dispatcher {
             if self.cfg.zones.iter().flatten().any(|z| *z == d) {
                 continue;
             }
-            let text = s.doc_text(&d).unwrap_or_default();
-            for (k, (a, b)) in sections(&d, &text, self.cfg.section_bytes).into_iter().enumerate() {
+            for (k, (a, b)) in self.sections_of(s, &d).iter().copied().enumerate() {
                 out.push((TaskKind::Extend, format!("doc:{d}#{k}"), None, None, Some((d.clone(), a, b))));
             }
         }
@@ -2124,11 +2176,9 @@ impl Dispatcher {
             self.request_tasks.insert(task_id.clone(), n);
         }
         let own_run = if self.cfg.own_refs {
-            s.records_since(0)
-                .into_iter()
-                .filter(|r| r.author == agent && matches!(r.kind, RecordKind::Observe | RecordKind::Claim | RecordKind::Hypothesis) && f.grounded(s, &r.id))
-                .map(|r| r.id)
-                .collect()
+            s.record_ids_where(&mut |r| {
+                r.author == agent && matches!(r.kind, RecordKind::Observe | RecordKind::Claim | RecordKind::Hypothesis) && f.grounded(s, &r.id)
+            })
         } else {
             Vec::new()
         };
@@ -2257,7 +2307,7 @@ impl Dispatcher {
                 ids.extend(s.records_of(&c.id));
             }
         }
-        let all = s.records_since(0);
+        let all = s.records_shared(0);
         // records whose own terms or text name the topic, and the ends of accepted links among them (before or without a
         // mapping). Agents write terms in their own words ("stale provenance" for the topic "stale"): a topic matches inside them.
         let norm = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
@@ -2277,8 +2327,12 @@ impl Dispatcher {
             ids.extend(all.iter().filter(|r| r.based_on.iter().any(|b| obs.contains(b))).map(|r| r.id));
         }
         // a withdrawn source takes its records out of what is shown as established (and so out of what may be cited)
-        let mut out: Vec<RecordView> =
-            all.into_iter().filter(|r| ids.contains(&r.id) && matches!(r.kind, RecordKind::Claim | RecordKind::Hypothesis) && f.grounded(s, &r.id)).collect();
+        let mut out: Vec<RecordView> = all
+            .iter()
+            .filter(|r| ids.contains(&r.id) && matches!(r.kind, RecordKind::Claim | RecordKind::Hypothesis) && f.grounded(s, &r.id))
+            .take(self.cfg.max_known)
+            .map(|r| r.as_ref().clone())
+            .collect();
         out.truncate(self.cfg.max_known);
         out
     }
@@ -2414,7 +2468,7 @@ impl Dispatcher {
             // `about` names a record by @id, or by the local id of a line of the question's own answer (live run 10A-5: a question
             // about "t24_c1" matched no section and was given up uninvestigated)
             let named = if t.starts_with('@') {
-                s.records_since(0).into_iter().find(|x| x.id.short() == *t)
+                s.records_shared(0).iter().find(|x| x.id.short() == *t).map(|x| x.as_ref().clone())
             } else {
                 s.local_record(&r.author, &r.directive, t).and_then(|id| s.record(&id))
             };
@@ -2767,8 +2821,8 @@ impl Dispatcher {
         mappings: bool,
     ) -> (Vec<RecordId>, BTreeSet<RecordId>) {
         let topics = Topics::new(&q.about);
-        let all = s.records_since(0);
-        let by_id: BTreeMap<RecordId, &RecordView> = all.iter().map(|r| (r.id, r)).collect();
+        let all = s.records_shared(0);
+        let by_id: BTreeMap<RecordId, &RecordView> = all.iter().map(|r| (r.id, r.as_ref())).collect();
         let claim = |r: &RecordView| r.kind == RecordKind::Claim && f.support(s, &r.id);
         let mapped: BTreeSet<RecordId> = s
             .concepts()
@@ -2857,8 +2911,7 @@ impl Dispatcher {
         let topics = Topics::new(about);
         // settled while a claim or sharper question the investigation recorded still stands (Codex review d7d9a49, D07)
         let settled = |r: &RecordView| self.settled.get(&format!("question:{}", r.id.short())).is_some_and(|ids| ids.iter().any(|id| f.grounded(s, id)));
-        let mut open: Vec<RecordView> =
-            s.records_since(0).into_iter().filter(|r| r.kind == RecordKind::Question).filter(|r| self.is_followup(&r.directive) || !settled(r)).collect();
+        let mut open: Vec<RecordView> = s.records_of_kind(RecordKind::Question).into_iter().filter(|r| self.is_followup(&r.directive) || !settled(r)).collect();
         open.sort_by_key(|r| !(r.terms.iter().any(|t| topics.named(t)) || r.text.as_deref().is_some_and(|t| topics.named(t))));
         let more = open.len().saturating_sub(30);
         let mut lines: Vec<String> = open
@@ -4941,6 +4994,94 @@ mod tests {
             assert!(d.strained.get(&key).is_none_or(|l| !l.abandoned), "run out {run_out}: no abandoned reading");
             assert_eq!(d.stats.committed, 3, "the reading counts once");
         }
+    }
+
+    #[test]
+    fn a_name_is_the_short_id_of_a_record_exactly_when_it_spells_the_first_bytes_of_its_id() {
+        let ids: Vec<RecordId> = (0..40u8).map(|n| RecordId(crate::hash::sha256(&[n]))).collect();
+        let mut names: Vec<String> = Vec::new();
+        for id in &ids[..6] {
+            let (short, full) = (id.short(), crate::hash::to_hex(&id.0));
+            names.extend([
+                short.clone(),
+                short.to_uppercase(),
+                short[1..].to_string(),
+                format!("{short}0"),
+                short[..16].to_string(),
+                format!("@{full}"),
+                format!("@+{}", &full[..15]),
+                format!("@{}g", &full[..15]),
+                format!(" {short}"),
+            ]);
+        }
+        names.extend(["".to_string(), "@".to_string(), "o1".to_string(), "@ffffffffffffffff".to_string(), "@0000000000000000".to_string()]);
+        let mut equal = 0;
+        for name in &names {
+            for id in &ids {
+                assert_eq!(short_key(name) == Some(first_bytes(id)), id.short() == *name, "{name}");
+                equal += usize::from(id.short() == *name);
+            }
+        }
+        assert_eq!(equal, 6);
+    }
+
+    #[test]
+    fn the_sections_of_a_document_are_cut_again_only_for_a_new_text_or_another_size() {
+        use super::super::onto::AuditOntology;
+        use super::super::state::AuditState;
+        use std::sync::Arc;
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("r2r_section_cuts_{}_{nanos}.wal", std::process::id()));
+        let docs = [("r1".to_string(), R1.as_bytes().to_vec()), ("r2".to_string(), R2.as_bytes().to_vec())];
+        let mut s = AuditState::create(&path, &AuditOntology::base(), &docs, "cuts", crate::hash::sha256(b"cuts")).unwrap();
+        let mut d = Dispatcher::new(DispatchConfig { section_bytes: 80, ..Default::default() }, Vec::new());
+        for doc in ["r1", "r2"] {
+            let cut = d.sections_of(&s, doc);
+            assert_eq!(*cut, sections(doc, &s.doc_text(doc).unwrap(), 80));
+            assert!(cut.len() > 1 || doc == "r2", "{doc}: {cut:?}");
+            // asked again, the cut kept is given
+            assert!(Arc::ptr_eq(&cut, &d.sections_of(&s, doc)));
+        }
+        // a new text of one document: its stamp is new, and it is cut again; the other keeps its cut
+        let (first, other) = (d.sections_of(&s, "r1"), d.sections_of(&s, "r2"));
+        let longer = format!("{R1}\n# Later\nA later section of the same report, long enough to be cut apart from the others.\n");
+        s.put_document("owner", "r1", longer.as_bytes()).unwrap();
+        let again = d.sections_of(&s, "r1");
+        assert_eq!(*again, sections("r1", &longer, 80));
+        assert_ne!(*again, *first);
+        assert!(Arc::ptr_eq(&other, &d.sections_of(&s, "r2")));
+        // another section size: cut again
+        d.cfg.section_bytes = 4096;
+        assert_eq!(*d.sections_of(&s, "r1"), sections("r1", &longer, 4096));
+        assert_ne!(*d.sections_of(&s, "r1"), *again);
+        // the work listed for the readers names the sections of the present text
+        let listed: Vec<String> = d.all_work(&s, &Flags::of(&s)).into_iter().filter(|w| w.0 == TaskKind::Extend).map(|w| w.1).collect();
+        let cut: Vec<String> =
+            ["r1", "r2"].iter().flat_map(|doc| (0..sections(doc, &s.doc_text(doc).unwrap(), 4096).len()).map(move |k| format!("doc:{doc}#{k}"))).collect();
+        assert_eq!(listed, cut);
+        // a store that stamps nothing has its text cut every time
+        let (m, plain, _) = setup();
+        assert_eq!(*plain.sections_of(&m, "r1"), sections("r1", R1, 80));
+        assert!(!Arc::ptr_eq(&plain.sections_of(&m, "r1"), &plain.sections_of(&m, "r1")));
+        drop(s);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_store_without_shared_records_gives_them_as_it_gives_their_copies() {
+        let (mut s, mut d, _) = setup();
+        let t = d.acquire(&s, "w1", true, 0);
+        let lines = [
+            json!({"kind": "observe", "local_id": "o1", "doc_id": "r1", "exact_quote": "Differing validator versions -> warning only.", "terms": ["validator version"]}),
+            json!({"kind": "claim", "local_id": "c1", "text": "A version difference is a warning.", "subject": "validator version", "stance": "reported", "based_on": ["o1"]}),
+        ];
+        let answer = d.submit(&mut s, t["task_id"].as_str().unwrap(), "w1", &lines, 0);
+        assert_eq!(answer["status"], "COMMITTED", "{answer}");
+        for cursor in [0u64, 1, 2, 3, u64::MAX] {
+            let shared: Vec<RecordView> = s.records_shared(cursor).iter().map(|r| r.as_ref().clone()).collect();
+            assert_eq!(shared, s.records_since(cursor), "cursor {cursor}");
+        }
+        assert_eq!(s.records_shared(0).len(), 2);
     }
 }
 

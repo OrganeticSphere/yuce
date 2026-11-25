@@ -304,6 +304,94 @@ impl<T> ById<T> {
     }
 }
 
+/// A map in 64 shards by the first byte of its key, each shard behind its own `Arc`: a staged command copies 64 pointers and a
+/// change copies only the shard it falls in (0.2.5 stage 3: an index over every record was copied whole by each command that
+/// appended a record, the first `Arc::make_mut` of the copy). Keyed like `ById`, so it is never walked for anything that reaches a
+/// root or an answer.
+#[derive(Clone, Debug)]
+struct Sharded<K, V> {
+    shards: Vec<Arc<HashMap<K, V, KeyedIdBuild>>>,
+}
+
+/// The shard of a key: the low bits of its first byte (the keys are digests).
+trait ShardKey {
+    fn shard(&self) -> usize;
+}
+
+impl ShardKey for RecordId {
+    fn shard(&self) -> usize {
+        usize::from(self.0[0] & 63)
+    }
+}
+
+impl ShardKey for Hash {
+    fn shard(&self) -> usize {
+        usize::from(self[0] & 63)
+    }
+}
+
+impl ShardKey for [u8; 8] {
+    fn shard(&self) -> usize {
+        usize::from(self[0] & 63)
+    }
+}
+
+impl<K, V> Default for Sharded<K, V> {
+    fn default() -> Self {
+        Self { shards: (0..64).map(|_| Arc::new(HashMap::default())).collect() }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + ShardKey + Clone, V: Clone> Sharded<K, V> {
+    fn get(&self, key: &K) -> Option<&V> {
+        self.shards[key.shard()].get(key)
+    }
+
+    /// The shard a key falls in, copied first if another state shares it.
+    fn shard_mut(&mut self, key: &K) -> &mut HashMap<K, V, KeyedIdBuild> {
+        Arc::make_mut(&mut self.shards[key.shard()])
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        self.shard_mut(&key).insert(key, value);
+    }
+
+    #[cfg(test)]
+    fn to_map(&self) -> HashMap<K, V> {
+        self.shards.iter().flat_map(|s| s.iter().map(|(k, v)| (k.clone(), v.clone()))).collect()
+    }
+}
+
+/// The local names of accepted records by actor and directive, each directive's names behind their own `Arc`: a command that
+/// names records copies the map of directives and the names of its own directive only (0.2.5 stage 3: the names of every record
+/// were copied at each submit). Walked in the order of `(actor, directive, name)`, as the flat map it replaces.
+#[derive(Clone, Debug, Default)]
+struct LocalNames {
+    by_directive: BTreeMap<(String, String), Arc<BTreeMap<String, RecordId>>>,
+}
+
+impl LocalNames {
+    fn get(&self, (actor, directive, name): &(String, String, String)) -> Option<&RecordId> {
+        self.by_directive.get(&(actor.clone(), directive.clone()))?.get(name)
+    }
+
+    fn contains_key(&self, key: &(String, String, String)) -> bool {
+        self.get(key).is_some()
+    }
+
+    fn len(&self) -> usize {
+        self.by_directive.values().map(|names| names.len()).sum()
+    }
+
+    fn insert(&mut self, (actor, directive, name): (String, String, String), id: RecordId) {
+        Arc::make_mut(self.by_directive.entry((actor, directive)).or_default()).insert(name, id);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = ((&String, &String, &String), &RecordId)> + '_ {
+        self.by_directive.iter().flat_map(|((a, d), names)| names.iter().map(move |(l, id)| ((a, d, l), id)))
+    }
+}
+
 impl<T> std::ops::Index<&RecordId> for ById<T> {
     type Output = T;
 
@@ -317,16 +405,23 @@ struct Data {
     run_id: String,
     manifest_hash: Hash,
     source_mode: String,
-    source_documents: BTreeMap<String, Value>,
+    // shared between the copies of a state: one entry per document, changed only when a document is put (0.2.5 stage 3)
+    source_documents: Arc<BTreeMap<String, Value>>,
     ontology: AuditOntology,
     records: Arc<Vec<Arc<RecordView>>>,
     // Derived at the same append as records, including on replay. Neither index is committed.
-    record_positions: Arc<ById<usize>>,
+    record_positions: Sharded<RecordId, usize>,
     // A colliding short prefix falls back to comparing all matches at the requested length.
-    short_positions: Arc<HashMap<[u8; 8], Option<usize>>>,
-    locals: Arc<BTreeMap<(String, String, String), RecordId>>,
+    short_positions: Sharded<[u8; 8], Option<usize>>,
+    // Derived like the two above (0.2.5 stage 3), not committed: the positions of the records bound to evidence, by document and
+    // by evidence, in record order. A withdrawal and the reads of a document's quotes look there instead of at every record.
+    doc_observes: Arc<HashMap<String, Vec<usize>>>,
+    evidence_records: Sharded<Hash, Vec<usize>>,
+    // and the positions of the records that name a record among their grounds or relation ends: whose flags to look at again
+    dependents: Sharded<RecordId, Vec<usize>>,
+    locals: Arc<LocalNames>,
     task_ordinals: Arc<BTreeMap<(String, String), u64>>,
-    evidence: Arc<ById<EvidenceBinding>>,
+    evidence: Sharded<RecordId, EvidenceBinding>,
     mappings: BTreeMap<(RecordId, String, ConceptId), String>,
     links: BTreeMap<LinkId, LinkView>,
     acceptance_basis: BTreeMap<LinkId, Vec<RecordId>>,
@@ -384,7 +479,50 @@ impl Core {
     /// sorted grounds that no longer stand), and the dependency projection, the sorted pairs `[record, ground]` of `based_on` and of
     /// relation ends, each hashed in its own domain. Complete as to the kernel's rule, not as to the world: a dependency an agent
     /// did not declare is in neither.
+    ///
+    /// The hashes of `projection_rows`, computed a row at a time: the JCS of an array is its members' JCS between brackets and
+    /// commas, so no row of every record is held at once (0.2.5 stage 3: a seal held them all, twice, at each 256th frame of a long
+    /// replay, several times the size of the state's records).
     fn projection_hashes(&self) -> (Hash, Hash) {
+        let support = self.support_flags();
+        let stands = |id: &RecordId| support.get(id).is_some_and(|v| v.0);
+        let grounds = |r: &RecordView| r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b])).copied().collect::<Vec<_>>();
+        let status = sha256_stream(|out| {
+            out(b"R2R-PROJ-STATUS/2\0[");
+            for (n, r) in self.data.records.iter().enumerate() {
+                if n > 0 {
+                    out(b",");
+                }
+                let (grounded, established) = support.get(&r.id).copied().unwrap_or((false, false));
+                let mut fallen: Vec<String> = grounds(r).iter().filter(|g| !stands(g)).map(|g| to_hex(&g.0)).collect();
+                fallen.sort();
+                fallen.dedup();
+                out(to_jcs(&json!([to_hex(&r.id.0), r.kind.name(), grounded, established, fallen])).as_bytes());
+            }
+            out(b"]");
+        });
+        // lowercase hex sorts as the bytes it spells
+        // pairs of references, a quarter of the bytes of pairs of ids: a seal of a long run makes them all at once
+        let mut pairs: Vec<(&RecordId, &RecordId)> =
+            self.data.records.iter().flat_map(|r| r.based_on.iter().chain(r.ends.iter().flat_map(|(a, _, b)| [a, b])).map(move |g| (&r.id, g))).collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let dependencies = sha256_stream(|out| {
+            out(b"R2R-PROJ-DEPS/2\0[");
+            for (n, (record, ground)) in pairs.iter().enumerate() {
+                if n > 0 {
+                    out(b",");
+                }
+                out(to_jcs(&json!([to_hex(&record.0), to_hex(&ground.0)])).as_bytes());
+            }
+            out(b"]");
+        });
+        (status, dependencies)
+    }
+
+    /// The hashes of the materialized rows, as before 0.2.5: the reference of the differential test.
+    #[cfg(test)]
+    fn projection_hashes_of_rows(&self) -> (Hash, Hash) {
         let (status, pairs) = self.projection_rows();
         projection_hashes_of(&status, &pairs)
     }
@@ -434,7 +572,7 @@ impl Core {
     fn fork_session(&self) -> KResult<Session> {
         #[cfg(test)]
         if REPLAY_FORK.with(std::cell::Cell::get) {
-            let rec = crate::wal::reconstruct_at_byte_offset(&self.session.wal.bytes).map_err(|e| bad("wal", e.to_string()))?;
+            let rec = crate::wal::reconstruct_at_byte_offset(&self.session.wal.bytes()).map_err(|e| bad("wal", e.to_string()))?;
             return Ok(Session::from_parts(self.session.ontology.clone(), self.session.arena.clone(), rec.engine, self.session.wal.clone()));
         }
         Ok(Session::from_parts(self.session.ontology.clone(), self.session.arena.clone(), self.session.engine.clone(), self.session.wal.clone()))
@@ -594,7 +732,79 @@ impl Core {
             drop(cache);
             return Arc::new(self.support_flags_fresh());
         }
-        cache.support.get_or_insert_with(|| Arc::new(self.support_flags_fresh())).clone()
+        if cache.support.is_none() {
+            // after a command that only appended records or revoked evidence, from the flags before it (0.2.5 stage 3)
+            let (flags, standing) = match (cache.support_before.take(), cache.standing_before.take()) {
+                (Some(before), Some(standing)) => self.support_flags_after(before, standing, &cache.changed_evidence),
+                _ => {
+                    let flags = self.support_flags_fresh();
+                    let standing = self.data.records.iter().map(|r| flags.get(&r.id).is_some_and(|v| v.0)).collect();
+                    (flags, standing)
+                }
+            };
+            cache.changed_evidence.clear();
+            cache.support = Some(Arc::new(flags));
+            cache.standing = Some(Arc::new(standing));
+        }
+        cache.support.clone().expect("support flags just set")
+    }
+
+    /// Whether each record stands, in record order: the `grounded` column of the support flags.
+    fn standing_flags(&self) -> Arc<Vec<bool>> {
+        let support = self.support_flags();
+        let cache = self.cache();
+        match cache.standing.as_ref().filter(|_| cache.readable) {
+            Some(standing) => Arc::clone(standing),
+            None => Arc::new(self.data.records.iter().map(|r| support.get(&r.id).is_some_and(|v| v.0)).collect()),
+        }
+    }
+
+    /// The flags of one record from the flags of the records before it: the rule of `support_flags_fresh`, which its ordered pass
+    /// and the update after a command both read here. `observe` is whether an observation's evidence stands in this state.
+    fn record_flags(&self, r: &RecordView, flags: &root_cache::Support, accepted: &BTreeSet<(RecordId, String, RecordId)>, observe: bool) -> (bool, bool) {
+        if r.kind == RecordKind::Observe {
+            return (observe, observe);
+        }
+        let basis = !r.based_on.is_empty() && r.based_on.iter().all(|b| flags.get(b).is_some_and(|v| v.0));
+        let endpoints = r.ends.as_ref().is_none_or(|(a, _, b)| flags.get(a).is_some_and(|v| v.0) && flags.get(b).is_some_and(|v| v.0));
+        let established_ends = r
+            .ends
+            .as_ref()
+            .is_none_or(|(a, rel, b)| accepted.contains(&(*a, rel.clone(), *b)) && flags.get(a).is_some_and(|v| v.1) && flags.get(b).is_some_and(|v| v.1));
+        let answer = r.kind != RecordKind::Done || r.based_on.iter().all(|b| flags.get(b).is_some_and(|v| v.1));
+        let grounded = basis && endpoints && answer;
+        (grounded, grounded && established_ends && !matches!(r.kind, RecordKind::Hypothesis | RecordKind::Question | RecordKind::Done))
+    }
+
+    /// `support_flags_fresh` of this state from `before`, the flags of the state before a command that only appended records and
+    /// revoked or bound the evidence `changed` (`root_cache::Cache::begin` names the commands): the new records, the records on that
+    /// evidence and, while a record's flags change, the records that name it are computed again, in record order. Without an
+    /// accepted link no flag reads the links; with one, the flags are computed whole.
+    fn support_flags_after(&self, before: Arc<root_cache::Support>, standing: Arc<Vec<bool>>, changed: &[Hash]) -> (root_cache::Support, Vec<bool>) {
+        if self.data.links.values().any(|link| link.status == LinkStatus::Accepted) {
+            let flags = self.support_flags_fresh();
+            let standing = self.data.records.iter().map(|r| flags.get(&r.id).is_some_and(|v| v.0)).collect();
+            return (flags, standing);
+        }
+        let none = BTreeSet::new();
+        // the flags before are copied only while the state they belong to is still held (a preview); after a commit they are taken
+        let first_new = before.0.len();
+        let mut flags = Arc::unwrap_or_clone(before);
+        let mut standing = Arc::unwrap_or_clone(standing);
+        standing.resize(self.data.records.len(), false);
+        let mut todo: BTreeSet<usize> = (first_new..self.data.records.len()).collect();
+        for evidence in changed {
+            todo.extend(self.data.evidence_records.get(evidence).into_iter().flatten().copied());
+        }
+        while let Some(position) = todo.pop_first() {
+            let r = &self.data.records[position];
+            let value = self.record_flags(r, &flags, &none, r.kind == RecordKind::Observe && self.observe_grounded(r));
+            standing[position] = value.0;
+            if flags.insert(r.id, value) != Some(value) {
+                todo.extend(self.data.dependents.get(&r.id).into_iter().flatten().copied());
+            }
+        }
+        (flags, standing)
     }
 
     fn support_flags_fresh(&self) -> root_cache::Support {
@@ -605,20 +815,10 @@ impl Core {
         let structural = self.data.links.values().any(|link| link.status == LinkStatus::Accepted).then(|| self.structural_grounding());
         let accepted = structural.as_ref().map(|flags| self.effective_links(flags)).unwrap_or_default();
         for r in self.data.records.iter() {
-            let (grounded, established) = if r.kind == RecordKind::Observe {
-                let active = structural.as_ref().map_or_else(|| self.observe_grounded(r), |flags| flags.get(&r.id) == Some(&true));
-                (active, active)
-            } else {
-                let basis = !r.based_on.is_empty() && r.based_on.iter().all(|b| flags.get(b).is_some_and(|v| v.0));
-                let endpoints = r.ends.as_ref().is_none_or(|(a, _, b)| flags.get(a).is_some_and(|v| v.0) && flags.get(b).is_some_and(|v| v.0));
-                let established_ends = r.ends.as_ref().is_none_or(|(a, rel, b)| {
-                    accepted.contains(&(*a, rel.clone(), *b)) && flags.get(a).is_some_and(|v| v.1) && flags.get(b).is_some_and(|v| v.1)
-                });
-                let answer = r.kind != RecordKind::Done || r.based_on.iter().all(|b| flags.get(b).is_some_and(|v| v.1));
-                let grounded = basis && endpoints && answer;
-                (grounded, grounded && established_ends && !matches!(r.kind, RecordKind::Hypothesis | RecordKind::Question | RecordKind::Done))
-            };
-            flags.insert(r.id, (grounded, established));
+            let observe =
+                r.kind == RecordKind::Observe && structural.as_ref().map_or_else(|| self.observe_grounded(r), |flags| flags.get(&r.id) == Some(&true));
+            let value = self.record_flags(r, &flags, &accepted, observe);
+            flags.insert(r.id, value);
         }
         flags
     }
@@ -676,13 +876,63 @@ impl Core {
         let acceptance: Vec<_> =
             self.data.acceptance_basis.iter().map(|(id, proof)| json!([to_hex(&id.0), proof.iter().map(|r| to_hex(&r.0)).collect::<Vec<_>>()])).collect();
         let value = json!({"format":"r2r-audit-state/1","run_id":self.data.run_id,"manifest_hash":to_hex(&self.data.manifest_hash),"source_mode":self.data.source_mode,
-            "source_documents":self.data.source_documents,"ontology":self.data.ontology.to_value(),"records":records,"locals":locals,"ordinals":ordinals,"mappings":mappings,
+            "source_documents":self.data.source_documents.as_ref(),"ontology":self.data.ontology.to_value(),"records":records,"locals":locals,"ordinals":ordinals,"mappings":mappings,
             "links":self.data.links.values().map(link_value).collect::<Vec<_>>(),"decisions":self.data.decisions,"acceptance_basis":acceptance,
             "receipts":receipts,"checkpoints":self.data.checkpoints.as_ref()});
         to_jcs(&value)
     }
 
+    /// Whether a record is visible in a scope: an observation of a document of the scope, inside its ranges if it has any, or a
+    /// record whose grounds and relation ends are all visible. A record's visibility follows from the records before it alone, so
+    /// only the cone of `id` is walked, with an explicit stack (0.2.5 stage 3: an ordered pass over every record per reference made
+    /// the ingest, the replay and `audit-verify` of a long journal quadratic). As in that pass, a ground that is not an earlier
+    /// record is not visible.
     fn visible_in_scope(&self, id: &RecordId, scope: &Scope) -> bool {
+        let observe_visible = |record: &RecordView| {
+            record.doc_id.as_ref().is_some_and(|doc| {
+                scope.docs.contains(doc)
+                    && self
+                        .data
+                        .evidence
+                        .get(&record.id)
+                        .is_some_and(|b| scope.ranges.is_empty() || scope.ranges.iter().any(|(d, a, z)| d == doc && *a <= b.start && b.end <= *z))
+            })
+        };
+        let mut known: HashMap<RecordId, bool> = HashMap::new();
+        let mut stack = vec![*id];
+        while let Some(&top) = stack.last() {
+            if known.contains_key(&top) {
+                stack.pop();
+                continue;
+            }
+            let Some(&position) = self.data.record_positions.get(&top) else {
+                known.insert(top, false);
+                stack.pop();
+                continue;
+            };
+            let record = &self.data.records[position];
+            if record.kind == RecordKind::Observe {
+                known.insert(top, observe_visible(record));
+                stack.pop();
+                continue;
+            }
+            let earlier = |g: &RecordId| self.data.record_positions.get(g).is_some_and(|p| *p < position);
+            let grounds = || record.based_on.iter().chain(record.ends.iter().flat_map(|(a, _, b)| [a, b]));
+            let pending: Vec<RecordId> = grounds().filter(|g| earlier(g) && !known.contains_key(g)).copied().collect();
+            if pending.is_empty() {
+                let visible = !record.based_on.is_empty() && grounds().all(|g| earlier(g) && known.get(g) == Some(&true));
+                known.insert(top, visible);
+                stack.pop();
+            } else {
+                stack.extend(pending);
+            }
+        }
+        known[id]
+    }
+
+    /// The ordered pass over every record that `visible_in_scope` replaced (0.2.4 and before): the reference of the differential test.
+    #[cfg(test)]
+    fn visible_in_scope_ordered(&self, id: &RecordId, scope: &Scope) -> bool {
         let mut visible = self.by_record();
         for record in self.data.records.iter() {
             let allowed = if record.kind == RecordKind::Observe {
@@ -822,14 +1072,22 @@ impl Core {
             }
             self.add_link(actor, from, rel, to, &based_on)?;
         }
+        let position = self.data.records.len();
         if let Some((node, bound)) = binding {
             self.session.bind_audit_observation(format!("audit_observe_{seq}"), bound.version, node)?;
-            Arc::make_mut(&mut self.data.evidence).insert(id, bound);
+            self.data.evidence_records.shard_mut(&bound.evidence).entry(bound.evidence).or_default().push(position);
+            self.root_cache.get_mut().expect("audit root cache poisoned").changed_evidence.push(bound.evidence);
+            Arc::make_mut(&mut self.data.doc_observes).entry(doc_id.clone().expect("an observation names its document")).or_default().push(position);
+            self.data.evidence.insert(id, bound);
         }
-        let position = self.data.records.len();
-        Arc::make_mut(&mut self.data.record_positions).insert(id, position);
+        self.data.record_positions.insert(id, position);
         let short = id.0[..8].try_into().expect("eight-byte prefix");
-        Arc::make_mut(&mut self.data.short_positions).entry(short).and_modify(|i| *i = None).or_insert(Some(position));
+        if !based_on.is_empty() || ends.is_some() {
+            for ground in based_on.iter().chain(ends.iter().flat_map(|(a, _, b)| [a, b])) {
+                self.data.dependents.shard_mut(ground).entry(*ground).or_default().push(position);
+            }
+        }
+        self.data.short_positions.shard_mut(&short).entry(short).and_modify(|i| *i = None).or_insert(Some(position));
         if parsed.kind == RecordKind::Claim {
             self.root_cache.get_mut().expect("audit root cache poisoned").claim_words = None;
         }
@@ -1139,17 +1397,19 @@ impl AuditState {
                     run_id: "unbound".into(),
                     manifest_hash: ZERO_HASH,
                     source_mode: "opaque".into(),
-                    source_documents: docs
-                        .iter()
-                        .map(|(id, bytes)| (id.clone(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(bytes))})))
-                        .collect(),
+                    source_documents: Arc::new(
+                        docs.iter().map(|(id, bytes)| (id.clone(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(bytes))}))).collect(),
+                    ),
                     ontology,
                     records: Arc::default(),
-                    record_positions: Arc::default(),
-                    short_positions: Arc::default(),
+                    record_positions: Sharded::default(),
+                    short_positions: Sharded::default(),
+                    doc_observes: Arc::default(),
+                    evidence_records: Sharded::default(),
+                    dependents: Sharded::default(),
                     locals: Arc::default(),
                     task_ordinals: Arc::default(),
-                    evidence: Arc::default(),
+                    evidence: Sharded::default(),
                     mappings: BTreeMap::new(),
                     links: BTreeMap::new(),
                     acceptance_basis: BTreeMap::new(),
@@ -1253,7 +1513,7 @@ impl AuditState {
     fn attach_new_journal(&mut self, path: &Path, base_ontology: &Value) -> KResult<()> {
         let container = build_container(&mut self.core.session);
         let mut genesis = json!({"run_id":self.core.data.run_id,"manifest_hash":to_hex(&self.core.data.manifest_hash),"source_mode":self.core.data.source_mode,"base_ontology":base_ontology,
-            "source_documents":self.core.data.source_documents,
+            "source_documents":self.core.data.source_documents.as_ref(),
             "engine_container_hex":to_hex(&container),"engine_root":to_hex(&self.engine_root()),"audit_root":to_hex(&self.audit_root())});
         self.journal = Some(match &self.genesis {
             Some(meta) => {
@@ -1298,7 +1558,7 @@ impl AuditState {
         let sources = super::sources::prepare(manifest_bytes, selected)?;
         let mut state = Self::prepare_run(base_ontology, &sources.docs, run_id, sources.manifest_hash)?;
         state.core.data.source_mode = "git_manifest".into();
-        state.core.data.source_documents = sources.identities;
+        state.core.data.source_documents = Arc::new(sources.identities);
         Ok(state)
     }
 
@@ -1332,7 +1592,7 @@ impl AuditState {
         }
         let first = super::persistence::JournalScan {
             format: scan.format,
-            payloads: scan.payloads[..1].to_vec(),
+            payloads: scan.payloads.prefix(1),
             heads: scan.heads[..1].to_vec(),
             records_roots: scan.records_roots.iter().take(1).copied().collect(),
             bytes: 0,
@@ -1350,7 +1610,7 @@ impl AuditState {
             copy.set_seal_every(Some(256));
         }
         for (n, payload) in scan.payloads.iter().enumerate().skip(1) {
-            let outcome = copy.commit(string(payload, "actor")?, string(payload, "submission_id")?, &payload["command"])?;
+            let outcome = copy.commit(string(&payload, "actor")?, string(&payload, "submission_id")?, &payload["command"])?;
             if outcome.value() != payload["outcome"] {
                 return Err(bad("wal", format!("entry {n} ran again to another outcome")));
             }
@@ -1528,17 +1788,16 @@ impl AuditState {
     /// Whether each record stands, in record order: the `grounded` column of the status projection, without its hashes. The PROV
     /// export (`prov.rs`) reads it at the frames of a replay.
     pub fn standing(&self) -> Vec<bool> {
-        let support = self.core.support_flags();
-        self.core.data.records.iter().map(|r| support.get(&r.id).is_some_and(|v| v.0)).collect()
+        self.core.standing_flags().as_ref().clone()
     }
 
     /// Records that stood at the earlier point and no longer stand. Record order is append-only.
     pub fn newly_fallen_counts(&self, before: &[bool]) -> (usize, usize) {
-        let flags = self.core.support_flags();
+        let now = self.core.standing_flags();
         let mut rows = 0;
         let mut quotes = 0;
-        for (record, stood) in self.core.data.records.iter().zip(before) {
-            if *stood && !flags.get(&record.id).is_some_and(|f| f.0) {
+        for ((record, stood), stands) in self.core.data.records.iter().zip(before).zip(now.iter()) {
+            if *stood && !*stands {
                 if record.kind == RecordKind::Observe {
                     quotes += 1;
                 } else {
@@ -1549,13 +1808,23 @@ impl AuditState {
         (rows, quotes)
     }
 
+    /// The kind of each record, in record order, and whether it stands.
+    pub(super) fn kinds_standing(&self) -> impl Iterator<Item = (&'static str, bool)> + '_ {
+        let standing = self.core.standing_flags();
+        let kinds: Vec<(&'static str, bool)> = self.core.data.records.iter().zip(standing.iter()).map(|(r, s)| (r.kind.name(), *s)).collect();
+        kinds.into_iter()
+    }
+
     pub(super) fn ungrounded_rows(&self) -> Vec<super::read::Row> {
         let flags = self.core.support_flags();
+        let standing = self.core.standing_flags();
         self.core
             .data
             .records
             .iter()
-            .filter_map(|r| {
+            .zip(standing.iter())
+            .filter(|(_, stands)| !**stands)
+            .filter_map(|(r, _)| {
                 let (grounded, answer_support) = flags.get(&r.id).copied().unwrap_or_default();
                 if grounded {
                     return None;
@@ -1746,8 +2015,15 @@ impl AuditState {
     /// The records root of the records `self` accepted beyond the first `before`: the frame's tree of SPEC_V02_STEP2 section 2.
     fn records_root_since(&self, before: usize) -> Hash {
         let data = &self.core.data;
-        let leaves: Vec<Hash> =
-            data.records[before.min(data.records.len())..].iter().map(|r| super::trees::record_leaf(&state_root::record_leaf_value(data, r))).collect();
+        let before = before.min(data.records.len());
+        // the leaves the state tree made of exactly these records when it took them in (records are appended and never change)
+        if let Some(tree) = self.core.state_tree.lock().expect("state tree poisoned").as_ref() {
+            let (start, leaves) = &tree.recent_leaves;
+            if *start == before && start + leaves.len() == data.records.len() {
+                return super::trees::records_root(leaves);
+            }
+        }
+        let leaves: Vec<Hash> = data.records[before..].iter().map(|r| super::trees::record_leaf(&state_root::record_leaf_value(data, r))).collect();
         super::trees::records_root(&leaves)
     }
 
@@ -1757,12 +2033,12 @@ impl AuditState {
         let payloads = &scan.payloads;
         let genesis = payloads.first().ok_or_else(|| bad("wal", "genesis is required"))?;
         let v3 = scan.format == FrameFormat::V3;
-        let mut state = Self::replay_genesis(genesis, v3, scan.records_roots.first())?;
-        for (n, payload) in payloads.iter().enumerate().skip(1) {
-            visit(n, &mut state, genesis)?;
-            state.replay_frame(n, payload, &scan.heads[..n], scan.records_roots.get(n), v3)?;
+        let mut state = Self::replay_genesis(&genesis, v3, scan.records_roots.first())?;
+        for n in 1..payloads.len() {
+            visit(n, &mut state, &genesis)?;
+            state.replay_frame(n, &payloads.get(n), &scan.heads[..n], scan.records_roots.get(n), v3)?;
         }
-        visit(payloads.len(), &mut state, genesis)?;
+        visit(payloads.len(), &mut state, &genesis)?;
         Ok(state)
     }
 
@@ -1785,12 +2061,14 @@ impl AuditState {
         if !matches!(state.core.data.source_mode.as_str(), "opaque" | "git_manifest") {
             return Err(bad("source_mode", "unsupported source identity mode"));
         }
-        state.core.data.source_documents = genesis["source_documents"]
-            .as_object()
-            .ok_or_else(|| bad("source_documents", "genesis must bind source identities"))?
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        state.core.data.source_documents = Arc::new(
+            genesis["source_documents"]
+                .as_object()
+                .ok_or_else(|| bad("source_documents", "genesis must bind source identities"))?
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
         let hex = genesis["engine_container_hex"].as_str().ok_or_else(|| bad("wal", "missing engine genesis"))?;
         let container = decode_hex(hex)?;
         state.core.session = open_session(&container).map_err(|e| bad("wal", e.to_string()))?;
@@ -2138,6 +2416,14 @@ impl AuditState {
             }
         }
         Ok(outcome)
+    }
+
+    /// The record whose short form (`@` and the first 16 hex digits of its id, in lower case) is `name`, when exactly one record
+    /// has it: found by the index of short ids, not by a pass over the records.
+    pub fn record_by_short(&self, name: &str) -> Option<RecordId> {
+        let hex = name.strip_prefix('@').filter(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))?;
+        let first = u64::from_str_radix(hex, 16).ok()?.to_be_bytes();
+        self.core.data.short_positions.get(&first).copied().flatten().map(|i| self.core.data.records[i].id)
     }
 
     /// The checks of a command's actor, id and numbers, before anything else of `commit`.
@@ -2629,7 +2915,8 @@ impl Core {
                     self.close_text(id, closed, hit, None)?;
                 }
                 if self.data.source_documents.get(id).is_none_or(|d| d["kind"] == "opaque") {
-                    self.data.source_documents.insert(id.into(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(text.as_bytes()))}));
+                    Arc::make_mut(&mut self.data.source_documents)
+                        .insert(id.into(), json!({"kind":"opaque","doc_id":id,"raw_sha256":to_hex(&sha256(text.as_bytes()))}));
                     if let Some(d) = self.dirty() {
                         d.sources.insert(id.into());
                     }
@@ -2743,23 +3030,29 @@ impl Core {
 
     fn revoke_evidence(&mut self, evidence: Hash) -> KResult<()> {
         let event = json!({"seq":self.session.last_seq+1,"op":"revoke_evidence","target_evidence":format!("@{}",to_hex(&evidence))});
-        self.session.apply_line(&to_jcs(&event)).map(|_| ())
+        self.session.apply_line(&to_jcs(&event))?;
+        self.root_cache.get_mut().expect("audit root cache poisoned").changed_evidence.push(evidence);
+        Ok(())
     }
 
     fn is_withdrawn(&self, doc_id: &str, text: &[u8]) -> bool {
         self.data.withdrawn.get(doc_id).is_some_and(|closed| closed.contains(text))
     }
 
+    /// The records bound to evidence on a document, in record order.
+    fn bound_on<'a>(&'a self, doc_id: &str) -> impl Iterator<Item = &'a RecordView> + 'a {
+        let positions = self.data.doc_observes.get(doc_id).map(Vec::as_slice).unwrap_or_default();
+        positions.iter().map(|i| self.data.records[*i].as_ref())
+    }
+
     /// The live quotes of the document's present version that overlap an occurrence of `text`, in span order: a replay repeats the
-    /// engine's operations. Records are walked, as evidence is keyed by a digest and two documents can have the same version.
+    /// engine's operations. The records of the document are walked (its index of bound records), as evidence is keyed by a digest
+    /// and two documents can have the same version.
     fn quotes_on(&self, doc_id: &str, text: &[u8]) -> Vec<(usize, usize, Hash, RecordId)> {
         let Some(doc) = self.session.arena.doc(doc_id) else { return Vec::new() };
         let occurrences = find_all(&doc.bytes, text);
         let mut hit: Vec<_> = self
-            .data
-            .records
-            .iter()
-            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .bound_on(doc_id)
             .filter_map(|r| self.data.evidence.get(&r.id).map(|b| (b, r.id)))
             .filter(|(b, _)| b.version == doc.version_id && self.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
             .filter(|(b, _)| occurrences.iter().any(|o| b.start < o.end && o.start < b.end))
@@ -2788,13 +3081,8 @@ impl Core {
     /// one evidence under two records (Codex recheck of baa75e5, S3-R01).
     fn revoke_with_fates(&mut self, evidence: Hash, fate: &dyn Fn(&Self, &RecordId) -> Value) -> KResult<()> {
         self.revoke_evidence(evidence)?;
-        let bound: Vec<RecordId> = self
-            .data
-            .records
-            .iter()
-            .filter(|r| !self.data.fates.contains_key(&r.id) && self.data.evidence.get(&r.id).is_some_and(|b| b.evidence == evidence))
-            .map(|r| r.id)
-            .collect();
+        let positions = self.data.evidence_records.get(&evidence).map(Vec::as_slice).unwrap_or_default();
+        let bound: Vec<RecordId> = positions.iter().map(|i| self.data.records[*i].id).filter(|id| !self.data.fates.contains_key(id)).collect();
         let fates: Vec<(RecordId, Value)> = bound.into_iter().map(|id| (id, fate(self, &id))).collect();
         self.data.fates.extend(fates);
         Ok(())
@@ -2913,14 +3201,14 @@ impl AuditStore for AuditState {
     fn doc_text(&self, doc_id: &str) -> Option<String> {
         self.core.session.arena.doc(doc_id).and_then(|d| String::from_utf8(d.bytes.clone()).ok())
     }
+    fn doc_stamp(&self, doc_id: &str) -> Option<Hash> {
+        self.core.session.arena.doc(doc_id).map(|d| d.version_id)
+    }
     fn quoted_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
         let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
         // the bytes the kernel bound each quote to, in the document's present version, while its evidence stands
         self.core
-            .data
-            .records
-            .iter()
-            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .bound_on(doc_id)
             .filter_map(|r| self.core.data.evidence.get(&r.id))
             .filter(|b| b.version == doc.version_id && self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
             .map(|b| (b.start, b.end))
@@ -2930,10 +3218,7 @@ impl AuditStore for AuditState {
         let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
         // `quoted_spans`, each span with the record of its quote
         self.core
-            .data
-            .records
-            .iter()
-            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .bound_on(doc_id)
             .filter_map(|r| self.core.data.evidence.get(&r.id).map(|b| (r.id, b)))
             .filter(|(_, b)| b.version == doc.version_id && self.core.session.engine.status_of(&b.evidence) != Some(EV_REVOKED))
             .map(|(id, b)| (id, b.start, b.end))
@@ -2946,10 +3231,7 @@ impl AuditStore for AuditState {
         let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };
         // `quoted_records` with the revoked ones too: a quote stored and withdrawn later was stored
         self.core
-            .data
-            .records
-            .iter()
-            .filter(|r| r.doc_id.as_deref() == Some(doc_id))
+            .bound_on(doc_id)
             .filter_map(|r| self.core.data.evidence.get(&r.id).map(|b| (r.id, b)))
             .filter(|(_, b)| b.version == doc.version_id)
             .map(|(id, b)| (id, b.start, b.end))
@@ -2968,8 +3250,14 @@ impl AuditStore for AuditState {
     fn records_since(&self, cursor: u64) -> Vec<RecordView> {
         self.core.data.records.get(usize::try_from(cursor).unwrap_or(usize::MAX)..).unwrap_or_default().iter().map(|r| r.as_ref().clone()).collect()
     }
+    fn records_shared(&self, cursor: u64) -> Vec<Arc<RecordView>> {
+        self.core.data.records.get(usize::try_from(cursor).unwrap_or(usize::MAX)..).unwrap_or_default().to_vec()
+    }
     fn records_of_kind(&self, kind: RecordKind) -> Vec<RecordView> {
         self.core.data.records.iter().filter(|r| r.kind == kind).map(|r| r.as_ref().clone()).collect()
+    }
+    fn record_ids_where(&self, keep: &mut dyn FnMut(&RecordView) -> bool) -> Vec<RecordId> {
+        self.core.data.records.iter().filter(|r| keep(r)).map(|r| r.id).collect()
     }
     fn record(&self, id: &RecordId) -> Option<RecordView> {
         self.core.record(id).cloned()

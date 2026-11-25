@@ -210,6 +210,11 @@ pub trait AuditStore {
     }
     /// The UTF-8 text of a document (directives hand agents the section they must read).
     fn doc_text(&self, doc_id: &str) -> Option<String>;
+    /// A stamp of a document's present text: while a document answers the same stamp, `doc_text` answers the same bytes. `None`
+    /// from a store that has none; nothing derived from the text is then kept from one call to the next.
+    fn doc_stamp(&self, _doc_id: &str) -> Option<Hash> {
+        None
+    }
     /// The bytes of a document that standing accepted quotes are bound to, for the gap pass (SPEC_V02_GAP_PASS section 3). The
     /// default places each standing quote at its first occurrence, as a store without bound spans can.
     fn quoted_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
@@ -260,9 +265,20 @@ pub trait AuditStore {
     }
     /// Records with `seq > cursor`, in order.
     fn records_since(&self, cursor: u64) -> Vec<RecordView>;
+    /// The records from `cursor` on, in order, shared: what `records_since` gives, without a copy of each record where the store
+    /// holds them shared. A reader that keeps a few records of many, or only counts them, reads them here and copies what it keeps:
+    /// a copy of every record of a long run, made several times for one task, was most of what the task cost.
+    fn records_shared(&self, cursor: u64) -> Vec<std::sync::Arc<RecordView>> {
+        self.records_since(cursor).into_iter().map(std::sync::Arc::new).collect()
+    }
     /// The records of one kind, in order: `records_since(0)` filtered, which a store can give without copying the others.
     fn records_of_kind(&self, kind: RecordKind) -> Vec<RecordView> {
         self.records_since(0).into_iter().filter(|r| r.kind == kind).collect()
+    }
+    /// The ids of the records `keep` accepts, in order: `records_since(0)` filtered to ids, which a store can give without copying
+    /// any record (0.2.5 stage 3: an agent's own records, taken at each task it acquires, copied every record of the run).
+    fn record_ids_where(&self, keep: &mut dyn FnMut(&RecordView) -> bool) -> Vec<RecordId> {
+        self.records_since(0).into_iter().filter(|r| keep(r)).map(|r| r.id).collect()
     }
     fn record(&self, id: &RecordId) -> Option<RecordView>;
     /// The record `agent` stored under `local_id` in `directive`, read only: a question's `about` may name a line of its own answer

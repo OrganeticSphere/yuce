@@ -202,15 +202,15 @@ pub fn detect<S: AuditStore>(s: &S) -> Vec<PairCandidate> {
         .collect();
     let flags = s.support_map();
     let mut claims: BTreeMap<String, Vec<(RecordView, BTreeSet<String>, bool)>> = BTreeMap::new();
-    for r in s.records_since(0).into_iter().filter(|r| {
+    for r in s.records_shared(0).iter().filter(|r| {
         r.kind == RecordKind::Claim && !super::directives::is_summary_directive(&r.directive) && !super::directives::is_link_directive(&r.directive)
     }) {
         if !flags.as_ref().map_or_else(|| s.is_answer_support(&r.id), |m| m.get(&r.id).is_some_and(|x| x.1)) {
             continue;
         }
-        let Some(doc) = source_doc(s, &r) else { continue };
-        let text = assertion_text(s, &r);
-        claims.entry(doc).or_default().push((r, technical(&text), change_marker(&text)));
+        let Some(doc) = source_doc(s, r) else { continue };
+        let text = assertion_text(s, r);
+        claims.entry(doc).or_default().push((r.as_ref().clone(), technical(&text), change_marker(&text)));
     }
     let mut edges = Vec::new();
     for (new, nm) in &docs {

@@ -459,7 +459,7 @@ impl Builder {
 
     /// Records after the cursor the builder will card: what a link check or a summary wrote is not material (as in `next_card`).
     pub fn backlog<S: AuditStore>(&self, s: &S) -> usize {
-        s.records_since(self.cursor)
+        s.records_shared(self.cursor)
             .iter()
             .filter(|r| !super::directives::is_link_directive(&r.directive) && !super::directives::is_summary_directive(&r.directive))
             .count()
@@ -504,7 +504,7 @@ impl Builder {
         // covers it and the cursor moves on (live run 10A: link checks wrote 70% of the records and the builder never caught up).
         // A stretch of such records only is a card without records.
         let (mut records, mut last) = (Vec::new(), None);
-        for r in s.records_since(self.cursor) {
+        for r in s.records_shared(self.cursor).iter() {
             if self.cut_to.is_some_and(|end| r.seq > end) {
                 break;
             }
@@ -518,7 +518,7 @@ impl Builder {
             last = Some(r.seq);
             // a summary is an answer, not material either (live run 10A-4: the builder linked the RQ1 summary's claims to their quotes)
             if !super::directives::is_link_directive(&r.directive) && !super::directives::is_summary_directive(&r.directive) {
-                records.push(r);
+                records.push(r.as_ref().clone());
             }
         }
         let Some(last) = last else {

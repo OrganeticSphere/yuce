@@ -501,7 +501,7 @@ pub fn export_at(path: &Path, upto: Option<usize>) -> KResult<ProvExport> {
     let (state, _) = AuditState::verify_scan(&scan, &mut |m, state, head| {
         let k = m - 1;
         if k < frames {
-            tracker.frame(state, &scan.payloads[k], head);
+            tracker.frame(state, &scan.payloads.get(k), head);
         }
     })?;
     tracker.document(&state, scan.live)

@@ -51,7 +51,7 @@ fn rejects_disallowed_head(mode: &str) {
     for explicit in [false, true] {
         let mut s = session(ontology_value(mode, true), "false");
         let root = s.state_root();
-        let wal = s.wal.bytes.clone();
+        let wal = s.wal.bytes();
         let nodes = s.engine.node_count();
         let error = s.apply_line(&derive("false", explicit)).unwrap_err();
         assert_eq!(error.code, Code::LiteralNotAllowed, "{mode}, explicit={explicit}");
@@ -60,7 +60,7 @@ fn rejects_disallowed_head(mode: &str) {
         assert_eq!(error.obligation["action"], "resubmit_with_allowed_literal");
         assert_eq!(s.last_seq, 2);
         assert_eq!(s.state_root(), root, "a rejected head must not change support");
-        assert_eq!(s.wal.bytes, wal, "a rejected head must not enter the WAL");
+        assert_eq!(s.wal.bytes(), wal, "a rejected head must not enter the WAL");
         assert_eq!(s.engine.node_count(), nodes);
         assert!(!s.engine.contains(&flag("false").id()));
         assert!(s.engine.oracle_check());

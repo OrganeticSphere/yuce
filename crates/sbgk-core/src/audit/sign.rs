@@ -313,11 +313,11 @@ pub(crate) fn check_against_scan(scan: &super::persistence::JournalScan, origin_
     if super::trees::log_root(&scan.heads[..size]) != *root {
         return refuse("the checkpoint's root is not the log root of this journal's first frames");
     }
-    let last = &scan.payloads[size - 1];
+    let last = scan.payloads.get(size - 1);
     if size < 2 || last["actor"] != "kernel" || last["command"]["kind"] != "seal" || last["outcome"]["kind"] != "value" {
         return refuse("the checkpoint's last frame is not a seal of the kernel");
     }
-    if origin_line != origin(scan.payloads[0]["run_id"].as_str().unwrap_or_default()) {
+    if origin_line != origin(scan.payloads.get(0)["run_id"].as_str().unwrap_or_default()) {
         return refuse("the checkpoint's origin is not this journal's run");
     }
     Ok(())

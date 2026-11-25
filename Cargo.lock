@@ -326,6 +326,7 @@ version = "0.2.4"
 dependencies = [
  "ed25519-dalek",
  "getrandom",
+ "memchr",
  "serde_json",
  "sha2",
 ]
