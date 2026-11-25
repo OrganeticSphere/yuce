@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.4 (2026-11-26)
+
+* **A long journal stays fast.** A staged command copied the whole state, and a record was looked up by a pass over every
+  record. On a journal of 50,000 records over 100 MB of sources, 0.2.3 took 17.9 s for a withdrawal with the list of what fell,
+  about 3 minutes to reopen the journal and 35 minutes to take the records in. The state is now copied on write: a command
+  copies the parts it changes and shares the rest with the state before it, which stays as it was until the command is in the
+  journal. Records are looked up by index. The same grid with the same inputs and events (one frame per document, `sync_data`
+  at each frame, a quiet machine) now gives 34 ms for a withdrawal with the list, 5.3 s to reopen, 5.1 s for `audit-verify` and
+  289 s to take the 50,000 records in. Every published journal verifies with the same roots, and `audit-verify` answers 22
+  clean-room journals and 129 archived ones byte for byte as 0.2.3 did.
+* **Tests of the copied state.** Readers of the reading tools during a stream of writes and withdrawals see whole states, and
+  the roots only move forward. A frame cut in the middle of its write is a torn tail of exactly the cut bytes, over the state of
+  the frames before it, and the run resumes there. A crash after the journal is synced and before the answer reopens at the
+  roots the state held, and the retry is answered from its receipt.
+
 ## 0.2.3 (2026-11-20)
 
 * **The independent verifier checks levels J2 and J3** (`verifier/yuce-verify`, delivery 2, `SPEC_INDEPENDENT_VERIFIER/6`). J2:
