@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.5 (2026-11-26)
+
+* **Withdrawals, reopening and verifying no longer grow with the whole run.** What stayed linear in the size of the run after
+  0.2.4 now works from indices kept beside the state and outside its roots: which records a document's quotes and a piece of
+  evidence hold, which records rest on a record, and whether a reference is visible from the records it rests on. The support
+  of each record after a submit or a withdrawal is updated for the records that changed and those resting on them. A copy of
+  the state shares the engine's entries, its log and its indices instead of copying them, the journal is parsed one frame at
+  a time, and the status summary is counted without a row per record. On the same grid (50,000 records over 100 MB, a quiet
+  machine) a withdrawal with the list of what fell takes 14 ms, reopening 3.9 s, `audit-verify` 4.2 s and taking the records
+  in 69 s, with a peak working set of 325 MB; at 100,000 records the peak is 523 MB.
+* **The server hands out the tasks of a long run without copies.** A task reads the records shared, names a shown record by its
+  short id, cuts a document into sections once per version, and judges a possible twin once per report; a short `@id` is
+  found by an index.
+* **Rust API: `Wal.bytes` is no longer a public field.** The engine's log is kept in shared pieces, so a copy of the state no
+  longer copies it. Use `wal.len()` for its length (was `wal.bytes.len()`) and `wal.bytes()` for the whole log, which puts it
+  together on each call. The journal and its bytes do not change.
+* `benchmarks/run_limits.py` checks a 0.2 journal against the roots the server holds after its close (it compared the replay
+  with the terminal receipt, taken before the seal and the close entry a 0.2 run writes), and requires both roots.
+
+No root, frame, journal format or tool answer changes. Every published journal verifies with the same roots, `audit-verify`
+answers 22 clean-room journals and 129 archived ones byte for byte as 0.2.3 did, and 64 random histories give the same
+journal bytes and answers.
+
 ## 0.2.4 (2026-11-26)
 
 * **A long journal stays fast.** A staged command copied the whole state, and a record was looked up by a pass over every

@@ -445,6 +445,8 @@ This is one run on one machine: tasks per second moved by about a quarter betwee
 halves them. To repeat it: `python benchmarks/run_limits.py --out <folder>`, which prints what it ran on and how busy the machine
 was. Recommended for 0.1: runs of **a few thousand records** and up to **8 agents** at once. The published runs hold about
 3,000 records. The cost of a commit and of a replay grows with the journal; more than 16 agents add little.
+Since 0.2.5 the script checks the replay of the closed journal against the `audit_root` and `engine_root` the server holds
+after the close; the server does not report the session root, so the replay's third root is not compared.
 
 ## Caveats
 
