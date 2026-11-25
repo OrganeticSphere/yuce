@@ -167,14 +167,19 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * **The kernel costs time and money.** Against the same team without it, the kernel's side took 2.3 to 2.5 times the wall
   time and 1.4 times the cost on Claude Haiku 5.5, 1.2 to 1.3 times and 1.5 to 1.6 times on DeepSeek Flash. Revocations themselves are cheap: the kernel found without a model call that the
   first withdrawal touched no answer.
+  These ratios were measured with 0.1, and the kernel's own share of that time was not separated from the rest of its side.
 
 ## Size
 
-* Up to 8 agents at once and runs of a few thousand records are recommended for 0.1. On a journal of quotes and claims alone one
-  commit takes about 25 ms (p50) at 10,000 records and reopening the journal about 2 s; a real run's journal takes as long at about
-  3,000 records, with more entries per record. The time of a replay grows close to the square of the journal's length, as the
-  whole state is hashed at every entry. More than 16 agents add little throughput
-  ([BENCHMARKS.md](BENCHMARKS.md), section 4).
+* Measured with 0.2.4 on a synthetic grid: equal numbers of quotes and claims, each claim on one to three quotes, one frame per
+  document with `sync_data` at each frame. At 50,000 records over 100 MB of sources a withdrawal with the list of what fell
+  takes 34 ms, reopening the journal 5.3 s, `audit-verify` 5.1 s and taking the records in 289 s; the server's working set
+  peaks at about 414 MB. At 100,000 records the peak is about 720 MB, and taking the records in grows faster than the journal.
+  These are single series on one Windows laptop.
+* Before 0.2.4 a replay grew close to the square of the journal's length: every command copied the whole state and looked
+  records up by a pass over all of them (0.2.3).
+* Up to 8 agents at once, with more than 16 adding little throughput, was measured with 0.1
+  ([BENCHMARKS.md](BENCHMARKS.md), section 4); the number of agents was not measured again with 0.2.4.
 * One process, one writer. There is no compaction of the journal, no rotation of tokens and no format migration in 0.1.
 * The connection limit is shared: connections that send nothing hold a place until the 5 s admission timeout, and there is no
   limit per address. This matters with `--allow-remote`.
