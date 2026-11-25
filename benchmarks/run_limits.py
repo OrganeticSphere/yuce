@@ -318,15 +318,24 @@ def clients_case(binary: pathlib.Path, driver: pathlib.Path, base_wal: pathlib.P
         receipt = owner.call("audit_terminal_receipt")
         if receipt["status"] != "TERMINAL" or owner.call("audit_close")["status"] != "CLOSED":
             raise RuntimeError(f"the run did not end: {receipt}")
+        # a 0.2 journal goes on after its terminal receipt: the close writes a seal and a close entry, so the replay is checked
+        # against the roots the server holds after them, not against the receipt's
+        after = owner.call("audit_status")
         owner.close()
     finally:
         for c in clients:
             c.close()
         stop(server)
     replay = recover(driver, cell / "run.wal", cell)
-    for name, value in replay["roots"].items():
-        if receipt[name] != value:
-            raise RuntimeError(f"{name} of the replay differs from the receipt")
+    roots = replay.get("roots") or {}
+    for name in ("audit_root", "engine_root"):
+        if not roots.get(name) or not after.get(name):
+            raise RuntimeError(f"{name} missing: replay {roots}, status after the close {after}")
+        if roots[name] != after[name]:
+            raise RuntimeError(f"{name} of the replay differs from the server's after the close")
+    for name, value in roots.items():
+        if name in after and after[name] != value:
+            raise RuntimeError(f"{name} of the replay differs from the server's after the close")
     print(f"  {k:>2} clients: {tasks} tasks in {elapsed:.2f} s = {tasks / elapsed:.1f} tasks per second", flush=True)
     return {"clients": k, "tasks": tasks, "work_s": elapsed, "tasks_per_s": tasks / elapsed, "seeded_ids": seeded["record_ids_sha256"], "end_records": replay["records"],
             "acquire": stats(times["acquire"]), "submit_with_records": stats(times["submit"]), "empty_close": stats(times["empty"]), "peak_memory_bytes": server.peak,

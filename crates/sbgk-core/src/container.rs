@@ -191,7 +191,7 @@ pub fn build_container(s: &mut Session) -> Vec<u8> {
     let snap = s.engine.snapshot();
     let arena = build_arena_section(&s.arena);
     let (table, index) = build_table_and_index(&snap);
-    assemble(&arena, &table, &s.wal.bytes, &index, &snap.root)
+    assemble(&arena, &table, &s.wal.bytes(), &index, &snap.root)
 }
 
 // ---------------------------------------------------------------------------- reading
@@ -676,7 +676,7 @@ pub fn open_session(buf: &[u8]) -> CResult<Session> {
             return Err(ContainerError::new("chunk_missing", "document chunk absent from arena"));
         }
     }
-    let wal = Wal { bytes: v.wal.to_vec(), chain: rec.chain_head, frame_ends: frames.iter().map(|f| f.end).collect(), last_seq: rec.last_seq };
+    let wal = Wal::from_parts(v.wal.to_vec(), rec.chain_head, frames.iter().map(|f| f.end).collect(), rec.last_seq);
     Ok(Session::from_parts(ontology, arena, rec.engine, wal))
 }
 

@@ -16,6 +16,7 @@ use crate::hash::{sha256, Hash};
 use crate::merkle::{bucket_hash, root_from_buckets, FxMap, FxSet, IdMap, BUCKETS};
 use crate::node::*;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum CanonOp {
@@ -160,7 +161,9 @@ pub struct Snapshot {
 /// trusted in-memory state by it (the audit layer's `Core::fork_session`).
 #[derive(Debug, Clone)]
 pub struct Engine {
-    entries: Vec<Entry>,
+    // Each entry behind its own `Arc`: a copy of the engine (one per staged audit command) shares every entry the command does
+    // not change (0.2.5 stage 3: the deep copy was most of a withdrawal at 50k records).
+    entries: Vec<Arc<Entry>>,
     index: IdMap<u32>,
     s0: Vec<bool>,
     docs: HashMap<String, DocState>,
@@ -385,7 +388,7 @@ impl Engine {
                 self.risky.insert(g);
             }
         }
-        self.entries.push(Entry { id, body, status, used_by: Vec::new(), supports: Vec::new() });
+        self.entries.push(Arc::new(Entry { id, body, status, used_by: Vec::new(), supports: Vec::new() }));
         self.s0.push(false);
         self.index.insert(id, i);
         self.buckets[id[0] as usize].push(i);
@@ -394,10 +397,10 @@ impl Engine {
     }
 
     fn set_status_raw(&mut self, i: u32, st: u8) -> bool {
-        let e = &mut self.entries[i as usize];
-        if e.status == st {
+        if self.entries[i as usize].status == st {
             return false;
         }
+        let e = Arc::make_mut(&mut self.entries[i as usize]);
         e.status = st;
         let b = e.id[0] as usize;
         self.dirty[b] = true;
@@ -689,8 +692,8 @@ impl Engine {
                     let (ji, jc) = self.insert(jid, Body::Assertion { claim: ci, ev: ei }, J_INACTIVE);
                     if jc {
                         made += 1;
-                        self.entries[ei as usize].used_by.push(ji);
-                        self.entries[ci as usize].supports.push(ji);
+                        Arc::make_mut(&mut self.entries[ei as usize]).used_by.push(ji);
+                        Arc::make_mut(&mut self.entries[ci as usize]).supports.push(ji);
                         self.refresh_j(ji);
                     }
                     new_js.push(ji);
@@ -721,9 +724,9 @@ impl Engine {
                     if jc {
                         made += 1;
                         for &p in &sorted_idx {
-                            self.entries[p as usize].used_by.push(ji);
+                            Arc::make_mut(&mut self.entries[p as usize]).used_by.push(ji);
                         }
-                        self.entries[ci as usize].supports.push(ji);
+                        Arc::make_mut(&mut self.entries[ci as usize]).supports.push(ji);
                         self.refresh_j(ji);
                     }
                     new_js.push(ji);

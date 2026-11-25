@@ -232,7 +232,8 @@ pub fn rows_at(path: &Path, upto: Option<usize>) -> KResult<IndexRows> {
         }
     }
     for (n, seal_hash) in state.seals().iter().filter(|(n, _)| *n < frames) {
-        let p = &scan.payloads[*n]["command"]["seal"];
+        let payload = scan.payloads.get(*n);
+        let p = &payload["command"]["seal"];
         tables[4].push(vec![
             json!(n),
             json!(to_hex(seal_hash)),

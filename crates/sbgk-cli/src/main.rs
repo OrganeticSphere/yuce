@@ -432,7 +432,7 @@ fn session_summary(s: &mut Session) -> Value {
         "kinds": {"evidence": k[1], "claims": k[2], "assertions": k[3], "derivations": k[4]},
         "multi_segment_evidence": s.engine.multi_segment_evidence(),
         "claims": {"supported": sup, "unsupported": uns, "conflicting": conf},
-        "wal_bytes": s.wal.bytes.len(),
+        "wal_bytes": s.wal.len(),
         "last_seq": s.last_seq,
     })
 }

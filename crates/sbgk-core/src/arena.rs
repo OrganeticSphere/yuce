@@ -212,8 +212,26 @@ impl Arena {
     }
 }
 
-/// Naive but allocation-free exact search (first-byte scan + compare).
+/// Every byte-exact occurrence of `needle` in `hay`, overlapping ones too, in order: the search starts again one byte after each
+/// match. `memchr::memmem` finds each next one (0.2.5 stage 3: the first-byte scan read a whole document per quote, about a second
+/// of the replay of 50k records over 100 MB); `find_all_scan`, the scan it replaced, is the reference of its test.
 pub fn find_all(hay: &[u8], needle: &[u8]) -> Vec<Occurrence> {
+    let mut out = Vec::new();
+    if needle.is_empty() || needle.len() > hay.len() {
+        return out;
+    }
+    let finder = memchr::memmem::Finder::new(needle);
+    let mut i = 0;
+    while let Some(off) = finder.find(&hay[i..]) {
+        let p = i + off;
+        out.push(Occurrence { start: p, end: p + needle.len() });
+        i = p + 1;
+    }
+    out
+}
+
+#[cfg(test)]
+fn find_all_scan(hay: &[u8], needle: &[u8]) -> Vec<Occurrence> {
     let mut out = Vec::new();
     if needle.is_empty() || needle.len() > hay.len() {
         return out;
@@ -335,6 +353,27 @@ pub fn unique_extension(doc: &[u8], occ: &Occurrence, max_extra: usize) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_search_finds_what_the_scan_found_overlapping_occurrences_too() {
+        let mut rng = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |n: u64| {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) % n
+        };
+        let mut found = 0;
+        for _ in 0..2000 {
+            // small alphabets make repeats and overlaps common
+            let alphabet = 1 + next(4) as u8;
+            let hay: Vec<u8> = (0..next(300)).map(|_| b'a' + next(alphabet as u64) as u8).collect();
+            let needle: Vec<u8> = (0..next(6)).map(|_| b'a' + next(alphabet as u64) as u8).collect();
+            let all = find_all(&hay, &needle);
+            assert_eq!(all, find_all_scan(&hay, &needle), "{:?} in {:?}", String::from_utf8_lossy(&needle), String::from_utf8_lossy(&hay));
+            found += all.len();
+        }
+        assert!(found > 1000, "{found}");
+        assert_eq!(find_all(b"aaaa", b"aa").len(), 3, "overlapping occurrences count");
+    }
 
     fn sample_doc() -> Vec<u8> {
         let mut s = String::new();

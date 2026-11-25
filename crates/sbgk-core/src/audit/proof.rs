@@ -221,7 +221,7 @@ pub fn build(path: &Path, record: &str, seal: Option<usize>, checkpoint: &str, v
     let heads = &scan.heads[..=n];
     let header_of = |k: usize| -> KResult<Value> {
         let previous = if k == 0 { ZERO_HASH } else { heads[k - 1] };
-        let header = header_v3(k as u64, &previous, &body_hash(&scan.payloads[k]), &scan.records_roots[k]);
+        let header = header_v3(k as u64, &previous, &body_hash(&scan.payloads.get(k)), &scan.records_roots[k]);
         if header_hash(&header) != heads[k] {
             return Err(refuse("wal", format!("frame {k}: its header read back has another hash")));
         }
@@ -242,7 +242,7 @@ pub fn build(path: &Path, record: &str, seal: Option<usize>, checkpoint: &str, v
         }
     }
     let mut proof = json!({"format": FORMAT, "mode": if opts.self_contained { "self-contained" } else { "inclusion" }, "target": cap.target,
-        "checkpoint": checkpoint, "seal": {"header": header_of(n)?, "body": scan.payloads[n], "path": hexes(&trees::log_path(heads, n))},
+        "checkpoint": checkpoint, "seal": {"header": header_of(n)?, "body": scan.payloads.get(n), "path": hexes(&trees::log_path(heads, n))},
         "frames": frames, "records": records});
     if let Some(key) = verifier_key {
         proof["verifier_key"] = json!(key.trim());

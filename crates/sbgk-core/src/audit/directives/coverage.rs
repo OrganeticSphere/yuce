@@ -138,7 +138,7 @@ impl<'a, S: AuditStore> FirstReadings<'a, S> {
         if !(unresolved || context["abandoned"] == true) || context["stored"].as_u64().unwrap_or(0) > 0 {
             return false;
         }
-        let recorded = self.recorded.get_or_init(|| self.s.records_since(0).into_iter().map(|r| (r.id, r.directive)).collect());
+        let recorded = self.recorded.get_or_init(|| self.s.records_shared(0).iter().map(|r| (r.id, r.directive.clone())).collect());
         // a quote of a first reading bound inside the section
         let first_reading =
             |id: &RecordId| recorded.get(id).and_then(|task| task.strip_prefix('T')).is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));

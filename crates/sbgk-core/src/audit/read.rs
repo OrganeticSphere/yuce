@@ -123,7 +123,36 @@ fn lost_a_ground(r: &Row) -> bool {
 /// What the projections say of a state: records by kind, standing, fallen (a ground of theirs went) and otherwise not standing,
 /// the withdrawn texts and gone quotes, the seals and the projection hashes. The live `audit_status` carries it as its
 /// `projections` block.
+///
+/// Counted from the support flags and the rows that do not stand, its hashes streamed (0.2.5 stage 3): a `Snapshot` made a row of
+/// every record and hashed copies of them all at each status call, several times the state of a long run.
 pub fn summary(s: &AuditState) -> Value {
+    let mut kinds: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let (mut total, mut standing) = (0, 0);
+    for (kind, stands) in s.kinds_standing() {
+        let e = kinds.entry(kind).or_default();
+        e.0 += 1;
+        e.1 += usize::from(stands);
+        total += 1;
+        standing += usize::from(stands);
+    }
+    let records = json!(kinds.into_iter().map(|(k, (total, standing))| (k, json!({"total": total, "standing": standing}))).collect::<BTreeMap<_, _>>());
+    let ungrounded = s.ungrounded_rows();
+    let fallen = ungrounded.iter().filter(|r| lost_a_ground(r)).count();
+    let gone = ungrounded.iter().filter(|r| r.kind == "observe").count();
+    let withdrawn = s.withdrawn_texts();
+    let mut by_document: BTreeMap<&str, usize> = BTreeMap::new();
+    for (doc, _, _) in &withdrawn {
+        *by_document.entry(doc.as_str()).or_default() += 1;
+    }
+    json!({"records": records, "standing": standing, "fallen": fallen, "quotes_gone": gone, "other_not_standing": total - standing - fallen - gone,
+           "withdrawn": {"texts": withdrawn.len(), "by_document": by_document},
+           "seals": seals_json(s.seals().iter()), "hashes": projections_json(&s.projection_hashes()), "completeness": COMPLETENESS})
+}
+
+/// `summary` as it was made before 0.2.5, from a `Snapshot`: the reference of its test.
+#[cfg(test)]
+pub(crate) fn summary_of_snapshot(s: &AuditState) -> Value {
     let snap = Snapshot::of(s, 0);
     let rows: Vec<&Row> = snap.rows.iter().collect();
     let standing = rows.iter().filter(|r| r.grounded).count();
@@ -367,7 +396,9 @@ impl ClaimWords {
         Self { claims, by_word }
     }
 
-    fn twins(&self, s: &AuditState, w: &BTreeSet<String>, away: &BTreeSet<String>) -> Vec<Value> {
+    /// `judged` keeps, for one report, the documents of the standing quotes under each claim looked at, `None` for a claim that
+    /// does not stand or has none: they follow from the state alone, and a claim near many fallen rows was walked once per row.
+    fn twins(&self, s: &AuditState, w: &BTreeSet<String>, away: &BTreeSet<String>, judged: &mut HashMap<usize, Option<BTreeSet<String>>>) -> Vec<Value> {
         let mut shared = vec![0usize; self.claims.len()];
         for word in w {
             for &i in self.by_word.get(word).into_iter().flatten() {
@@ -385,9 +416,8 @@ impl ClaimWords {
         found.sort_unstable_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
         found.into_iter().filter_map(|(i, n, union)| {
             let id = self.claims[i].0;
-            if !s.is_grounded(&id) { return None; }
-            let docs = documents(&standing_quotes(s, id));
-            if docs.is_empty() || !docs.is_disjoint(away) { return None; }
+            let docs = judged.entry(i).or_insert_with(|| s.is_grounded(&id).then(|| documents(&standing_quotes(s, id))).filter(|docs| !docs.is_empty())).as_ref()?;
+            if !docs.is_disjoint(away) { return None; }
             let r = s.record(&id)?;
             Some(json!({"id": to_hex(&id.0), "short": id.short(), "based_on": hexes(&r.based_on), "documents": docs, "shared_words": n, "union_words": union}))
         }).take(TWINS).collect()
@@ -497,6 +527,7 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
         }
     }
     let mut reread_documents = HashMap::new();
+    let mut judged_twins = HashMap::new();
     let mut questions = BTreeSet::new();
     let mut out_rows = Vec::new();
     for (k, r) in fallen_rows.iter().enumerate() {
@@ -527,7 +558,7 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
             })
             .collect();
         let twins = match (&standing, record) {
-            (Some(st), Some(v)) if r.kind == "claim" => st.twins(s, &words(v.text.as_deref().unwrap_or_default()), &away),
+            (Some(st), Some(v)) if r.kind == "claim" => st.twins(s, &words(v.text.as_deref().unwrap_or_default()), &away, &mut judged_twins),
             _ => Vec::new(),
         };
         let mut passages: Vec<Value> = gone_quotes.iter().flat_map(|g| reread_passages(s, g, &mut reread_documents)).collect();

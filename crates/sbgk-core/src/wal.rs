@@ -13,6 +13,7 @@ use crate::codec::*;
 use crate::engine::{CanonOp, Engine};
 use crate::hash::{sha256, sha256_parts, Hash};
 use crate::node::*;
+use std::sync::Arc;
 
 pub const OP_GENESIS: u8 = 0;
 pub const OP_BIND: u8 = 1;
@@ -204,13 +205,19 @@ pub fn decode_payload(op: u8, payload: &[u8]) -> Result<CanonOp, CodecError> {
     Ok(out)
 }
 
+/// The log in pieces of at most `WAL_PIECE` bytes (a frame longer than that has a piece of its own): every piece but the last is
+/// full and shared by the copies of the log, so a copy costs a pointer per piece and the first append to it copies only its last
+/// piece (0.2.5 stage 3: each staged audit command copied the engine's whole log).
 #[derive(Debug, Clone)]
 pub struct Wal {
-    pub bytes: Vec<u8>,
+    pieces: Vec<Arc<Vec<u8>>>,
+    len: usize,
     pub chain: Hash,
     pub frame_ends: Vec<usize>,
     pub last_seq: u64,
 }
+
+const WAL_PIECE: usize = 1 << 16;
 
 impl Default for Wal {
     fn default() -> Self {
@@ -220,7 +227,41 @@ impl Default for Wal {
 
 impl Wal {
     pub fn new() -> Wal {
-        Wal { bytes: Vec::new(), chain: chain_origin(), frame_ends: Vec::new(), last_seq: 0 }
+        Wal { pieces: Vec::new(), len: 0, chain: chain_origin(), frame_ends: Vec::new(), last_seq: 0 }
+    }
+
+    /// A log of these bytes, read back with its chain head, frame ends and last sequence. The bytes become its first piece as
+    /// they are, without a copy; the next append starts a piece of its own when they are longer than a piece.
+    pub fn from_parts(bytes: Vec<u8>, chain: Hash, frame_ends: Vec<usize>, last_seq: u64) -> Wal {
+        let len = bytes.len();
+        Wal { pieces: vec![Arc::new(bytes)], len, chain, frame_ends, last_seq }
+    }
+
+    /// The length of the log in bytes, without putting it together (until 0.2.4 the public field `bytes` was the log itself,
+    /// and its length was `wal.bytes.len()`).
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The bytes of the log, put together: a copy of the whole log on each call; `len` gives its length.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.len);
+        for piece in &self.pieces {
+            out.extend_from_slice(piece);
+        }
+        out
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        match self.pieces.last_mut() {
+            Some(last) if last.len() + bytes.len() <= WAL_PIECE => Arc::make_mut(last).extend_from_slice(bytes),
+            _ => self.pieces.push(Arc::new(bytes.to_vec())),
+        }
+        self.len += bytes.len();
     }
 
     /// Append one frame; returns the byte offset just after it. `kernel` marks kernel-generated
@@ -228,17 +269,18 @@ impl Wal {
     pub fn append(&mut self, seq: u64, op: &CanonOp, kernel: bool) -> usize {
         let payload = encode_payload(op);
         let total = FRAME_OVERHEAD + payload.len();
-        let start = self.bytes.len();
-        put_u32(&mut self.bytes, total as u32);
-        self.bytes.push(op_code(op) | if kernel { KERNEL_FLAG } else { 0 });
-        put_u64(&mut self.bytes, seq);
-        self.bytes.extend_from_slice(&payload);
-        let chain = sha256_parts(&[&self.chain, &self.bytes[start..]]);
-        self.bytes.extend_from_slice(&chain);
+        let mut frame = Vec::with_capacity(total);
+        put_u32(&mut frame, total as u32);
+        frame.push(op_code(op) | if kernel { KERNEL_FLAG } else { 0 });
+        put_u64(&mut frame, seq);
+        frame.extend_from_slice(&payload);
+        let chain = sha256_parts(&[&self.chain, &frame]);
+        frame.extend_from_slice(&chain);
+        self.push(&frame);
         self.chain = chain;
         self.last_seq = seq;
-        self.frame_ends.push(self.bytes.len());
-        self.bytes.len()
+        self.frame_ends.push(self.len);
+        self.len
     }
 }
 
@@ -384,15 +426,48 @@ mod tests {
         for (i, op) in sample_ops().iter().enumerate() {
             wal.append(if i < 2 { 0 } else { i as u64 - 1 }, op, false);
         }
-        let full = reconstruct_at_byte_offset(&wal.bytes).unwrap();
+        let full = reconstruct_at_byte_offset(&wal.bytes()).unwrap();
         assert_eq!(full.frames, 5);
-        let mid = reconstruct_at_byte_offset(&wal.bytes[..wal.frame_ends[3]]).unwrap();
+        let mid = reconstruct_at_byte_offset(&wal.bytes()[..wal.frame_ends[3]]).unwrap();
         assert_eq!(mid.frames, 4);
-        assert!(matches!(reconstruct_at_byte_offset(&wal.bytes[..wal.frame_ends[3] - 1]), Err(WalError::Truncated { .. })));
-        for byte in 0..wal.bytes.len() {
-            let mut bad = wal.bytes.clone();
+        assert!(matches!(reconstruct_at_byte_offset(&wal.bytes()[..wal.frame_ends[3] - 1]), Err(WalError::Truncated { .. })));
+        for byte in 0..wal.len() {
+            let mut bad = wal.bytes();
             bad[byte] ^= 0x10;
             assert!(reconstruct_at_byte_offset(&bad).is_err(), "undetected flip at byte {byte}");
         }
+    }
+
+    #[test]
+    fn a_log_read_back_keeps_its_buffer_and_goes_on_as_the_log_it_was_written_as() {
+        let mut written = Wal::new();
+        let ops = sample_ops();
+        for (i, op) in ops[..3].iter().enumerate() {
+            written.append(if i < 2 { 0 } else { i as u64 - 1 }, op, false);
+        }
+        // more than a piece, so the next append starts a piece of its own
+        let mut long = written.bytes();
+        long.resize(WAL_PIECE + 7, 0);
+        for bytes in [written.bytes(), long, Vec::new()] {
+            let (len, at) = (bytes.len(), bytes.as_ptr());
+            let mut read = Wal::from_parts(bytes, written.chain, written.frame_ends.clone(), written.last_seq);
+            assert_eq!(read.pieces.len(), 1);
+            assert_eq!(read.pieces[0].as_ptr(), at, "the buffer read was copied");
+            assert_eq!((read.len(), read.is_empty()), (len, len == 0));
+            let before = read.bytes();
+            let mut copy = read.clone();
+            let end = read.append(2, &ops[3], false);
+            assert_eq!(end, read.len());
+            assert_eq!(read.bytes()[..len], before[..], "an append changed the bytes before it");
+            assert_eq!((copy.len(), copy.bytes()), (len, before.clone()), "an append to the log reached its copy");
+            assert_eq!(copy.append(2, &ops[3], false), end);
+            assert_eq!(copy.bytes(), read.bytes());
+            if len > WAL_PIECE {
+                assert_eq!(read.pieces.len(), 2);
+                assert!(Arc::ptr_eq(&read.pieces[0], &copy.pieces[0]), "the full piece is shared by the copies");
+            }
+        }
+        let empty = Wal::from_parts(Vec::new(), chain_origin(), Vec::new(), 0);
+        assert_eq!((empty.len(), empty.is_empty(), empty.bytes()), (Wal::new().len(), Wal::new().is_empty(), Wal::new().bytes()));
     }
 }

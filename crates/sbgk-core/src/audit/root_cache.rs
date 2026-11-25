@@ -11,6 +11,14 @@ pub(super) struct Cache {
     pub(super) readable: bool,
     pub(super) claim_words: Option<Arc<super::super::read::ClaimWords>>,
     pub(super) support: Option<Arc<Support>>,
+    /// The flags before a command that can only append records and revoke or bind evidence, and the evidence it revoked or bound:
+    /// the flags after it are computed from them for what changed (`Core::support_flags_after`, 0.2.5 stage 3).
+    pub(super) support_before: Option<Arc<Support>>,
+    pub(super) changed_evidence: Vec<Hash>,
+    /// Whether each record stands, by its position: the `grounded` flag of `support` in record order, kept and updated with it, so
+    /// the reads that walk every record compare bytes instead of looking every record up (0.2.5 stage 3).
+    pub(super) standing: Option<Arc<Vec<bool>>>,
+    pub(super) standing_before: Option<Arc<Vec<bool>>>,
     /// `quality::stale::suspects` of this state, dropped at every command: unlike the support flags it reads the checkpoints.
     pub(super) stale: Option<Arc<Vec<RecordId>>>,
     hash: Option<Hash>,
@@ -27,6 +35,10 @@ impl Default for Cache {
             readable: true,
             claim_words: None,
             support: None,
+            support_before: None,
+            changed_evidence: Vec::new(),
+            standing: None,
+            standing_before: None,
             stale: None,
             hash: None,
             fragments: Arc::default(),
@@ -50,8 +62,15 @@ impl Cache {
     // are kept for its successor only by a command of checkpoints, which changes nothing they read.
     pub(super) fn begin(&mut self, command: &Value) {
         self.readable = false;
+        self.support_before = None;
+        self.standing_before = None;
+        self.changed_evidence.clear();
         if !checkpoints_alone(command) {
-            self.support = None;
+            let (before, standing) = (self.support.take(), self.standing.take());
+            if matches!(command["kind"].as_str(), Some("submit" | "revoke" | "revoke_text")) {
+                self.support_before = before;
+                self.standing_before = standing;
+            }
         }
         self.stale = None;
         self.hash = None;
@@ -185,7 +204,17 @@ impl Core {
         rows.records.truncate(self.data.records.len());
         // These keys/values and the ingest/decision rows are immutable once committed.
         // In particular a duplicate submission never replaces its historical receipt.
-        fill(&mut rows.locals, &self.data.locals, |(a, d, l), id| Arc::from(to_jcs(&json!([a, d, l, to_hex(&id.0)]))));
+        if rows.locals.len() != self.data.locals.len() {
+            let mut known = rows.locals.keys().peekable();
+            let missing: Vec<_> = self
+                .data
+                .locals
+                .iter()
+                .filter(|((a, d, l), _)| known.next_if(|(ka, kd, kl)| (ka, kd, kl) == (*a, *d, *l)).is_none())
+                .map(|((a, d, l), id)| ((a.clone(), d.clone(), l.clone()), Arc::from(to_jcs(&json!([a, d, l, to_hex(&id.0)])))))
+                .collect();
+            rows.locals.extend(missing);
+        }
         fill(&mut rows.receipts, &self.data.receipts, |(a, id), receipt| {
             Arc::from(to_jcs(&json!([a, id, to_hex(&receipt.request_hash), receipt.outcome.value()])))
         });
@@ -240,7 +269,7 @@ impl Core {
                             "run_id" => json!(self.data.run_id),
                             "manifest_hash" => json!(to_hex(&self.data.manifest_hash)),
                             "source_mode" => json!(self.data.source_mode),
-                            "source_documents" => json!(self.data.source_documents),
+                            "source_documents" => json!(self.data.source_documents.as_ref()),
                             "ontology" => self.data.ontology.to_value(),
                             "mappings" => json!(self.data.mappings.iter().map(|((r, t, c), s)| json!([to_hex(&r.0), t, to_hex(&c.0), s])).collect::<Vec<_>>()),
                             "links" => json!(self.data.links.values().map(link_value).collect::<Vec<_>>()),

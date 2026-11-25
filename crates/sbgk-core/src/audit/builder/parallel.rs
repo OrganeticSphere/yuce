@@ -442,7 +442,7 @@ impl ParallelBuilder {
     }
     pub fn backlog<S: AuditStore>(&self, s: &S) -> usize {
         let closed = self.closed_flags(s);
-        s.records_since(self.cursor_in(&closed))
+        s.records_shared(self.cursor_in(&closed))
             .iter()
             .filter(|r| {
                 !crate::audit::directives::is_link_directive(&r.directive)

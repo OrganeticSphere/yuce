@@ -185,7 +185,7 @@ fn find_record<S: AuditStore>(s: &S, id: &str) -> Option<RecordView> {
     if let Some(r) = crate::hash::from_hex(id.strip_prefix('@').unwrap_or(id)).map(RecordId).and_then(|r| s.record(&r)) {
         return Some(r);
     }
-    id.starts_with('@').then(|| s.records_since(0).into_iter().find(|r| r.id.short() == id)).flatten()
+    id.starts_with('@').then(|| s.records_shared(0).iter().find(|r| r.id.short() == id).map(|r| r.as_ref().clone())).flatten()
 }
 
 fn find_link<S: AuditStore>(s: &S, id: &str) -> Option<LinkView> {
@@ -233,8 +233,7 @@ impl Dispatcher {
             if used.contains(&reread) {
                 continue;
             }
-            let text = s.doc_text(doc).unwrap_or_default();
-            if let Some((a, b)) = sections(doc, &text, self.cfg.section_bytes).get(k) {
+            if let Some((a, b)) = self.sections_of(s, doc).get(k) {
                 per_doc.entry(doc.to_string()).or_default().push((loss.score(), k, *a, *b));
             }
         }
@@ -242,7 +241,7 @@ impl Dispatcher {
             rows.sort_by_key(|(score, k, _, _)| (std::cmp::Reverse(*score), *k));
         }
         let first_readings_done = s.docs().iter().all(|doc| {
-            sections(doc, &s.doc_text(doc).unwrap_or_default(), self.cfg.section_bytes)
+            self.sections_of(s, doc)
                 .iter()
                 .enumerate()
                 .all(|(k, _)| self.handled.contains(&format!("doc:{doc}#{k}")) || self.unresolved.contains(&format!("doc:{doc}#{k}")))
@@ -480,7 +479,7 @@ impl Dispatcher {
     /// The claims a report already holds for a research question: grounded claims resting on its quotes that name the question's
     /// topics or carry one of its stances (summaries and link checks excluded).
     fn claims_for<S: AuditStore>(&self, s: &S, f: &Flags, doc: &str, q: &ResearchQuestion) -> usize {
-        let all = s.records_since(0);
+        let all = s.records_shared(0);
         let quotes: BTreeSet<RecordId> = all.iter().filter(|r| r.doc_id.as_deref() == Some(doc)).map(|r| r.id).collect();
         let topics = Topics::new(&q.about);
         all.iter()
@@ -498,14 +497,14 @@ impl Dispatcher {
     /// checks and summaries excluded).
     fn section_records<S: AuditStore>(&self, s: &S, doc: &str, text: &str, (a, b): (usize, usize)) -> Vec<RecordView> {
         let first = |r: &RecordView| !from_request(&r.directive) && !is_link_directive(&r.directive) && !is_summary_directive(&r.directive);
-        let all = s.records_since(0);
+        let all = s.records_shared(0);
         let quotes: BTreeSet<RecordId> = all
             .iter()
             .filter(|r| r.kind == RecordKind::Observe && r.doc_id.as_deref() == Some(doc) && first(r))
             .filter(|r| observe_at(text, r).is_some_and(|p| a <= p && p < b))
             .map(|r| r.id)
             .collect();
-        all.into_iter().filter(|r| first(r) && (quotes.contains(&r.id) || r.based_on.iter().any(|x| quotes.contains(x)))).collect()
+        all.iter().filter(|r| first(r) && (quotes.contains(&r.id) || r.based_on.iter().any(|x| quotes.contains(x)))).map(|r| r.as_ref().clone()).collect()
     }
 
     /// The kernel's own section for the control reading of request `n`: a deterministic choice among saturated sections the swarm
@@ -590,7 +589,7 @@ impl Dispatcher {
     pub(super) fn request_records_of_link<S: AuditStore>(&self, s: &S, f: &Flags, link: LinkId) -> Vec<RecordView> {
         let asked: BTreeSet<usize> = self.requests.iter().enumerate().filter(|(_, r)| r.link() == Some(link)).map(|(i, _)| i + 1).collect();
         let tasks: BTreeSet<&String> = self.request_tasks.iter().filter(|(_, n)| asked.contains(n)).map(|(t, _)| t).collect();
-        s.records_since(0).into_iter().filter(|r| tasks.contains(&r.directive) && f.grounded(s, &r.id)).collect()
+        s.records_shared(0).iter().filter(|r| tasks.contains(&r.directive) && f.grounded(s, &r.id)).map(|r| r.as_ref().clone()).collect()
     }
 
     /// The directive of a request or control task, from the kernel's own templates.

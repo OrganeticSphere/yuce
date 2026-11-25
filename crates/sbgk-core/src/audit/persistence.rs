@@ -20,6 +20,7 @@ use std::fs::TryLockError;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "sbgk-session-log/2";
 pub(crate) const FORMAT_V3: &str = "sbgk-session-log/3";
@@ -63,7 +64,7 @@ pub(crate) struct AuditJournal {
 #[derive(Debug)]
 pub(crate) struct JournalScan {
     pub format: FrameFormat,
-    pub payloads: Vec<Value>,
+    pub payloads: Payloads,
     pub heads: Vec<Hash>,
     pub records_roots: Vec<Hash>,
     pub bytes: u64,
@@ -103,10 +104,51 @@ pub(crate) fn safe_integers(v: &Value) -> bool {
     }
 }
 
+/// The payloads of the complete frames of a journal, genesis first: the checked bytes of their frames, each parsed again when it
+/// is read (0.2.5 stage 3: a replay held the payloads of every frame of a long journal at once, several times the size of its file,
+/// before it replayed the first).
+#[derive(Debug, Clone)]
+pub(crate) struct Payloads {
+    bytes: Arc<Vec<u8>>,
+    lines: Vec<(usize, usize)>,
+    format: FrameFormat,
+}
+
+impl Payloads {
+    pub(crate) fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// The payload of frame `k`, from the bytes the scan checked: the body of a `/3` frame, the payload of a `/2` one.
+    pub(crate) fn get(&self, k: usize) -> Value {
+        let (a, z) = self.lines[k];
+        let mut value: Value = serde_json::from_slice(&self.bytes[a..z]).expect("a frame the scan checked");
+        value[if self.format == FrameFormat::V3 { "body" } else { "payload" }].take()
+    }
+
+    pub(crate) fn first(&self) -> Option<Value> {
+        (!self.lines.is_empty()).then(|| self.get(0))
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = Value> + '_ {
+        (0..self.len()).map(|k| self.get(k))
+    }
+
+    /// The first `n` payloads, sharing the bytes.
+    pub(crate) fn prefix(&self, n: usize) -> Self {
+        Self { bytes: Arc::clone(&self.bytes), lines: self.lines[..n.min(self.lines.len())].to_vec(), format: self.format }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn to_vec(&self) -> Vec<Value> {
+        self.iter().collect()
+    }
+}
+
 impl JournalScan {
     /// The first `n` frames only, for a replay up to that point (`AuditState::replay_own`).
     pub(crate) fn keep_first(&mut self, n: usize) {
-        self.payloads.truncate(n);
+        self.payloads.lines.truncate(n);
         self.heads.truncate(n);
         self.records_roots.truncate(n);
     }
@@ -455,7 +497,7 @@ impl AuditJournal {
         if live {
             bytes.truncate(complete);
         }
-        let mut scan = Self::check(&bytes)?;
+        let mut scan = Self::check(bytes)?;
         scan.live = live;
         scan.in_flight = in_flight as u64;
         Ok(scan)
@@ -478,15 +520,17 @@ impl AuditJournal {
     /// Read at most `MAX_LOG_BYTES` (one byte more is a refusal, so a file that grows after the length check cannot slip
     /// past it) and validate every complete frame: canonical JSON, sequence, previous hash and frame hash.
     fn scan(file: &mut File) -> KResult<JournalScan> {
-        Self::check(&Self::slurp(file)?)
+        Self::check(Self::slurp(file)?)
     }
 
     /// The bytes of the journal, at most `MAX_LOG_BYTES`.
     fn slurp(file: &mut File) -> KResult<Vec<u8>> {
-        if file.metadata().map_err(|e| io_error("metadata", e))?.len() > MAX_LOG_BYTES {
+        let length = file.metadata().map_err(|e| io_error("metadata", e))?.len();
+        if length > MAX_LOG_BYTES {
             return Err(error("audit WAL exceeds 1 GiB"));
         }
-        let mut bytes = Vec::new();
+        // room for the file as it is now: a buffer grown by doubling held up to twice the journal through the replay (0.2.5)
+        let mut bytes = Vec::with_capacity(usize::try_from(length).unwrap_or(0));
         file.take(MAX_LOG_BYTES + 1).read_to_end(&mut bytes).map_err(read_error)?;
         if bytes.len() as u64 > MAX_LOG_BYTES {
             return Err(error("audit WAL exceeds 1 GiB"));
@@ -495,7 +539,7 @@ impl AuditJournal {
     }
 
     /// The checks of every complete frame among `bytes`.
-    fn check(bytes: &[u8]) -> KResult<JournalScan> {
+    fn check(bytes: Vec<u8>) -> KResult<JournalScan> {
         let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         if complete == 0 {
             return Err(error("audit WAL has no complete genesis frame"));
@@ -503,24 +547,29 @@ impl AuditJournal {
         if bytes.len() - complete > MAX_FRAME_BYTES {
             return Err(error("audit WAL unterminated frame exceeds 64 MiB"));
         }
-        let mut payloads = Vec::new();
+        let mut lines = Vec::new();
         let mut heads = Vec::new();
         let mut records_roots = Vec::new();
         let mut chain = FrameChain::new();
+        let mut start = 0;
         for line in bytes[..complete - 1].split(|b| *b == b'\n') {
-            let (payload, head, records_root) = chain.frame(line)?;
-            payloads.push(payload);
+            // checked and dropped: the payload is parsed again when it is replayed
+            let (_, head, records_root) = chain.frame(line)?;
+            lines.push((start, start + line.len()));
+            start += line.len() + 1;
             heads.push(head);
             records_roots.extend(records_root);
         }
+        let (length, sha256) = (bytes.len() as u64, sha256(&bytes));
+        let format = chain.format.expect("a complete genesis frame");
         Ok(JournalScan {
-            format: chain.format.expect("a complete genesis frame"),
-            payloads,
+            format,
+            payloads: Payloads { bytes: Arc::new(bytes), lines, format },
             heads,
             records_roots,
-            bytes: bytes.len() as u64,
+            bytes: length,
             complete_bytes: complete as u64,
-            sha256: sha256(bytes),
+            sha256,
             live: false,
             in_flight: 0,
         })
@@ -743,7 +792,7 @@ mod tests {
     fn round_trip_returns_genesis_and_requires_semantic_recovery_before_append() {
         let (path, original) = committed();
         let (mut journal, scan) = AuditJournal::open(&path.0).unwrap();
-        let payloads = scan.payloads;
+        let payloads = scan.payloads.to_vec();
         assert_eq!(
             payloads,
             vec![json!({"engine": "genesis", "audit": {}}), json!({"command": "first", "receipt": {"accepted": 2}}), json!({"command": "second", "cursor": 2})]
@@ -760,7 +809,7 @@ mod tests {
         let new_head = journal.head();
         drop(journal);
         let (back, scan) = AuditJournal::open(&path.0).unwrap();
-        let payloads = scan.payloads;
+        let payloads = scan.payloads.to_vec();
         assert_eq!(back.head(), new_head);
         assert_eq!(payloads.len(), 4);
         assert_eq!(payloads[3], json!({"command": "third"}));
@@ -790,7 +839,7 @@ mod tests {
         torn.extend_from_slice(&[0xf0, 0x9f]); // even a half-written UTF-8 code point belongs to the uncommitted tail
         std::fs::write(&path.0, &torn).unwrap();
         let (mut unvalidated, scan) = AuditJournal::open(&path.0).unwrap();
-        let payloads = scan.payloads;
+        let payloads = scan.payloads.to_vec();
         assert_eq!(payloads.len(), 3);
         assert_eq!(snapshot(&mut unvalidated), torn);
         assert!(unvalidated.append(&json!({}), None).is_err());
@@ -905,7 +954,7 @@ mod tests {
         assert_eq!(std::fs::read(&path.0).unwrap(), original);
         drop(journal);
         let (mut back, scan) = AuditJournal::open(&path.0).unwrap();
-        let payloads = scan.payloads;
+        let payloads = scan.payloads.to_vec();
         assert_eq!(payloads.len(), 1);
         back.finish_recovery().unwrap();
         back.append(&json!({"reopened": true}), None).unwrap();
@@ -928,7 +977,7 @@ mod tests {
         // A successful write without a successful sync can survive. Recovery
         // includes its receipt so the parent can deduplicate the caller's retry.
         let (mut recovered, scan) = AuditJournal::open(&path.0).unwrap();
-        let payloads = scan.payloads;
+        let payloads = scan.payloads.to_vec();
         assert_eq!(payloads, vec![json!({"genesis": true}), transaction]);
         assert_eq!(recovered.sequence(), 1);
         assert_ne!(recovered.head(), old_head);
@@ -1006,7 +1055,7 @@ mod tests {
         let (mut journal, scan) = AuditJournal::open(&path.0).unwrap();
         assert_eq!(scan.format, FrameFormat::V3);
         assert_eq!(journal.format(), FrameFormat::V3);
-        assert_eq!(scan.payloads[1], json!({"command": "first", "receipt": {"accepted": 2}}));
+        assert_eq!(scan.payloads.get(1), json!({"command": "first", "receipt": {"accepted": 2}}));
         assert_eq!(scan.records_roots[1], sha256(b"two records"));
         assert_eq!(scan.records_roots[2], crate::audit::trees::records_root(&[]));
         // the frame hash covers the header, and the header names the body by its hash
