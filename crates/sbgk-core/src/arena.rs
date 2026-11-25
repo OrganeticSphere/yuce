@@ -5,6 +5,7 @@ use crate::cdc::{chunk_ranges, CdcParams};
 use crate::hash::{sha256, sha256_parts, Hash};
 use crate::node::{EvidenceNode, Seg};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 /// One exact occurrence of a quote inside a document (global offsets).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,8 +46,8 @@ pub struct PutResult {
 #[derive(Debug, Clone, Default)]
 pub struct Arena {
     pub params: CdcParams,
-    chunks: HashMap<Hash, Vec<u8>>,
-    docs: BTreeMap<String, DocEntry>,
+    chunks: Arc<HashMap<Hash, Arc<Vec<u8>>>>,
+    docs: Arc<BTreeMap<String, Arc<DocEntry>>>,
     pub blobs: BTreeMap<Hash, Vec<u8>>,
 }
 
@@ -61,7 +62,7 @@ pub fn version_id_of(chunks: &[Hash]) -> Hash {
 
 impl Arena {
     pub fn new(params: CdcParams) -> Self {
-        Arena { params, chunks: HashMap::new(), docs: BTreeMap::new(), blobs: BTreeMap::new() }
+        Arena { params, chunks: Arc::default(), docs: Arc::default(), blobs: BTreeMap::new() }
     }
 
     pub fn put_document(&mut self, doc_id: &str, bytes: &[u8]) -> PutResult {
@@ -74,8 +75,8 @@ impl Arena {
         for &(s, e) in &ranges {
             let slice = &bytes[s..e];
             let h = sha256(slice);
-            if let std::collections::hash_map::Entry::Vacant(v) = self.chunks.entry(h) {
-                v.insert(slice.to_vec());
+            if let std::collections::hash_map::Entry::Vacant(v) = Arc::make_mut(&mut self.chunks).entry(h) {
+                v.insert(Arc::new(slice.to_vec()));
                 new += 1;
             }
             if prev.contains(&h) {
@@ -86,7 +87,8 @@ impl Arena {
         }
         let version_id = version_id_of(&hashes);
         let res = PutResult { version_id, chunk_hashes: hashes.clone(), chunks_total: hashes.len(), chunks_new: new, chunks_reused_from_prev: reused };
-        self.docs.insert(doc_id.to_string(), DocEntry { version_id, chunk_hashes: hashes, chunk_starts: starts, bytes: bytes.to_vec() });
+        Arc::make_mut(&mut self.docs)
+            .insert(doc_id.to_string(), Arc::new(DocEntry { version_id, chunk_hashes: hashes, chunk_starts: starts, bytes: bytes.to_vec() }));
         res
     }
 
@@ -103,8 +105,10 @@ impl Arena {
                 None => return false,
             }
         }
-        self.docs
-            .insert(doc_id.to_string(), DocEntry { version_id: version_id_of(chunk_hashes), chunk_hashes: chunk_hashes.to_vec(), chunk_starts: starts, bytes });
+        Arc::make_mut(&mut self.docs).insert(
+            doc_id.to_string(),
+            Arc::new(DocEntry { version_id: version_id_of(chunk_hashes), chunk_hashes: chunk_hashes.to_vec(), chunk_starts: starts, bytes }),
+        );
         true
     }
 
@@ -113,12 +117,12 @@ impl Arena {
         if sha256(bytes) != hash {
             return false;
         }
-        self.chunks.entry(hash).or_insert_with(|| bytes.to_vec());
+        Arc::make_mut(&mut self.chunks).entry(hash).or_insert_with(|| Arc::new(bytes.to_vec()));
         true
     }
 
     pub fn doc(&self, doc_id: &str) -> Option<&DocEntry> {
-        self.docs.get(doc_id)
+        self.docs.get(doc_id).map(Arc::as_ref)
     }
 
     pub fn doc_ids(&self) -> impl Iterator<Item = &String> {
@@ -134,7 +138,7 @@ impl Arena {
     }
 
     pub fn all_chunks(&self) -> impl Iterator<Item = (&Hash, &Vec<u8>)> {
-        self.chunks.iter()
+        self.chunks.iter().map(|(hash, bytes)| (hash, bytes.as_ref()))
     }
 
     /// Every byte-exact occurrence of `quote` in the current version of `doc_id`.
@@ -377,7 +381,8 @@ mod tests {
         a.put_document("d", &sample_doc());
         assert!(a.corrupted_chunks().is_empty());
         let h = *a.chunks.keys().next().unwrap();
-        a.chunks.get_mut(&h).unwrap()[3] ^= 0x01;
+        let chunk = Arc::make_mut(&mut a.chunks).get_mut(&h).unwrap();
+        Arc::make_mut(chunk)[3] ^= 0x01;
         assert_eq!(a.corrupted_chunks(), vec![h]);
     }
 

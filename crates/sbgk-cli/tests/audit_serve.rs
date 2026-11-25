@@ -2841,3 +2841,217 @@ fn a_reading_only_shard_is_issued_no_summary_and_closes_after_its_reading() {
     let s = sbgk_core::audit::state::AuditState::open(&PathBuf::from(fx.p("run.wal"))).unwrap();
     assert_eq!(s.checkpoint("audit:mcp:coverage").unwrap()["context"]["reading_only"], true);
 }
+
+/// The arguments of a run with many small sections and no graph builder: enough tasks for a stream of writes.
+fn stream_args(fx: &Fixture, fresh: bool) -> Vec<String> {
+    [fx.args(fresh), ["--build-scope", "none", "--section-bytes", "64"].map(String::from).to_vec()].concat()
+}
+
+/// Readers of the reading tools while two agents write and the owner withdraws (verdict v2 of 20.11.2026, section 3, a condition of
+/// the copy-on-write release): no call fails, every answer is taken from one whole state - two answers at one point are the same
+/// answer - and the roots only move forward with the transaction sequence. The journal then verifies and resumes at the last roots.
+#[test]
+fn readers_during_a_stream_of_writes_and_withdrawals_see_whole_states_and_roots_only_move_forward() {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    type Sample = (u64, Value);
+    let part = |doc: char, n: usize| format!("# Part {n:02}\nTopic {doc}{n:02} is reported here.\n\n");
+    let (a, b): (String, String) = ((0..24).map(|n| part('A', n)).collect(), (0..24).map(|n| part('B', n)).collect());
+    let fx = Fixture::with_docs("stream", &[("a.md", &a), ("b.md", &b)]);
+    // a run without a graph builder names none
+    let subjects = json!({"subjects": [{"token": W1, "role": "swarm", "id": "w1"}, {"token": W2, "role": "swarm", "id": "w2"},
+                                       {"token": OWN, "role": "owner", "id": "own"}]});
+    std::fs::write(fx.p("subjects.json"), subjects.to_string()).unwrap();
+    let log = fx.0.join("server.stderr");
+    let server = Server::start_with_stderr(&stream_args(&fx, true), Stdio::from(std::fs::File::create(&log).unwrap()));
+    let port = server.port;
+    let writing = AtomicBool::new(true);
+    let observes: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let (commits, withdrawals, reads) = std::thread::scope(|scope| {
+        let writers: Vec<_> = [W1, W2]
+            .into_iter()
+            .map(|token| {
+                let observes = &observes;
+                scope.spawn(move || {
+                    let mut agent = Client::connect(port, token);
+                    let (mut commits, mut waits) = (0, 0);
+                    for _ in 0..200 {
+                        let t = agent.call("audit_acquire", json!({"max_wait_ms": 20}));
+                        match t["status"].as_str() {
+                            Some("COMPLETE") => break,
+                            Some("WAIT") if waits > 40 => break,
+                            Some("WAIT") => {
+                                waits += 1;
+                                continue;
+                            }
+                            Some(_) => waits = 0,
+                            None => panic!("acquire failed: {t}"),
+                        }
+                        let r = agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+                        assert!(r["status"].is_string() && r["code"].is_null(), "{t} -> {r}");
+                        if r["status"] == "COMMITTED" {
+                            commits += 1;
+                            let locals = r["accepted_locals"].as_object().unwrap();
+                            let mut seen = observes.lock().unwrap();
+                            seen.extend(locals.iter().filter(|(local, _)| local.ends_with("o1")).map(|(_, id)| id.as_str().unwrap().to_string()));
+                        }
+                    }
+                    commits
+                })
+            })
+            .collect();
+        let owner = scope.spawn(|| {
+            let mut own = Client::connect(port, OWN);
+            let mut withdrawn = 0;
+            while writing.load(Ordering::SeqCst) || withdrawn == 0 {
+                // every third quote that was committed, as it comes
+                let next = observes.lock().unwrap().iter().step_by(3).nth(withdrawn).cloned();
+                match next {
+                    Some(id) => {
+                        let r = own.call("audit_revoke", json!({"record": id}));
+                        assert_eq!(r["status"], "REVOKED", "{r}");
+                        withdrawn += 1;
+                    }
+                    None => std::thread::sleep(Duration::from_millis(5)),
+                }
+            }
+            withdrawn
+        });
+        let readers: Vec<_> = (0..3)
+            .map(|k| {
+                let (writing, observes) = (&writing, &observes);
+                scope.spawn(move || {
+                    let mut own = Client::connect(port, OWN);
+                    let (mut roots, mut fallen): (Vec<Sample>, Vec<Sample>) = (Vec::new(), Vec::new());
+                    while writing.load(Ordering::SeqCst) {
+                        let s = own.call("audit_status", json!({}));
+                        assert!(s["code"].is_null(), "reader {k}: {s}");
+                        let point = s["transaction_sequence"].as_u64().expect("a 0.2 journal counts its transactions");
+                        roots.push((point, json!([s["audit_root"], s["engine_root"], s["wal_head"], s["records"]])));
+                        let f = own.call("audit_fallen", json!({"limit": 1000}));
+                        assert!(f["code"].is_null() && f["status"] == "FALLEN", "reader {k}: {f}");
+                        fallen.push((f["at"].as_u64().unwrap(), f));
+                        let first = observes.lock().unwrap().first().cloned();
+                        if let Some(id) = first {
+                            let d = own.call("audit_dependents", json!({"record": id}));
+                            assert!(d["code"].is_null() && d["status"].is_string(), "reader {k}: {d}");
+                        }
+                    }
+                    (roots, fallen)
+                })
+            })
+            .collect();
+        let commits: usize = writers.into_iter().map(|w| w.join().unwrap()).sum();
+        writing.store(false, Ordering::SeqCst);
+        let withdrawals = owner.join().unwrap();
+        let reads: Vec<(Vec<Sample>, Vec<Sample>)> = readers.into_iter().map(|r| r.join().unwrap()).collect();
+        (commits, withdrawals, reads)
+    });
+    assert!(commits >= 40 && withdrawals >= 4, "{commits} answers committed, {withdrawals} withdrawals");
+    let (mut at_point, mut report_at): (BTreeMap<u64, Value>, BTreeMap<u64, Value>) = (BTreeMap::new(), BTreeMap::new());
+    let mut samples = 0;
+    for (k, (roots, fallen)) in reads.iter().enumerate() {
+        samples += roots.len();
+        for pair in roots.windows(2) {
+            assert!(pair[0].0 <= pair[1].0, "reader {k}: the transaction sequence went back: {pair:?}");
+            assert!(pair[0].0 < pair[1].0 || pair[0].1 == pair[1].1, "reader {k}: the roots changed at one point: {pair:?}");
+        }
+        for pair in fallen.windows(2) {
+            assert!(pair[0].0 <= pair[1].0, "reader {k}: the report went back from point {} to {}", pair[0].0, pair[1].0);
+        }
+        for (point, value) in roots {
+            assert_eq!(at_point.entry(*point).or_insert_with(|| value.clone()), value, "reader {k}: two states at point {point}");
+        }
+        for (point, value) in fallen {
+            assert_eq!(report_at.entry(*point).or_insert_with(|| value.clone()), value, "reader {k}: two reports at point {point}");
+        }
+    }
+    assert!(samples >= 30 && at_point.len() >= 10, "{samples} reads over {} points", at_point.len());
+    let points: Vec<&Value> = at_point.values().collect();
+    assert!(points.windows(2).all(|p| p[0][0] != p[1][0]), "every transaction moves the audit root");
+
+    let mut own = Client::connect(port, OWN);
+    let end = own.call("audit_status", json!({}));
+    drop(own);
+    let mut server = server;
+    assert!(server.child.try_wait().map(|status| status.is_none()).unwrap_or(false), "the server is still running");
+    drop(server);
+    let stderr = std::fs::read_to_string(&log).unwrap();
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    let out = Command::new(BIN).args(["audit-verify", "--wal", &fx.p("run.wal")]).output().unwrap();
+    let verified: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!((out.status.code(), verified["status"].as_str()), (Some(0), Some("VERIFIED")), "{verified}");
+    assert_eq!((verified["audit_root"].clone(), verified["engine_root"].clone()), (end["audit_root"].clone(), end["engine_root"].clone()));
+    let resumed = Server::start(&stream_args(&fx, false));
+    assert_eq!(resumed.hello["audit"]["audit_root"], end["audit_root"], "{}", resumed.hello);
+}
+
+/// A crash in the middle of writing a frame (verdict v2 of 20.11.2026, section 4, point 1). An agent's answer is two frames, its
+/// records and then the mark that its task is done; the crash may hit either. Whatever part of the frame reached the disk,
+/// `audit-verify` reports a torn tail of exactly that many bytes over the state of the frames before it; a resumed server keeps the
+/// cut bytes beside the journal, starts at those roots, and the run goes on to a journal that verifies.
+#[test]
+fn a_frame_cut_in_the_middle_of_its_write_is_a_torn_tail_and_the_journal_resumes_at_the_frame_before() {
+    let fx = Fixture::new("midframe");
+    let server = Server::start(&fx.args(true));
+    let mut w1 = Client::connect(server.port, W1);
+    for _ in 0..2 {
+        let t = w1.call("audit_acquire", json!({}));
+        assert_eq!(t["kind"], "EXTEND", "{t}");
+        assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+    }
+    drop(w1);
+    drop(server);
+    let wal = fx.p("run.wal");
+    let whole = std::fs::read(&wal).unwrap();
+    let starts: Vec<usize> = std::iter::once(0).chain(whole.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1)).collect();
+    let (records, done, end) = (starts[starts.len() - 3], starts[starts.len() - 2], whole.len());
+    let kind = |a: usize, z: usize| serde_json::from_slice::<Value>(&whole[a..z]).unwrap()["body"]["command"]["kind"].clone();
+    assert_eq!((kind(records, done), kind(done, end)), (json!("submit"), json!("batch")), "the answer, then its task marked done");
+    let verify = |path: &str| {
+        let out = Command::new(BIN).args(["audit-verify", "--wal", path]).output().unwrap();
+        (out.status.code(), serde_json::from_slice::<Value>(&out.stdout).unwrap())
+    };
+    for (start, stop) in [(records, done), (done, end)] {
+        let prefix = fx.p(&format!("prefix-{start}.wal"));
+        std::fs::write(&prefix, &whole[..start]).unwrap();
+        let (code, before) = verify(&prefix);
+        assert_eq!(code, Some(0), "{before}");
+        let frame = stop - start;
+        for cut in [1, frame / 2, frame - 1] {
+            let path = fx.p(&format!("cut-{start}-{cut}.wal"));
+            std::fs::write(&path, &whole[..start + cut]).unwrap();
+            let (code, v) = verify(&path);
+            assert_eq!((code, v["status"].as_str(), v["torn_tail_bytes"].as_u64()), (Some(1), Some("TORN_TAIL"), Some(cut as u64)), "cut {cut}: {v}");
+            for key in ["entries", "records", "audit_root", "engine_root", "session_root", "wal_head"] {
+                assert_eq!(v[key], before[key], "frame at {start}, cut {cut}: {key}");
+            }
+        }
+        // the server resumes from the cut journal, at the frame before, and the run goes on
+        std::fs::write(&wal, &whole[..start + frame / 2]).unwrap();
+        let resumed = Server::start(&fx.args(false));
+        let hello = &resumed.hello["audit"];
+        assert_eq!((hello["torn_tail_bytes"].as_u64(), hello["audit_root"].clone()), (Some((frame / 2) as u64), before["audit_root"].clone()), "{hello}");
+        assert_eq!(std::fs::read(hello["torn_tail_kept_in"].as_str().unwrap()).unwrap(), whole[start..start + frame / 2]);
+        let (mut w1, mut gb) = (Client::connect(resumed.port, W1), Client::connect(resumed.port, GB));
+        let mut answers = Vec::new();
+        for _ in 0..12 {
+            catch_up(&mut gb);
+            let t = w1.call("audit_acquire", json!({"max_wait_ms": 200}));
+            match t["status"].as_str() {
+                Some("COMPLETE") => break,
+                Some("WAIT") => continue,
+                _ => {}
+            }
+            let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}));
+            assert!(r["code"].is_null(), "{t} -> {r}");
+            answers.push((t["key"].clone(), r["status"].clone()));
+        }
+        assert!(answers.iter().all(|(_, status)| status == "COMMITTED"), "{answers:?}");
+        drop(resumed);
+        let (code, v) = verify(&wal);
+        assert_eq!((code, v["status"].as_str()), (Some(0), Some("VERIFIED")), "{v}");
+        std::fs::write(&wal, &whole).unwrap();
+    }
+}

@@ -4,7 +4,7 @@
 //! text; the kernel binds quotes to bytes, resolves entities, checks rule applications,
 //! computes intervals and erases every local name before anything is committed.
 
-use crate::arena::{find_all, nearest_segments, unique_extension, Arena};
+use crate::arena::{find_all, nearest_segments, unique_extension, Arena, ByteAnchor};
 use crate::cdc::CdcParams;
 use crate::engine::{Applied, CanonOp, DredReport, Engine};
 use crate::error::{Code, KResult, KernelError};
@@ -405,6 +405,15 @@ impl Session {
                 .obligation(json!({"action": "resubmit_with_longer_quote", "choose_one_of": "expected_by_kernel.unique_extensions"})));
         }
         let anchor = self.arena.anchor_for_span(doc_id, occ[0].start, occ[0].end).expect("occurrence in range");
+        let ev = self.binding_for_anchor(&anchor, quote.len())?;
+        let id = ev.id();
+        let r = self.finish(seq, "bind_evidence", CanonOp::BindEvidence { doc_version: anchor.doc_version_id, ev })?;
+        self.bind_local(local, id);
+        Ok(r)
+    }
+
+    /// Common validation after locating a unique quote. The audit caller has additionally checked its issued scope.
+    pub(crate) fn binding_for_anchor(&self, anchor: &ByteAnchor, quote_len: usize) -> KResult<EvidenceNode> {
         if anchor.segs.len() > MAX_EVIDENCE_SEGMENTS {
             return Err(KernelError::new(
                 Code::QuoteTooFragmented,
@@ -414,14 +423,24 @@ impl Session {
             .expected(json!({"max_segments": MAX_EVIDENCE_SEGMENTS, "segments": anchor.segs.len()}))
             .obligation(json!({"action": "resubmit_with_shorter_quote"})));
         }
-        let ev = Arena::evidence_node(&anchor, quote.len());
+        let ev = Arena::evidence_node(anchor, quote_len);
         let id = ev.id();
         if self.engine.status_of(&id) == Some(EV_REVOKED) {
             return Err(KernelError::new(Code::EvidenceRevoked, "this exact evidence was revoked earlier").field("exact_quote"));
         }
-        let r = self.finish(seq, "bind_evidence", CanonOp::BindEvidence { doc_version: anchor.doc_version_id, ev })?;
+        Ok(ev)
+    }
+
+    /// Commit just the binding of an accepted audit record. BindEvidence checks its bytes and current version before
+    /// the engine inserts the node. A refusal therefore changes neither engine nor WAL. Reset transient session state
+    /// only after success, exactly as a fresh fork accepting this observation would do.
+    pub(crate) fn bind_audit_observation(&mut self, local: String, doc_version: Hash, ev: EvidenceNode) -> KResult<()> {
+        let seq = self.wal.last_seq + 1;
+        let id = ev.id();
+        self.commit_with_seq(seq, &CanonOp::BindEvidence { doc_version, ev }).map_err(|e| e.with_seq(seq))?;
+        self.reset_transients();
         self.bind_local(local, id);
-        Ok(r)
+        Ok(())
     }
 
     // -- shared helpers --------------------------------------------------------------

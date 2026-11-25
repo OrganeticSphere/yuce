@@ -719,6 +719,63 @@ fn random_runs_replay_alike_on_the_state_and_on_copies() {
     assert!(ok_commands > 80 && failed_commands > 100 && concepts > 0, "{ok_commands} clean, {failed_commands} failed, {concepts} concepts");
 }
 
+/// The roots a state answers with, and its record count: what an agent would have been told.
+fn told(s: &AuditState) -> (Hash, Hash, Hash, Option<Hash>, Option<u64>, u64) {
+    (s.audit_root(), s.engine_root(), s.session_root(), s.wal_head(), s.transaction_sequence(), s.head())
+}
+
+/// A crash after `sync_data` and before the answer reaches the agent (verdict v2 of 20.11.2026, section 4, point 2): after every
+/// command, the journal as it is on disk at that moment reopens at the roots the state holds, with the same support flags, and the
+/// agent's retry of the request it got no answer to is answered from the receipt without a second effect.
+#[test]
+fn a_crash_after_the_sync_and_before_the_answer_reopens_at_the_roots_the_state_holds() {
+    let quotes = ["Alpha one.", "Alpha two.", "Alpha three.", "Beta one.", "Beta two."];
+    let (mut retried, mut revoked) = (0, 0);
+    for seed in 0..3u64 {
+        let mut rng = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut next = move |n: u64| {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) % n
+        };
+        let path = TempPath::new();
+        let docs = [("a".to_string(), b"Alpha one.\nAlpha two.\nAlpha three.\n".to_vec()), ("b".to_string(), b"Beta one.\nBeta two.\n".to_vec())];
+        let mut s = AuditState::create(&path.0, &AuditOntology::base(), &docs, "crash", sha256(b"crash")).unwrap();
+        for step in 0..12u64 {
+            let id = format!("c{step}");
+            let observes: Vec<RecordId> = s.records_since(0).iter().filter(|r| r.kind == RecordKind::Observe).map(|r| r.id).collect();
+            let doc = if next(2) == 0 { "a" } else { "b" };
+            let quote = if doc == "a" { quotes[next(3) as usize] } else { quotes[3 + next(2) as usize] };
+            let scope = Scope { docs: vec![doc.into()], topic: None, ranges: Vec::new() };
+            let lines = [
+                json!({"kind":"observe","local_id":"o","doc_id":doc,"exact_quote":quote,"terms":["alpha"]}),
+                json!({"kind":"claim","local_id":"c","text":format!("Claim {step}."),"subject":"alpha","stance":"reported","based_on":["o"]}),
+            ];
+            let revoke = observes.get(next(observes.len().max(1) as u64) as usize).map(|r| [json!({"kind":"revoke","record":to_hex(&r.0)})]);
+            let revoke = revoke.filter(|_| next(3) == 0);
+            // the answer the agent did not get
+            let send = |s: &mut AuditState| match &revoke {
+                Some(ops) => s.submit_operations_id(&id, "kernel", ops, None).unwrap(),
+                None => report_value(&s.submit_records_id(&id, "w1", &format!("t{step}"), &scope, &lines)),
+            };
+            let answer = send(&mut s);
+            revoked += usize::from(revoke.is_some() && answer["error"].is_null());
+            let held = (told(&s), s.core.support_flags_fresh());
+            // the process died here: the journal is what is on disk, nothing else survives
+            let image = TempPath::new();
+            std::fs::write(&image.0, std::fs::read(&path.0).unwrap()).unwrap();
+            let mut reopened = AuditState::open(&image.0).unwrap();
+            assert_eq!((told(&reopened), reopened.core.support_flags_fresh()), held, "seed {seed} step {step}: reopened at other roots");
+            // the retry of the same request: the stored answer, no second effect
+            assert_eq!(send(&mut reopened), answer, "seed {seed} step {step}: the retry is answered from the receipt");
+            assert_eq!(told(&reopened), held.0, "seed {seed} step {step}: the retry changed nothing");
+            retried += 1;
+            drop(reopened);
+        }
+    }
+    assert_eq!(retried, 36);
+    assert!(revoked > 2, "{revoked} withdrawals");
+}
+
 /// A claim of `withdrawal` tests, on the observation `on`.
 fn resting_on(local_id: &str, on: &str) -> Value {
     json!({"kind":"claim","local_id":local_id,"text":"A witness stands.","subject":"witness","stance":"reported","based_on":[on]})

@@ -224,8 +224,8 @@ pub fn dependents(s: &AuditState, target: &Target, limit: Option<usize>) -> Valu
 }
 
 /// The standing quotes under a record, in record order: its cone's observations that stand.
-fn standing_quotes(s: &AuditState, snap: &Snapshot, id: RecordId) -> Vec<RecordView> {
-    let mut quotes: Vec<RecordView> = pairs::cone(s, &[id]).into_iter().filter(|r| r.kind == RecordKind::Observe && snap.stands(&r.id)).collect();
+fn standing_quotes(s: &AuditState, id: RecordId) -> Vec<RecordView> {
+    let mut quotes: Vec<RecordView> = pairs::cone(s, &[id]).into_iter().filter(|r| r.kind == RecordKind::Observe && s.is_grounded(&r.id)).collect();
     quotes.sort_by_key(|r| r.seq);
     quotes
 }
@@ -248,7 +248,7 @@ pub fn active_claims(s: &AuditState, doc: Option<&str>, limit: Option<usize>) ->
     let mut claims = 0;
     for r in s.records_of_kind(RecordKind::Claim) {
         let Some(row) = snap.row(&r.id).filter(|row| row.grounded) else { continue };
-        let docs = documents(&standing_quotes(s, &snap, r.id));
+        let docs = documents(&standing_quotes(s, r.id));
         if doc.is_some_and(|d| !docs.contains(d)) {
             continue;
         }
@@ -294,19 +294,19 @@ pub fn diff(from: &Snapshot, to: &Snapshot, limit: Option<usize>) -> Value {
 }
 
 /// The first causes of a row that does not stand: following `fallen_by` down to the observations that do not stand, in record order.
-fn first_causes(snap: &Snapshot, id: RecordId) -> Vec<RecordId> {
+fn first_causes(rows: &[Row], index: &HashMap<RecordId, usize>, id: RecordId) -> Vec<RecordId> {
     let mut todo = vec![id];
     let mut seen = BTreeSet::new();
     let mut out = BTreeSet::new();
     while let Some(id) = todo.pop() {
-        let Some(r) = snap.row(&id) else { continue };
+        let Some(r) = index.get(&id).map(|i| &rows[*i]) else { continue };
         for g in &r.fallen_by {
             if !seen.insert(*g) {
                 continue;
             }
-            match snap.row(g) {
+            match index.get(g).map(|i| &rows[*i]) {
                 Some(row) if row.kind == "observe" => {
-                    out.insert((snap.index[g], *g));
+                    out.insert((index[g], *g));
                 }
                 Some(_) => todo.push(*g),
                 None => {}
@@ -335,7 +335,7 @@ pub fn record_projection(s: &AuditState, id: &RecordId) -> Value {
     if r.kind == "observe" {
         out["quote_binding"] = s.quote_fate(id).unwrap_or(Value::Null);
     } else if !r.grounded {
-        out["first_causes"] = json!(first_causes(&snap, *id).into_iter().map(|g| gone_json(s, g)).collect::<Vec<_>>());
+        out["first_causes"] = json!(first_causes(&snap.rows, &snap.index, *id).into_iter().map(|g| gone_json(s, g)).collect::<Vec<_>>());
     }
     out
 }
@@ -345,72 +345,83 @@ fn words(text: &str) -> BTreeSet<String> {
     quality::tokens(text).into_iter().filter(|t| t.chars().count() >= 3).collect()
 }
 
-/// The standing claims a twin is drawn from, with an index of their words.
-struct Standing {
-    claims: Vec<(RecordId, BTreeSet<String>, BTreeSet<String>, Vec<RecordId>)>,
+/// Text and insertion order cannot change after a claim is accepted. Grounding and the
+/// documents supporting a candidate are checked against the current state at query time.
+pub(super) struct ClaimWords {
+    claims: Vec<(RecordId, usize)>,
     by_word: HashMap<String, Vec<usize>>,
 }
 
-impl Standing {
-    fn of(s: &AuditState, snap: &Snapshot) -> Self {
+impl ClaimWords {
+    pub(super) fn of<'a>(records: impl Iterator<Item = &'a RecordView>) -> Self {
         let mut claims = Vec::new();
         let mut by_word: HashMap<String, Vec<usize>> = HashMap::new();
-        for r in s.records_of_kind(RecordKind::Claim).into_iter().filter(|r| snap.stands(&r.id)) {
-            let w = words(r.text.as_deref().unwrap_or_default());
-            let docs = documents(&standing_quotes(s, snap, r.id));
-            if w.is_empty() || docs.is_empty() {
-                continue;
+        for r in records.filter(|r| r.kind == RecordKind::Claim) {
+            let terms = words(r.text.as_deref().unwrap_or_default());
+            let count = terms.len();
+            for term in terms {
+                by_word.entry(term).or_default().push(claims.len());
             }
-            for word in &w {
-                by_word.entry(word.clone()).or_default().push(claims.len());
-            }
-            claims.push((r.id, w, docs, r.based_on.clone()));
+            claims.push((r.id, count));
         }
         Self { claims, by_word }
     }
 
-    /// The standing claims whose words overlap `w` by at least half of their union and none of whose standing quotes is from `away`.
-    fn twins(&self, w: &BTreeSet<String>, away: &BTreeSet<String>) -> Vec<Value> {
-        let mut shared: HashMap<usize, usize> = HashMap::new();
+    fn twins(&self, s: &AuditState, w: &BTreeSet<String>, away: &BTreeSet<String>) -> Vec<Value> {
+        let mut shared = vec![0usize; self.claims.len()];
         for word in w {
-            for i in self.by_word.get(word).into_iter().flatten() {
-                *shared.entry(*i).or_default() += 1;
+            for &i in self.by_word.get(word).into_iter().flatten() {
+                shared[i] += 1;
             }
         }
-        let mut found: Vec<(usize, usize, usize)> = shared
+        let mut found: Vec<_> = shared
             .into_iter()
-            .map(|(i, n)| (i, n, w.len() + self.claims[i].1.len() - n))
-            .filter(|(i, n, union)| n * TWIN_DEN >= union * TWIN_NUM && self.claims[*i].2.is_disjoint(away))
-            .collect();
-        // by share of words, the larger first (compared as fractions, without floating point), then in record order
-        found.sort_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
-        found
-            .into_iter()
-            .take(TWINS)
-            .map(|(i, n, union)| {
-                let (id, _, docs, based_on) = &self.claims[i];
-                json!({"id": to_hex(&id.0), "short": id.short(), "based_on": hexes(based_on), "documents": docs, "shared_words": n, "union_words": union})
+            .enumerate()
+            .filter_map(|(i, n)| {
+                let union = w.len() + self.claims[i].1 - n;
+                (n > 0 && n * TWIN_DEN >= union * TWIN_NUM).then_some((i, n, union))
             })
-            .collect()
+            .collect();
+        found.sort_unstable_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
+        found.into_iter().filter_map(|(i, n, union)| {
+            let id = self.claims[i].0;
+            if !s.is_grounded(&id) { return None; }
+            let docs = documents(&standing_quotes(s, id));
+            if docs.is_empty() || !docs.is_disjoint(away) { return None; }
+            let r = s.record(&id)?;
+            Some(json!({"id": to_hex(&id.0), "short": id.short(), "based_on": hexes(&r.based_on), "documents": docs, "shared_words": n, "union_words": union}))
+        }).take(TWINS).collect()
     }
 }
 
 /// The structural unit of a document around a gone quote, without the withdrawn text: what to reread there. Only for a quote on
 /// the document's current version; nothing when no word of the unit is left.
-fn reread_passages(s: &AuditState, fate: &Value) -> Vec<Value> {
+struct RereadDocument<'a> {
+    text: &'a str,
+    units: Vec<(usize, usize)>,
+    closed: Vec<(usize, usize)>,
+}
+
+fn reread_passages<'a>(s: &'a AuditState, fate: &Value, documents: &mut HashMap<String, RereadDocument<'a>>) -> Vec<Value> {
     let (Some(doc), Some(start)) = (fate["doc_id"].as_str(), fate["start"].as_u64()) else { return Vec::new() };
     if fate["current_version"] != true {
         return Vec::new();
     }
-    let Some(text) = s.doc_text(doc) else { return Vec::new() };
+    if !documents.contains_key(doc) {
+        let Some(text) = s.current_document(doc).and_then(|d| std::str::from_utf8(&d.bytes).ok()) else { return Vec::new() };
+        let mut closed = s.closed_spans(doc);
+        closed.sort_unstable();
+        documents.insert(doc.into(), RereadDocument { text, units: gaps::units(doc, text), closed });
+    }
+    let document = &documents[doc];
+    let text = document.text;
     let start = start as usize;
     let end = fate["end"].as_u64().map_or(start, |e| e as usize);
-    let Some((a, z)) = gaps::units(doc, &text).into_iter().find(|(a, z)| *a < end.max(start + 1) && start < *z) else { return Vec::new() };
-    let mut closed = s.closed_spans(doc);
-    closed.sort_unstable();
+    let i = document.units.partition_point(|(_, z)| *z <= start);
+    let Some(&(a, z)) = document.units.get(i).filter(|(a, _)| *a < end.max(start + 1)) else { return Vec::new() };
     let mut pieces = Vec::new();
     let mut from = a;
-    for (c0, c1) in closed.into_iter().filter(|(c0, c1)| *c0 < z && a < *c1) {
+    for (c0, c1) in document.closed.iter().copied().filter(|(c0, c1)| *c0 < z && a < *c1) {
         if c0 > from {
             pieces.push((from, c0));
         }
@@ -421,7 +432,7 @@ fn reread_passages(s: &AuditState, fate: &Value) -> Vec<Value> {
     }
     pieces
         .into_iter()
-        .filter(|(p0, p1)| text.get(*p0..*p1).is_some_and(|t| t.chars().filter(|c| c.is_alphanumeric()).count() >= 3))
+        .filter(|(p0, p1)| text.get(*p0..*p1).is_some_and(|t| t.chars().filter(|c| c.is_alphanumeric()).nth(2).is_some()))
         .map(|(p0, p1)| json!({"doc_id": doc, "start": p0, "end": p1}))
         .collect()
 }
@@ -467,36 +478,30 @@ fn without_gone(quote: &str, fate: &Value, gone: &HashMap<(String, String), Vec<
 /// grounds stand instead), its twins on other sources (without their text) and what to reread. The text of a fallen row is never
 /// given: it may state what was withdrawn.
 pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option<usize>) -> Value {
-    let now = Snapshot::of(s, at);
-    let fell = |i: usize| match since {
-        Some(p) => !now.rows[i].grounded && p.rows.get(i).is_some_and(|r| r.grounded),
-        None => !now.rows[i].grounded && (now.rows[i].kind == "observe" || lost_a_ground(&now.rows[i])),
+    let ungrounded = s.ungrounded_rows();
+    let index = ungrounded.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
+    let fell = |r: &Row| match since {
+        Some(p) => p.stands(&r.id),
+        None => r.kind == "observe" || lost_a_ground(r),
     };
-    let fell: Vec<usize> = (0..now.rows.len()).filter(|i| fell(*i)).collect();
-    let (gone, rows): (Vec<usize>, Vec<usize>) = fell.into_iter().partition(|i| now.rows[*i].kind == "observe");
-    let other: Vec<&Row> =
-        if since.is_none() { now.rows.iter().filter(|r| !r.grounded && r.kind != "observe" && r.fallen_by.is_empty()).collect() } else { Vec::new() };
-    let fallen_rows: Vec<&Row> = rows.iter().map(|i| &now.rows[*i]).collect();
-    let records: HashMap<RecordId, RecordView> = s
-        .records_since(0)
-        .into_iter()
-        .filter(|r| r.kind != RecordKind::Observe && now.row(&r.id).is_some_and(|row| !row.grounded))
-        .map(|r| (r.id, r))
-        .collect();
-    let standing = fallen_rows.iter().any(|r| r.kind == "claim").then(|| Standing::of(s, &now));
+    let (gone, fallen_rows): (Vec<_>, Vec<_>) = ungrounded.iter().filter(|r| fell(r)).partition(|r| r.kind == "observe");
+    let other: Vec<_> = ungrounded.iter().filter(|r| since.is_none() && r.kind != "observe" && r.fallen_by.is_empty()).collect();
+    let limit = limit_of(limit, DEFAULT_REPORT_LIMIT);
+    let standing = fallen_rows.iter().take(limit).any(|r| r.kind == "claim").then(|| s.claim_words());
     // the bytes of every quote that went, by document and version: no text the report gives may repeat them
     let mut gone_spans: HashMap<(String, String), Vec<(usize, usize)>> = HashMap::new();
-    for r in now.rows.iter().filter(|r| r.kind == "observe" && !r.grounded) {
+    for r in ungrounded.iter().filter(|r| r.kind == "observe") {
         let Some(f) = s.quote_fate(&r.id) else { continue };
         if let (Some(doc), Some(version), Some(a), Some(z)) = (f["doc_id"].as_str(), f["version"].as_str(), f["start"].as_u64(), f["end"].as_u64()) {
             gone_spans.entry((doc.to_string(), version.to_string())).or_default().push((a as usize, z as usize));
         }
     }
-    let limit = limit_of(limit, DEFAULT_REPORT_LIMIT);
+    let mut reread_documents = HashMap::new();
     let mut questions = BTreeSet::new();
     let mut out_rows = Vec::new();
     for (k, r) in fallen_rows.iter().enumerate() {
-        let record = records.get(&r.id);
+        let owned = s.record(&r.id);
+        let record = owned.as_ref();
         let question = record.filter(|v| v.kind == RecordKind::Done).and_then(|v| v.body["rq_id"].as_str().map(str::to_string));
         if let Some(q) = &question {
             questions.insert(q.clone());
@@ -504,10 +509,10 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
         if k >= limit {
             continue;
         }
-        let causes = first_causes(&now, r.id);
+        let causes = first_causes(&ungrounded, &index, r.id);
         let gone_quotes: Vec<Value> = causes.iter().map(|g| gone_json(s, *g)).collect();
         let away: BTreeSet<String> = gone_quotes.iter().filter_map(|g| g["doc_id"].as_str().map(str::to_string)).collect();
-        let kept = if r.kind == "done" { Vec::new() } else { standing_quotes(s, &now, r.id) };
+        let kept = if r.kind == "done" { Vec::new() } else { standing_quotes(s, r.id) };
         let standing_json: Vec<Value> = kept
             .iter()
             .map(|q| {
@@ -522,10 +527,10 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
             })
             .collect();
         let twins = match (&standing, record) {
-            (Some(st), Some(v)) if r.kind == "claim" => st.twins(&words(v.text.as_deref().unwrap_or_default()), &away),
+            (Some(st), Some(v)) if r.kind == "claim" => st.twins(s, &words(v.text.as_deref().unwrap_or_default()), &away),
             _ => Vec::new(),
         };
-        let mut passages: Vec<Value> = gone_quotes.iter().flat_map(|g| reread_passages(s, g)).collect();
+        let mut passages: Vec<Value> = gone_quotes.iter().flat_map(|g| reread_passages(s, g, &mut reread_documents)).collect();
         passages.dedup();
         let mut reread = json!({"passages": passages});
         if let Some(q) = &question {
@@ -535,7 +540,7 @@ pub fn fallen(s: &AuditState, at: usize, since: Option<&Snapshot>, limit: Option
                              "gone": gone_quotes, "standing": standing_json, "twins": twins, "reread": reread});
         if let Some(v) = record.filter(|_| r.kind == "done") {
             // an answer rests on many claims: how many of them stand, not every quote under them
-            row["grounds_standing"] = json!(v.based_on.iter().filter(|g| now.stands(g)).count());
+            row["grounds_standing"] = json!(v.based_on.iter().filter(|g| s.is_grounded(g)).count());
         }
         if causes.is_empty() {
             row["note"] = json!("no quote under it went: its grounds stand, but not all of them can support an answer");
