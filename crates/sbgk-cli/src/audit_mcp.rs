@@ -1070,18 +1070,18 @@ fn points_arg(args: &Value, now: usize) -> Result<(usize, usize), Value> {
 }
 
 /// The point before a withdrawal and the state there, for its answer.
-fn withdrawal_point(state: &AuditState) -> (usize, read::Snapshot) {
+fn withdrawal_point(state: &AuditState) -> (usize, Vec<bool>) {
     let n = state.entries().unwrap_or(0);
-    (n, read::Snapshot::of(state, n))
+    (n, state.standing())
 }
 
 /// A withdrawal's answer names the point before it and how many claims, relations and answers fell: the operator asks
 /// `audit_fallen` with that point for the report (SPEC_V02_STEP3 section 6).
-fn withdrawal_answer(state: &AuditState, mut out: Value, (since, before): (usize, read::Snapshot)) -> Value {
-    let report = read::fallen(state, state.entries().unwrap_or(0), Some(&before), Some(1));
+fn withdrawal_answer(state: &AuditState, mut out: Value, (since, before): (usize, Vec<bool>)) -> Value {
+    let (fell, quotes_gone) = state.newly_fallen_counts(&before);
     out["since"] = json!(since);
-    out["fell"] = report["rows_fallen"].clone();
-    out["quotes_gone"] = report["quotes_gone"].clone();
+    out["fell"] = json!(fell);
+    out["quotes_gone"] = json!(quotes_gone);
     out["report"] = json!(format!("audit_fallen with since={since}"));
     out
 }
@@ -1108,7 +1108,8 @@ fn withdraw_preview(state: &AuditState, actor: &str, args: &Value) -> Value {
         Err(e) => return json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
     };
     // the point a written withdrawal would answer: the state now, which the preview did not change
-    let (since, before) = withdrawal_point(state);
+    let since = state.entries().unwrap_or(0);
+    let before = read::Snapshot::of(state, since);
     let mut out = read::fallen(&after, since + 1, Some(&before), limit_arg(args));
     out["status"] = json!("PREVIEW");
     out["written"] = json!(false);

@@ -9,6 +9,7 @@ pub(super) type Support = ById<(bool, bool)>;
 #[derive(Clone)]
 pub(super) struct Cache {
     pub(super) readable: bool,
+    pub(super) claim_words: Option<Arc<super::super::read::ClaimWords>>,
     pub(super) support: Option<Arc<Support>>,
     /// `quality::stale::suspects` of this state, dropped at every command: unlike the support flags it reads the checkpoints.
     pub(super) stale: Option<Arc<Vec<RecordId>>>,
@@ -22,7 +23,16 @@ pub(super) struct Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Self { readable: true, support: None, stale: None, hash: None, fragments: Arc::default(), checkpoints: Arc::default(), sections: BTreeMap::new() }
+        Self {
+            readable: true,
+            claim_words: None,
+            support: None,
+            stale: None,
+            hash: None,
+            fragments: Arc::default(),
+            checkpoints: Arc::default(),
+            sections: BTreeMap::new(),
+        }
     }
 }
 

@@ -306,6 +306,9 @@ impl Engine {
 
     /// Unique node whose hex id starts with `hex_prefix` (used for `@<id>` references).
     pub fn find_by_prefix(&self, hex_prefix: &str) -> Option<Hash> {
+        if let Some(id) = crate::hash::from_hex(hex_prefix) {
+            return self.contains(&id).then_some(id);
+        }
         let p = hex_prefix.to_ascii_lowercase();
         let mut found: Option<Hash> = None;
         for e in &self.entries {
