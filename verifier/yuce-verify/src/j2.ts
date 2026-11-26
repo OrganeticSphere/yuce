@@ -11,10 +11,14 @@ export const EMPTY_RECORDS_ROOT = "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48
 
 export const GENESIS_FORMATS = {
   format: "r2r-audit-genesis/3",
-  rules_version: "r2r-audit-rules/3",
   state_root_format: "r2r-state-root/2",
   seal_format: "r2r-seal/2",
 } as const;
+
+/** Amendment 5, P5-1: the rules a genesis record may name. */
+export const RULES_VERSIONS = ["r2r-audit-rules/3", "r2r-audit-rules/4"] as const;
+/** Amendment 5, P5-2: the rules under which a question may name the record it is about. */
+export const RULES_VERSION_4 = "r2r-audit-rules/4";
 
 const GENESIS_KEYS = [
   "format",
@@ -135,8 +139,15 @@ export class J2Checker {
     // J2-2
     if (!hasExactKeys(body, GENESIS_KEYS)) return fail("GENESIS_KEYS", "the genesis record must have exactly its 15 keys");
     // J2-3
-    for (const [k, v] of Object.entries(GENESIS_FORMATS)) {
-      if (body.get(k) !== v) return fail("GENESIS_FORMAT", `${k} is not "${v}"`);
+    // (amendment 5, P5-1: rules_version is one of two values; the keys are checked in the order format, rules_version,
+    // state_root_format, seal_format, as before)
+    if (body.get("format") !== GENESIS_FORMATS.format) return fail("GENESIS_FORMAT", `format is not "${GENESIS_FORMATS.format}"`);
+    const rules = body.get("rules_version");
+    if (typeof rules !== "string" || !(RULES_VERSIONS as readonly string[]).includes(rules)) {
+      return fail("GENESIS_FORMAT", `rules_version is not one of ${RULES_VERSIONS.map((r) => `"${r}"`).join(", ")}`);
+    }
+    for (const k of ["state_root_format", "seal_format"] as const) {
+      if (body.get(k) !== GENESIS_FORMATS[k]) return fail("GENESIS_FORMAT", `${k} is not "${GENESIS_FORMATS[k]}"`);
     }
     // J2-4
     const field = (k: string, ok: boolean, what: string): J2Failure | null => (ok ? null : fail("GENESIS_FIELD", `${k} is not ${what}`));

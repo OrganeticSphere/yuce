@@ -26,6 +26,25 @@ New concepts are provisional. Status changes require a separately authorized coo
 
 Source observations bind legacy engine evidence to a specific document version. Document updates and revocation invalidate dependent support without rewriting historical records. Manifest-derived IDs are immutable; a changed source needs its new identity. Agent-supplied valid dates and kernel ingest order are labeled separately; publication dates are not inferred from filenames.
 
+## Rules 4 (0.3.0): a journal that takes its sources as they come
+
+A genesis names the rules its journal runs under. A new journal names `r2r-audit-rules/4`; a journal that names `r2r-audit-rules/3` is replayed, and written on, under the rules of 0.2 (`AuditState::set_rules_version` starts a run under them, for the tools of 0.2). The journal format, the root format and the seal format are the same for both.
+
+Rules 4 are rules 3 with these additions (`state/stream.rs`, read by `vsc.rs`):
+
+- **A run may start without a document** and take every source later (`put_document`; `sbgk audit-stream`, `audit-serve --empty-start` with the owner's `audit_put_document`). This held under rules 3 too, for a journal of supplied documents; 0.3.0 opens it on the command line and in the server. Sources are UTF-8 text. Under rules 4 the name of a source that comes later has the bound of a name the journal starts with (512 bytes): the key of the task that reads it holds the name.
+- **A claim may rest on a claim.** The rule stays AND: a claim stands while every ground of it stands. The grounds of a relation and of a hypothesis stay observations.
+- **A context checkpoint** is the checkpoint command with the key `vsc:checkpoint:<epoch>`, a frame of its own: the records an agent keeps across a compaction of its context, the sources they rest on with the SHA-256 of their bytes, and the source that holds the raw context. Its epochs count from 1 by one, it is written once, and it lists records that are active when it is written (a record that fell, was withdrawn or was replaced is refused by name) and sources that exist. It is never the checkpoint or an operation of a batch. `read_active_checkpoint` gives back only its records that are active now. A journal of rules 3 has no context checkpoint: a checkpoint with such a key is any checkpoint there, and the reads do not give it out as one.
+- **A planned change is not a withdrawal.** A relation `supersedes` from the new record to the old one leaves the old record standing and no longer current (`SUPERSEDED`); nothing that rested on it falls. A withdrawal (`revoke`, `revoke_text`, which may name the document that is its reason, `reason_source_id`) makes the quote `WITHDRAWN` and what rested on it `AFFECTED_BY_EVIDENCE_CHANGE`. A replacement that falls replaces nothing: the old record is the current one again.
+- **The key of a claim is its `subject`, compared as the exact string, and its value its `object`.** `vsc::key` reads the value a key has now; `vsc::keys` lists the keys, the keys whose active claims say different values (`VALUE_CONFLICT`) and the required keys no active claim says (`MISSING_REQUIRED_KEY`). These are projections over the journal: the kernel refuses no record for them.
+- **A question may name the record it is about** (`about_record`): an address in its body, not a ground.
+
+The flags of the records after a put document are computed from the flags before it, as after a submit or a withdrawal (0.2.5): the quotes of the document are looked at again, and what rests on a quote whose flags changed. In the tests, and in a build with the feature `audit-root-verify`, every such update is compared with a whole pass over the records.
+
+A source that gets other bytes is read again (`directives/sources.rs`, a decision of the dispatcher and no rule of the journal): the completion checkpoint of a reading of a document that was ever given other bytes names the version it was issued on (`source_version`), and the reading is over for that version alone, for the live dispatcher and for one recovered from the journal. The checkpoints of a document that keeps the bytes it came with are what 0.2 wrote.
+
+A writer without a dispatcher (`sbgk audit-stream submit`) names in the scope of a submission the documents its lines need: those they quote and those under every earlier record they name (`AuditState::scope_of_lines`).
+
 ## Durability and commitments
 
 One `sbgk-session-log/2` frame commits the staged engine changes, audit changes, request/outcome receipt and coordinator checkpoint. Storage writes and synchronizes the frame before publishing the new in-memory state. A write/sync failure poisons that writer; reopen and retry the same submission ID to resolve an uncertain outcome.

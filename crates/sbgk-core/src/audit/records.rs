@@ -23,6 +23,8 @@ pub(crate) struct ParsedRecord {
     pub stance: Option<String>,
     pub based_on: Vec<String>,
     pub ends: Option<(String, String, String)>,
+    /// Rules 4: the record a question is about, as its line names it.
+    pub about_record: Option<String>,
 }
 
 fn bad(field: &str, message: impl Into<String>, expected: Value) -> KernelError {
@@ -104,8 +106,14 @@ fn check_date(m: &Map<String, Value>) -> KResult<()> {
     Ok(())
 }
 
-/// Parse six strict record shapes without resolving a reference or changing any state.
+/// Parse six strict record shapes without resolving a reference or changing any state, under the newest rules.
+#[cfg(test)]
 pub(crate) fn parse(v: &Value) -> KResult<ParsedRecord> {
+    parse_under(v, 4)
+}
+
+/// `parse` under the rules a journal names (3 or 4): rules 4 give a question the optional `about_record`.
+pub(crate) fn parse_under(v: &Value, rules: u8) -> KResult<ParsedRecord> {
     let m = v.as_object().ok_or_else(|| KernelError::new(Code::BadJson, "a record must be a JSON object"))?;
     let k = str_field(m, "kind")?;
     let kind = RecordKind::parse(&k)
@@ -115,6 +123,7 @@ pub(crate) fn parse(v: &Value) -> KResult<ParsedRecord> {
         RecordKind::Claim => &["kind", "local_id", "text", "subject", "predicate", "object", "stance", "as_of", "based_on"],
         RecordKind::Relation => &["kind", "local_id", "from", "rel", "to", "based_on"],
         RecordKind::Hypothesis => &["kind", "local_id", "text", "falsifier", "subject", "stance", "based_on"],
+        RecordKind::Question if rules >= 4 => &["kind", "local_id", "text", "about", "needed", "about_record"],
         RecordKind::Question => &["kind", "local_id", "text", "about", "needed"],
         RecordKind::Done => &["kind", "local_id", "rq_id", "directive_id", "answer_ids", "outcome", "text"],
     };
@@ -127,6 +136,7 @@ pub(crate) fn parse(v: &Value) -> KResult<ParsedRecord> {
     let mut stance = None;
     let mut based_on = Vec::new();
     let mut ends = None;
+    let mut about_record = None;
     match kind {
         RecordKind::Observe => {
             str_field(m, "doc_id")?;
@@ -157,6 +167,7 @@ pub(crate) fn parse(v: &Value) -> KResult<ParsedRecord> {
             text = Some(text_field(m, "text")?);
             terms = strings(m, "about", 1, true)?;
             str_field(m, "needed")?;
+            about_record = optional_str(m, "about_record")?;
         }
         RecordKind::Done => {
             str_field(m, "rq_id")?;
@@ -174,7 +185,7 @@ pub(crate) fn parse(v: &Value) -> KResult<ParsedRecord> {
             unique_terms.push(term);
         }
     }
-    Ok(ParsedRecord { kind, local_id, body: v.clone(), terms: unique_terms, text, stance, based_on, ends })
+    Ok(ParsedRecord { kind, local_id, body: v.clone(), terms: unique_terms, text, stance, based_on, ends, about_record })
 }
 
 /// Machine-readable shapes. `x-maxUtf8Bytes` and `x-calendar` are kernel checks, not standard JSON Schema assertions.

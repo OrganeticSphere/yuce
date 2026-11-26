@@ -19,8 +19,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The owner's tools that only read the run.
-const OWNER_READ: &[&str] =
-    &["audit_status", "audit_record", "audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview"];
+const OWNER_READ: &[&str] = &[
+    "audit_status",
+    "audit_record",
+    "audit_dependents",
+    "audit_active_claims",
+    "audit_diff",
+    "audit_fallen",
+    "audit_coverage",
+    "audit_withdraw_preview",
+    "audit_key",
+    "audit_keys",
+    "audit_context",
+];
 const MORE: &str = "audit_more";
 const DEFAULT_MAX_RESULT_CHARS: usize = 16_000;
 /// The fields of a paged answer's first header, in the order they are dropped when the header would take more than half a part:

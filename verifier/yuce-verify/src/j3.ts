@@ -6,7 +6,7 @@ import type { DocumentChunks } from "./cdc.ts";
 import { AnchorEncodingError, anchorBytes, documentChunks, occurrences, segmentsOf } from "./cdc.ts";
 import type { HashAdapter } from "./hash.ts";
 import { toHex, utf8 } from "./hash.ts";
-import { commandKind, isIdentifier } from "./j2.ts";
+import { RULES_VERSION_4, commandKind, isIdentifier } from "./j2.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { isObject, jcs } from "./json.ts";
 import { DOMAIN, domainHash, recordsRoot } from "./trees.ts";
@@ -21,6 +21,9 @@ export const LINE_KEYS: Record<string, readonly string[]> = {
   done: ["kind", "local_id", "rq_id", "directive_id", "answer_ids", "outcome", "text"],
 };
 
+/** Amendment 5, P5-2: under the rules 4 a question may also name the record it is about. */
+export const QUESTION_KEYS_RULES_4: readonly string[] = [...LINE_KEYS["question"]!, "about_record"];
+
 /** P3-10, J3-2: the keys each kind must have. */
 export const LINE_REQUIRED: Record<string, readonly string[]> = {
   observe: ["doc_id", "exact_quote"],
@@ -31,7 +34,7 @@ export const LINE_REQUIRED: Record<string, readonly string[]> = {
   done: ["answer_ids"],
 };
 
-const STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stance", "from", "rel", "to"] as const;
+const STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stance", "from", "rel", "to", "about_record"] as const;
 /** Amendment 4, P4-4: the longest exact_quote, in bytes of UTF-8. */
 export const MAX_QUOTE_BYTES = 16384;
 const STRING_ARRAY_FIELDS = ["terms", "based_on", "about", "answer_ids"] as const;
@@ -84,6 +87,8 @@ export class RecordEngine {
   /** Leaves of the last frame, in order (for the forger and the tests). */
   lastFrameLeaves: { L: JsonObject; leaf: Uint8Array }[] = [];
   quotes = 0;
+  /** Amendment 5, P5-2: the genesis record names the rules 4. */
+  private rules4 = false;
 
   constructor(
     private readonly adapter: HashAdapter,
@@ -102,6 +107,7 @@ export class RecordEngine {
 
   /** J3-0 on the genesis record (already checked by J2). */
   async genesis(body: JsonObject): Promise<J3Failure | J3NotCheckable | null> {
+    this.rules4 = body.get("rules_version") === RULES_VERSION_4;
     const sources = body.get("source_documents") as JsonObject;
     for (const docId of [...sources.keys()].sort()) {
       const desc = sources.get(docId) as JsonObject;
@@ -206,7 +212,7 @@ export class RecordEngine {
   private async line(g: Group, directive: string, scope: JsonObject, line: JsonValue, j: number, leaves: Uint8Array[]): Promise<J3Failure | null> {
     const fail = (code: string, detail: string): J3Failure => ({ code, detail: `line ${j}: ${detail}` });
     // J3-2
-    const form = lineFormProblem(line);
+    const form = lineFormProblem(line, this.rules4);
     if (form !== null) return fail("RECORD_FORM", form);
     const l = line as JsonObject;
     const kind = l.get("kind") as string;
@@ -241,6 +247,12 @@ export class RecordEngine {
         if (r === null) return fail("UNRESOLVED_REFERENCE", `answer_ids ${quoted(arr[k] as string)} does not resolve`);
         supports.push(r);
       }
+    }
+    // Amendment 5, P5-2: the record a question is about. An address in the body, not a ground of the record.
+    let about: AcceptedRecord | null = null;
+    if (kind === "question" && l.has("about_record")) {
+      about = resolve(l.get("about_record") as string, (v) => l.set("about_record", v));
+      if (about === null) return fail("UNRESOLVED_REFERENCE", `about_record ${quoted(l.get("about_record") as string)} does not resolve`);
     }
 
     // J3-4 ... J3-6, and the evidence of an observe line
@@ -287,6 +299,7 @@ export class RecordEngine {
       body.set("to", at(to!));
     }
     if (kind === "done") body.set("answer_ids", supports.map(at));
+    if (about !== null) body.set("about_record", at(about));
     if (evidence !== null) {
       body.set("evidence_id", evidence.get("id")!);
       body.set("document_version", evidence.get("version")!);
@@ -372,12 +385,12 @@ function inScope(scope: JsonObject, docId: string, start: number, end: number, l
   return ranges.some(([d, a, z]) => d === docId && (a as number) <= start && end <= (z as number) && (a as number) < (z as number) && (z as number) <= length);
 }
 
-/** J3-2: null when the line has the right form. */
-export function lineFormProblem(line: JsonValue): string | null {
+/** J3-2: null when the line has the right form. `rules4`: the journal names the rules 4 (amendment 5, P5-2). */
+export function lineFormProblem(line: JsonValue, rules4 = false): string | null {
   if (!isObject(line)) return "the line is not an object";
   const kind = line.get("kind");
   if (typeof kind !== "string" || !Object.hasOwn(LINE_KEYS, kind)) return "kind is not one of the six kinds";
-  const allowed = LINE_KEYS[kind]!;
+  const allowed = rules4 && kind === "question" ? QUESTION_KEYS_RULES_4 : LINE_KEYS[kind]!;
   for (const k of line.keys()) if (!allowed.includes(k)) return `key ${JSON.stringify(k)} is not allowed for ${kind}`;
   if (typeof line.get("local_id") !== "string") return "local_id is not a string";
   for (const k of STRING_FIELDS) if (line.has(k) && typeof line.get(k) !== "string") return `${k} is not a string`;

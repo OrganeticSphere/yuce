@@ -379,6 +379,37 @@
     "records": 4,
     "quotes": 2
    }
+  },
+  "stream-context-checkpoints.wal": {
+   "frames": 12,
+   "wal_head": "e2ecc764cb8aece29b69413ea2ba454ce6e63f6ba8a9f9020c75689950cc530b",
+   "seals": [
+    {
+     "n": 10,
+     "seal_hash": "f41aee4c1783a3cea661c41f21567c8ab1a943dcc636ebe6c3e6ba203bb8f273"
+    }
+   ],
+   "tail": {
+    "kind": "closed",
+    "frames_after_last_seal": 1
+   },
+   "sha256": "60e5f28de26ef013deb12426fb24124f8e15582cb9407a85ac0c842c29073341",
+   "kernel": {
+    "exit": 0,
+    "status": "VERIFIED"
+   },
+   "docs": "valid/stream-context-checkpoints.docs",
+   "J2": {
+    "result": "PASS",
+    "documents": 0,
+    "settings_hash": "6b3606913caec5aaa55cef68c181172fc5a8ce84ba9a3574311b1c6f5a03a73e"
+   },
+   "J3": {
+    "result": "PASS",
+    "records": 13,
+    "quotes": 5
+   },
+   "what": "a journal of the rules r2r-audit-rules/4 (amendment 5, P5-4): no document at the start, three sources and a notice put later, claims on claims, a planned change, three context checkpoints, a withdrawal with its reason"
   }
  },
  "corrupt": {
@@ -461,7 +492,7 @@
    "kernel": {
     "exit": 1,
     "status": "REFUSED",
-    "message": "this kernel replays r2r-audit-rules/3; the journal names another"
+    "message": "this kernel replays r2r-audit-rules/3 and r2r-audit-rules/4; the journal names another"
    },
    "delivery1": {
     "exit": 0,

@@ -76,7 +76,8 @@
         "local_id": {"$ref": "#/$defs/string"},
         "text": {"$ref": "#/$defs/text"},
         "about": {"$ref": "#/$defs/basis"},
-        "needed": {"$ref": "#/$defs/string"}
+        "needed": {"$ref": "#/$defs/string"},
+        "about_record": {"$ref": "#/$defs/string"}
       }
     },
     {

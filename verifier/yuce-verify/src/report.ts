@@ -4,9 +4,9 @@
 import { fromPlain, jcs } from "./json.ts";
 
 export const VERIFIER_NAME = "yuce-verify";
-export const VERIFIER_VERSION = "0.2.1";
-/** SPEC v3 with amendments 1, 2, 3 and 4. */
-export const SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/6";
+export const VERIFIER_VERSION = "0.3.0";
+/** SPEC v3 with amendments 1, 2, 3, 4 and 5. */
+export const SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/7";
 
 /** What is not verified when J3 did not pass (SPEC 8.1, `not_verified`). */
 export const NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"] as const;

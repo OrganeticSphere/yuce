@@ -37,7 +37,11 @@ mod narrow;
 mod ontology_review;
 #[path = "revisions.rs"]
 mod revisions;
+mod stream;
 mod versions;
+pub use stream::{
+    ActiveCheckpoint, ClaimChains, RecordState, CONTEXT_CHECKPOINT_FORMAT, CONTEXT_CHECKPOINT_PREFIX, MAX_CHECKPOINT_MANIFEST_BYTES, MAX_CHECKPOINT_RECORDS,
+};
 
 /// Format 2: a withdrawal closes text of a document, wherever those bytes stand in it, in any version. Every stored quote overlapping
 /// them loses its support with it and a new quote overlapping them is refused. Format 1 refused only the exact span, so a wider quote
@@ -48,7 +52,32 @@ const GENESIS_FORMAT_EXACT_SPAN: &str = "r2r-audit-genesis/1";
 /// Format 3 (0.2, SPEC_V02_STEP2 section 4): `/3` frames, the `r2r-state-root/2` root, the rules of format 2, and a strict list of
 /// fields that names the rules, the formats of the root and the seal, the questions and the hash of the settings.
 const GENESIS_FORMAT_V3: &str = "r2r-audit-genesis/3";
-pub const RULES_VERSION: &str = "r2r-audit-rules/3";
+/// The rules a new journal names and runs under (0.3.0). Rules 4 are rules 3 with four additions, each read from the journal's
+/// own genesis and never from the kernel that replays it: a claim may rest on a claim; a context checkpoint
+/// (`vsc:checkpoint:<epoch>`) is checked; a withdrawal may name the source that is its reason; a question may name the record it
+/// is about. A journal that names rules 3 is replayed, and written on, under rules 3.
+pub const RULES_VERSION: &str = "r2r-audit-rules/4";
+/// The rules of 0.2.
+pub const RULES_VERSION_3: &str = "r2r-audit-rules/3";
+/// The rules this kernel replays, oldest first.
+pub const RULES_VERSIONS: [&str; 2] = [RULES_VERSION_3, RULES_VERSION];
+
+/// The number of the rules a `/3` genesis names; `None` for rules this kernel does not replay.
+fn rules_number(name: &str) -> Option<u8> {
+    match name {
+        RULES_VERSION_3 => Some(3),
+        RULES_VERSION => Some(4),
+        _ => None,
+    }
+}
+
+fn rules_name(number: u8) -> &'static str {
+    if number >= 4 {
+        RULES_VERSION
+    } else {
+        RULES_VERSION_3
+    }
+}
 /// The checkpoint `audit-serve` pins a run's settings in, before any record: some rules read it (the circle readers, the refiner,
 /// four eyes at the acceptance of a link).
 pub const SETTINGS_CHECKPOINT: &str = "audit:mcp:coverage";
@@ -98,6 +127,8 @@ pub struct GenesisMeta {
     pub questions: Value,
     pub settings_hash: Hash,
     pub operator_meta: Option<Value>,
+    /// The rules the genesis names: one of `RULES_VERSIONS`.
+    pub rules_version: &'static str,
 }
 pub const MAX_DOC_BYTES: usize = 16 * 1024 * 1024;
 /// The longest name of a supplied document: the keys of its tasks hold the name and have the limit of any identifier, so a longer name
@@ -108,6 +139,14 @@ pub const REFINER_MAP_RULE: &str = "refiner_map_term/1";
 
 fn bad(field: &str, message: impl Into<String>) -> KernelError {
     KernelError::new(Code::BadField, message).field(field)
+}
+
+/// The bound of a document's name (`MAX_DOC_NAME_BYTES`), for a document the journal starts with and for one that comes later.
+fn doc_name(id: &str) -> KResult<()> {
+    if id.len() > MAX_DOC_NAME_BYTES {
+        return Err(bad("doc_id", format!("a document name takes at most {MAX_DOC_NAME_BYTES} bytes: this one has {}", id.len())));
+    }
+    Ok(())
 }
 
 /// The quote rule of an observe record: the document is one of the directive's, the whole document holds the quote byte for byte
@@ -443,6 +482,15 @@ struct Data {
     stored_scopes: Arc<BTreeMap<String, BTreeSet<(String, usize, usize)>>>,
     /// The run was closed by a `close` entry of a `/3` journal (`audit_close`): it stays closed after a restart.
     closed: bool,
+    /// The number of the rules the journal runs under, from its genesis (`RULES_VERSIONS`); 3 for a journal of the first formats,
+    /// which names none. Like `withdrawal_closes_bytes` it follows from the genesis and enters no root.
+    rules: u8,
+    /// Derived like `doc_observes`, not committed: the positions of the claims by the SHA-256 of their subject, in record order.
+    /// The subject of a claim is its key for the reads by exact key (`stream.rs`).
+    claims_by_key: Sharded<Hash, Vec<usize>>,
+    /// Derived like `withdrawn`, not committed: the documents a `put_document` gave other bytes than they had. The dispatcher
+    /// asks (`AuditStore::doc_replaced`): the reading of such a document is closed for the version it names, and for no other.
+    replaced_docs: Arc<BTreeSet<String>>,
 }
 
 struct Core {
@@ -735,7 +783,19 @@ impl Core {
         if cache.support.is_none() {
             // after a command that only appended records or revoked evidence, from the flags before it (0.2.5 stage 3)
             let (flags, standing) = match (cache.support_before.take(), cache.standing_before.take()) {
-                (Some(before), Some(standing)) => self.support_flags_after(before, standing, &cache.changed_evidence),
+                (Some(before), Some(standing)) => {
+                    let after = self.support_flags_after(before, standing, &cache.changed_evidence, &cache.changed_docs);
+                    // the two conditions the update rests on (the commands `Cache::begin` names, and every change of an
+                    // evidence or of a document written down) are checked here against the whole pass, in the tests and in a
+                    // build that verifies the roots
+                    #[cfg(any(test, feature = "audit-root-verify"))]
+                    {
+                        let fresh = self.support_flags_fresh();
+                        let standing: Vec<bool> = self.data.records.iter().map(|r| fresh.get(&r.id).is_some_and(|v| v.0)).collect();
+                        assert!(after.0 == fresh && after.1 == standing, "the support flags after a command diverged from a whole pass");
+                    }
+                    after
+                }
                 _ => {
                     let flags = self.support_flags_fresh();
                     let standing = self.data.records.iter().map(|r| flags.get(&r.id).is_some_and(|v| v.0)).collect();
@@ -743,6 +803,7 @@ impl Core {
                 }
             };
             cache.changed_evidence.clear();
+            cache.changed_docs.clear();
             cache.support = Some(Arc::new(flags));
             cache.standing = Some(Arc::new(standing));
         }
@@ -776,11 +837,18 @@ impl Core {
         (grounded, grounded && established_ends && !matches!(r.kind, RecordKind::Hypothesis | RecordKind::Question | RecordKind::Done))
     }
 
-    /// `support_flags_fresh` of this state from `before`, the flags of the state before a command that only appended records and
-    /// revoked or bound the evidence `changed` (`root_cache::Cache::begin` names the commands): the new records, the records on that
-    /// evidence and, while a record's flags change, the records that name it are computed again, in record order. Without an
-    /// accepted link no flag reads the links; with one, the flags are computed whole.
-    fn support_flags_after(&self, before: Arc<root_cache::Support>, standing: Arc<Vec<bool>>, changed: &[Hash]) -> (root_cache::Support, Vec<bool>) {
+    /// `support_flags_fresh` of this state from `before`, the flags of the state before a command that only appended records,
+    /// revoked or bound the evidence `changed` and put the documents `documents` (`root_cache::Cache::begin` names the commands):
+    /// the new records, the records on that evidence, the quotes of those documents (a put document changes the version their
+    /// evidence was bound to, or brings it back) and, while a record's flags change, the records that name it are computed again,
+    /// in record order. Without an accepted link no flag reads the links; with one, the flags are computed whole.
+    fn support_flags_after(
+        &self,
+        before: Arc<root_cache::Support>,
+        standing: Arc<Vec<bool>>,
+        changed: &[Hash],
+        documents: &[String],
+    ) -> (root_cache::Support, Vec<bool>) {
         if self.data.links.values().any(|link| link.status == LinkStatus::Accepted) {
             let flags = self.support_flags_fresh();
             let standing = self.data.records.iter().map(|r| flags.get(&r.id).is_some_and(|v| v.0)).collect();
@@ -795,6 +863,9 @@ impl Core {
         let mut todo: BTreeSet<usize> = (first_new..self.data.records.len()).collect();
         for evidence in changed {
             todo.extend(self.data.evidence_records.get(evidence).into_iter().flatten().copied());
+        }
+        for document in documents {
+            todo.extend(self.data.doc_observes.get(document).into_iter().flatten().copied());
         }
         while let Some(position) = todo.pop_first() {
             let r = &self.data.records[position];
@@ -842,9 +913,13 @@ impl Core {
                 if observes_only && record.kind != RecordKind::Observe {
                     return Err(KernelError::new(Code::NotAnEvidence, "basis must name observe records").field("based_on"));
                 }
+                // rules 4: a claim rests on observations and on claims, on nothing else
+                if !matches!(record.kind, RecordKind::Observe | RecordKind::Claim) {
+                    return Err(KernelError::new(Code::NotAnEvidence, "basis must name observe or claim records").field("based_on"));
+                }
                 // an observation directly (Gemini, 01.11.2026: inside a command the support cache is closed, and this check paid a
-                // pass over every record per reference, 16 per agent answer)
-                let grounded = if record.kind == RecordKind::Observe { self.observe_grounded(record) } else { self.grounded(&id) };
+                // pass over every record per reference, 16 per agent answer); a claim by its own grounds (`stands_now`)
+                let grounded = if record.kind == RecordKind::Observe { self.observe_grounded(record) } else { self.stands_now(&id) };
                 if !grounded || record.kind == RecordKind::Hypothesis {
                     return Err(KernelError::new(Code::EvidenceNotActive, "basis is not currently grounded").field("based_on"));
                 }
@@ -963,7 +1038,7 @@ impl Core {
         value: &Value,
         version_rule: bool,
     ) -> KResult<RecordId> {
-        let parsed = records::parse(value)?;
+        let parsed = records::parse_under(value, self.data.rules)?;
         let local_key = (actor.to_string(), directive.to_string(), parsed.local_id.clone());
         if self.data.locals.contains_key(&local_key) {
             return Err(
@@ -972,7 +1047,10 @@ impl Core {
         }
         let mut body = parsed.body;
         body.as_object_mut().expect("parser object").remove("local_id");
-        let mut based_on = if parsed.based_on.is_empty() { Vec::new() } else { self.basis(&parsed.based_on, actor, directive, true)? };
+        // rules 4: a claim may rest on a claim (the rule stays AND: every ground stands); the grounds of a relation and of a
+        // hypothesis are observations, as under rules 3
+        let observes_only = self.data.rules < 4 || parsed.kind != RecordKind::Claim;
+        let mut based_on = if parsed.based_on.is_empty() { Vec::new() } else { self.basis(&parsed.based_on, actor, directive, observes_only)? };
         if !based_on.is_empty() {
             body["based_on"] = json!(based_on.iter().map(|x| format!("@{}", to_hex(&x.0))).collect::<Vec<_>>());
         }
@@ -1013,6 +1091,13 @@ impl Core {
         let mut references = based_on.clone();
         if let Some((a, _, b)) = &ends {
             references.extend([*a, *b]);
+        }
+        // rules 4: the record a question is about, named as any reference is and shown to its author as any reference must be.
+        // It is an address in the body, not a ground: the question rests on nothing, as before
+        if let Some(name) = &parsed.about_record {
+            let about = self.resolve(name, actor, directive)?;
+            body["about_record"] = json!(format!("@{}", to_hex(&about.0)));
+            references.push(about);
         }
         for reference in references {
             let prior = self.record(&reference).expect("resolved reference");
@@ -1090,6 +1175,10 @@ impl Core {
         self.data.short_positions.shard_mut(&short).entry(short).and_modify(|i| *i = None).or_insert(Some(position));
         if parsed.kind == RecordKind::Claim {
             self.root_cache.get_mut().expect("audit root cache poisoned").claim_words = None;
+            if let Some(subject) = body["subject"].as_str() {
+                let key = sha256(subject.as_bytes());
+                self.data.claims_by_key.shard_mut(&key).entry(key).or_default().push(position);
+            }
         }
         Arc::make_mut(&mut self.data.records).push(Arc::new(RecordView {
             id,
@@ -1347,7 +1436,11 @@ fn genesis_v3_meta(genesis: &Value) -> KResult<GenesisMeta> {
     if keys != GENESIS_V3_KEYS {
         return Err(bad("wal", "a r2r-audit-genesis/3 names exactly its fields; this one has missing or unknown fields"));
     }
-    for (key, want) in [("rules_version", RULES_VERSION), ("state_root_format", state_root::ROOT_FORMAT), ("seal_format", SEAL_FORMAT)] {
+    let rules_version = match genesis["rules_version"].as_str().and_then(rules_number) {
+        Some(number) => rules_name(number),
+        None => return Err(bad("rules_version", format!("this kernel replays {}; the journal names another", RULES_VERSIONS.join(" and ")))),
+    };
+    for (key, want) in [("state_root_format", state_root::ROOT_FORMAT), ("seal_format", SEAL_FORMAT)] {
         if genesis[key] != want {
             return Err(bad(key, format!("this kernel replays {want}; the journal names another")));
         }
@@ -1360,7 +1453,7 @@ fn genesis_v3_meta(genesis: &Value) -> KResult<GenesisMeta> {
         meta @ Value::Object(_) if to_jcs(meta).len() <= MAX_OPERATOR_META_BYTES => Some(meta.clone()),
         _ => return Err(bad("operator_meta", format!("operator_meta is an object of at most {MAX_OPERATOR_META_BYTES} bytes, or null"))),
     };
-    Ok(GenesisMeta { questions: genesis["questions"].clone(), settings_hash: kernel_hash(genesis, "settings_hash", true)?, operator_meta })
+    Ok(GenesisMeta { questions: genesis["questions"].clone(), settings_hash: kernel_hash(genesis, "settings_hash", true)?, operator_meta, rules_version })
 }
 
 impl AuditState {
@@ -1421,6 +1514,9 @@ impl AuditState {
                     fates: BTreeMap::new(),
                     stored_scopes: Arc::default(),
                     closed: false,
+                    rules: 4,
+                    claims_by_key: Sharded::default(),
+                    replaced_docs: Arc::default(),
                 },
             },
             journal: None,
@@ -1478,8 +1574,12 @@ impl AuditState {
         if spec.operator_meta.as_ref().is_some_and(|m| !m.is_object() || to_jcs(m).len() > MAX_OPERATOR_META_BYTES) {
             return Err(bad("operator_meta", format!("operator_meta is an object of at most {MAX_OPERATOR_META_BYTES} bytes")));
         }
-        self.genesis =
-            Some(GenesisMeta { questions: spec.questions.clone(), settings_hash: settings_hash(&spec.settings), operator_meta: spec.operator_meta.clone() });
+        self.genesis = Some(GenesisMeta {
+            questions: spec.questions.clone(),
+            settings_hash: settings_hash(&spec.settings),
+            operator_meta: spec.operator_meta.clone(),
+            rules_version: rules_name(self.core.data.rules),
+        });
         *self.core.state_tree.get_mut().expect("state tree poisoned") = Some(state_root::StateTree::build(&self.core.data));
         self.core.root_cache = Mutex::default();
         Ok(())
@@ -1518,7 +1618,7 @@ impl AuditState {
         self.journal = Some(match &self.genesis {
             Some(meta) => {
                 genesis["format"] = json!(GENESIS_FORMAT_V3);
-                genesis["rules_version"] = json!(RULES_VERSION);
+                genesis["rules_version"] = json!(meta.rules_version);
                 genesis["state_root_format"] = json!(state_root::ROOT_FORMAT);
                 genesis["seal_format"] = json!(SEAL_FORMAT);
                 genesis["questions"] = meta.questions.clone();
@@ -1567,6 +1667,7 @@ impl AuditState {
     pub(crate) fn create_v2(path: &Path, base_ontology: &Value, docs: &[(String, Vec<u8>)], run_id: &str, manifest_hash: Hash) -> KResult<Self> {
         let mut state = Self::prepare_run(base_ontology, docs, run_id, manifest_hash)?;
         state.pending_base = None;
+        state.core.data.rules = 3;
         state.attach_new_journal(path, base_ontology)?;
         Ok(state)
     }
@@ -1619,6 +1720,22 @@ impl AuditState {
             copy.close_run()?;
         }
         Ok(scan.payloads.len() - 1)
+    }
+
+    /// The rules this state runs under: the ones its journal names, rules 3 for a journal of the first formats, and for a run
+    /// prepared without a journal yet the ones its genesis will name.
+    pub fn rules_version(&self) -> &'static str {
+        rules_name(self.core.data.rules)
+    }
+
+    /// Start a prepared run under other rules than the newest (`RULES_VERSIONS`), for a journal that the tools of an earlier
+    /// version must read: its genesis names them, and every command is judged by them. Only before the journal is started.
+    pub fn set_rules_version(&mut self, version: &str) -> KResult<()> {
+        if self.journal.is_some() || self.pending_base.is_none() {
+            return Err(bad("rules_version", "the rules of a run are chosen before its journal is started"));
+        }
+        self.core.data.rules = rules_number(version).ok_or_else(|| bad("rules_version", format!("this kernel writes {}", RULES_VERSIONS.join(" and "))))?;
+        Ok(())
     }
 
     /// What the genesis of a `/3` journal named; `None` for a journal of the first formats.
@@ -2054,6 +2171,7 @@ impl AuditState {
         }
         let meta = if v3 { Some(genesis_v3_meta(genesis)?) } else { None };
         let mut state = Self::new(&genesis["base_ontology"], &[])?;
+        state.core.data.rules = meta.as_ref().and_then(|m| rules_number(m.rules_version)).unwrap_or(3);
         state.core.data.withdrawal_closes_bytes = genesis["format"] != GENESIS_FORMAT_EXACT_SPAN;
         state.core.data.run_id = string(genesis, "run_id")?.into();
         state.core.data.manifest_hash = kernel_hash(genesis, "manifest_hash", v3)?;
@@ -2395,6 +2513,11 @@ impl AuditState {
         if let Some(answer) = self.receipt(actor, id, &hash) {
             return answer;
         }
+        // nothing is written that a replay refuses: the close is the last frame of a journal (0.3.0: `audit-stream` writes through
+        // the library, where only the server kept a closed run closed)
+        if self.is_closed() {
+            return Err(bad("command", "the run is closed: its close is the last frame of the journal"));
+        }
         let (next, outcome) = self.staged(actor, id, command)?;
         let payload = json!({"actor":actor,"submission_id":id,"request_hash":to_hex(&hash),"command":command,"outcome":outcome.value(),
             "engine_root":to_hex(&next.engine_root()),"audit_root":to_hex(&next.audit_root())});
@@ -2618,6 +2741,8 @@ impl AuditState {
     }
 
     pub fn put_document(&mut self, actor: &str, doc_id: &str, bytes: &[u8]) -> KResult<()> {
+        // under any rules: a name past the bound could be put and read, and the task of its reading never closed
+        doc_name(doc_id)?;
         if bytes.len() > MAX_DOC_BYTES {
             return Err(bad("document", "document exceeds 16 MiB"));
         }
@@ -2697,6 +2822,8 @@ impl Core {
     /// the copy, would run differently on the state itself (`replay_in_place`), and an honest journal would be refused.
     fn execute(&mut self, actor: &str, command: &Value) -> KResult<Outcome> {
         let kind = string(command, "kind")?;
+        // what `stands_now` found holds for one submit: an operation before this one may have changed what stands
+        self.root_cache.get_mut().expect("audit root cache poisoned").stands.clear();
         let value = match kind {
             "submit" => {
                 check_keys(command, &["kind", "directive", "scope", "allowed_records", "lines", "version_rule"])?;
@@ -2896,6 +3023,11 @@ impl Core {
                 check_keys(command, &["kind", "doc_id", "text"])?;
                 let id = string(command, "doc_id")?;
                 let text = command["text"].as_str().ok_or_else(|| bad("text", "expected UTF-8 text"))?;
+                // rules 4: a source that comes later has the bound of a name the journal starts with (`MAX_DOC_NAME_BYTES`). A journal
+                // of rules 3 is replayed as it was written; `AuditState::put_document` writes no longer name into either.
+                if self.data.rules >= 4 {
+                    doc_name(id)?;
+                }
                 if self.data.checkpoints.contains_key(crate::audit::versions::KEY) && self.session.arena.doc(id).is_none_or(|d| d.bytes != text.as_bytes()) {
                     return Err(bad("doc_id", "version-map inputs are frozen; start a new run for new source bytes"));
                 }
@@ -2908,11 +3040,16 @@ impl Core {
                 if self.data.source_documents.get(id).is_some_and(|d| d["kind"] == "git_manifest" && d["raw_sha256"] != to_hex(&sha256(text.as_bytes()))) {
                     return Err(bad("doc_id", "manifest DocumentId is immutable; load a new version under its new identity"));
                 }
+                // other bytes under a name the journal has: a reading of the earlier bytes is no reading of these (`doc_replaced`)
+                if self.session.arena.doc(id).is_some_and(|d| d.bytes != text.as_bytes()) && !self.data.replaced_docs.contains(id) {
+                    Arc::make_mut(&mut self.data.replaced_docs).insert(id.to_string());
+                }
                 self.session.put_document(id, text.as_bytes());
+                self.root_cache.get_mut().expect("audit root cache poisoned").changed_docs.push(id.to_string());
                 // quotes of an earlier version come back with that version: what was withdrawn meanwhile stays withdrawn
                 for closed in self.data.withdrawn.get(id).cloned().unwrap_or_default() {
                     let hit = self.quotes_on(id, &closed);
-                    self.close_text(id, closed, hit, None)?;
+                    self.close_text(id, closed, hit, None, None)?;
                 }
                 if self.data.source_documents.get(id).is_none_or(|d| d["kind"] == "opaque") {
                     Arc::make_mut(&mut self.data.source_documents)
@@ -2924,7 +3061,7 @@ impl Core {
                 json!({"document_version":to_hex(&self.session.arena.doc(id).expect("inserted document").version_id)})
             }
             "revoke" => {
-                check_keys(command, &["kind", "record"])?;
+                let reason = self.withdrawal_reason(command, &["kind", "record"])?;
                 let record = RecordId(hash_field(command, "record")?);
                 let evidence = self.data.evidence.get(&record).ok_or_else(|| bad("record", "record is not an observe"))?.evidence;
                 let quoted = self.record(&record).and_then(|r| Some((r.doc_id.clone()?, r.quote.clone()?)));
@@ -2936,9 +3073,16 @@ impl Core {
                     if self.session.engine.status_of(&evidence) != Some(EV_REVOKED) {
                         // the record named, and every other record on the same evidence: its own text closes with it under the
                         // rule of closed bytes; under the first rule nothing else does
-                        let fate = |s: &Self, id: &RecordId| match &closing {
-                            Some((doc, text)) => json!({"cause": "withdrawn", "named": *id == record, "withdrawal": s.withdrawal(doc, text.as_bytes(), id)}),
-                            None => json!({"cause": "revoked", "named": *id == record}),
+                        let fate = |s: &Self, id: &RecordId| {
+                            stream::with_reason(
+                                match &closing {
+                                    Some((doc, text)) => {
+                                        json!({"cause": "withdrawn", "named": *id == record, "withdrawal": s.withdrawal(doc, text.as_bytes(), id)})
+                                    }
+                                    None => json!({"cause": "revoked", "named": *id == record}),
+                                },
+                                reason.as_deref(),
+                            )
                         };
                         self.revoke_with_fates(evidence, &fate)?;
                     } else {
@@ -2946,14 +3090,14 @@ impl Core {
                     }
                 }
                 match closing {
-                    Some((doc, text)) => json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, Some(record))?}),
+                    Some((doc, text)) => json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, Some(record), reason.as_deref())?}),
                     None if self.data.withdrawal_closes_bytes => json!({"revoked":true,"also_revoked":0}),
                     None => json!({"revoked":true}),
                 }
             }
             // a journal of the first format has no such command, and answers as it always did
             "revoke_text" if self.data.withdrawal_closes_bytes => {
-                check_keys(command, &["kind", "doc_id", "exact_quote"])?;
+                let reason = self.withdrawal_reason(command, &["kind", "doc_id", "exact_quote"])?;
                 let doc = string(command, "doc_id")?.to_string();
                 // the text of a quote, not an identifier: soft line breaks and long sentences belong to it
                 let text =
@@ -2966,11 +3110,12 @@ impl Core {
                     return Err(KernelError::new(Code::AlreadyRevoked, "this text is already withdrawn").field("exact_quote"));
                 }
                 let hit = self.quotes_on(&doc, text.as_bytes());
-                json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, None)?})
+                json!({"revoked":true,"also_revoked":self.close_text(&doc, text.into_bytes(), hit, None, reason.as_deref())?})
             }
             "checkpoint" => {
                 check_keys(command, &["kind", "key", "from", "to", "context"])?;
                 self.version_checkpoint(actor, command)?;
+                self.context_checkpoint_rule(command)?;
                 let key = string(command, "key")?;
                 let from = command["from"].as_u64().ok_or_else(|| bad("from", "checkpoint requires an integer"))?;
                 let to = command["to"].as_u64().ok_or_else(|| bad("to", "checkpoint requires an integer"))?;
@@ -3089,12 +3234,21 @@ impl Core {
     }
 
     /// The rest of a withdrawal: the quotes found before it go, and the text stays closed. The count leaves out the record named.
-    fn close_text(&mut self, doc_id: &str, text: Vec<u8>, hit: Vec<(usize, usize, Hash, RecordId)>, named: Option<RecordId>) -> KResult<u64> {
+    fn close_text(
+        &mut self,
+        doc_id: &str,
+        text: Vec<u8>,
+        hit: Vec<(usize, usize, Hash, RecordId)>,
+        named: Option<RecordId>,
+        reason: Option<&str>,
+    ) -> KResult<u64> {
         let also = hit.iter().filter(|(_, _, _, id)| Some(*id) != named).count() as u64;
         for (_, _, evidence, _) in hit {
             if self.session.engine.status_of(&evidence) != Some(EV_REVOKED) {
                 // this withdrawal is why the quotes on this evidence went: a later one cannot claim them (S3-02)
-                let fate = |s: &Self, id: &RecordId| json!({"cause": "withdrawn", "named": Some(*id) == named, "withdrawal": s.withdrawal(doc_id, &text, id)});
+                let fate = |s: &Self, id: &RecordId| {
+                    stream::with_reason(json!({"cause": "withdrawn", "named": Some(*id) == named, "withdrawal": s.withdrawal(doc_id, &text, id)}), reason)
+                };
                 self.revoke_with_fates(evidence, &fate)?;
             }
         }
@@ -3119,6 +3273,12 @@ impl Core {
         for (index, operation) in operations.iter().enumerate() {
             if operation["kind"] == "batch" {
                 failure = Some(bad("kind", "nested batches are not permitted"));
+                failed_index = Some(index);
+                break;
+            }
+            // rules 4: a context checkpoint is a frame of its own, as a seal is (Codex review of b27625da, finding 4)
+            if operation["kind"] == "checkpoint" && self.context_checkpoint_key(operation) {
+                failure = Some(stream::not_in_a_batch());
                 failed_index = Some(index);
                 break;
             }
@@ -3166,6 +3326,7 @@ impl Core {
         if failure.is_none() && !command["checkpoint"].is_null() {
             let mut checkpoint = command["checkpoint"].clone();
             let result = match checkpoint.as_object_mut() {
+                Some(_) if self.context_checkpoint_key(&command["checkpoint"]) => Err(stream::not_in_a_batch()),
                 Some(object) => {
                     object.insert("kind".into(), json!("checkpoint"));
                     self.execute(actor, &checkpoint)
@@ -3203,6 +3364,12 @@ impl AuditStore for AuditState {
     }
     fn doc_stamp(&self, doc_id: &str) -> Option<Hash> {
         self.core.session.arena.doc(doc_id).map(|d| d.version_id)
+    }
+    fn doc_replaced(&self, doc_id: &str) -> bool {
+        self.core.data.replaced_docs.contains(doc_id)
+    }
+    fn replaced_docs(&self) -> Vec<String> {
+        self.core.data.replaced_docs.iter().cloned().collect()
     }
     fn quoted_spans(&self, doc_id: &str) -> Vec<(usize, usize)> {
         let Some(doc) = self.core.session.arena.doc(doc_id) else { return Vec::new() };

@@ -188,6 +188,52 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
   characters, not bytes, so a part in Chinese or Japanese can reach 48 KB. The parts live in the server's memory, for the newest
   8 answers only: a client fetches them with `audit_more` in the same session.
 
+## The journal that takes its sources as they come (0.3.0)
+
+* **Text only.** A source put into a running journal is UTF-8 text of at most 16 MiB, as a document given at the start is. A
+  binary source has to be put as text (hex or base64) by its owner.
+* **Not with a version map.** A run that pins a version map (`--build-scope versions`) freezes its documents: it takes no new
+  source and no new bytes of a known one.
+* **A claim on a claim is still AND.** A claim stands while every ground of it stands; a formula of support (this ground or that
+  one) is not in 0.3.0. A number in a claim that rests on claims only has no quote of its own: the status of a run counts such
+  claims (`claim_chains`), and nothing checks their arithmetic.
+* **Conflicts and missing keys are read, not refused.** Two active claims of one key with different values (`VALUE_CONFLICT`)
+  and a required key no active claim says (`MISSING_REQUIRED_KEY`) are found by the reads `key`, `keys` and `checkpoint`. The
+  kernel stores both claims. The key is the exact string of a claim's `subject`: `A` and `a` are two keys.
+* **A context checkpoint keeps what the agent listed.** The kernel checks that the listed records are active when the checkpoint
+  is written, that the sources exist and that the epochs follow one another. It does not check that the list is complete, nor
+  that a record says what its source means. `keys_not_carried` names the keys the checkpoint before listed and this one did not.
+* **One submission rests on at most 256 documents.** The scope of a submission names the documents its lines quote and the
+  documents under every earlier record they rest on, and a scope names at most 256. A journal may hold any number of sources;
+  a claim whose grounds, through the claims it rests on, reach more than 256 documents is refused. A running total over more
+  than 256 documents cannot end in one claim: steps that each rest on fewer can be made, but a claim that joins them rests on
+  all their documents and is refused.
+* **A new version of a source takes every quote of it.** A quote is bound to a version of its document: when the document gets
+  other bytes, every quote of it and what rests on them is affected, also the quotes of lines that did not change, until the
+  earlier bytes come back. The server gives the task of reading the document again for the new bytes. Not given again: a
+  reading that was given up as unresolved before the new bytes came, and the packs of the gap pass over the earlier bytes.
+* **A document's name takes at most 512 bytes**, at the start and for a source that comes later. A journal of rules 3 that
+  already holds a longer name is replayed as it was written.
+* **What a run under the rules of 0.2 promises** (`--rules r2r-audit-rules/3`). The format of its journal, and the reading, the
+  replay and the verification of a finished journal, are those of 0.2.5 and `yuce-verify` 0.2.1. It does not promise that the
+  program of 0.2.5 can take over a run that is not finished while a source put again with other bytes is still unread: the
+  server of 0.2.5 counts that reading as done. A new write of a document takes a name of at most 512 bytes under both rules.
+* **An empty start is for a reading-only run, on the server.** `audit-serve --empty-start` needs `--reading-only`: a run that
+  makes its summaries in the journal would be asked for them before any source came. `sbgk mcp` (one agent on a folder) and
+  the Python client start no run without a document. A run is told at its start when no document holds a term of a question;
+  a start without a document has none to look in and says nothing, and the check is made again only when the run is resumed.
+* **The reason of a withdrawal is named, not judged.** `reason_source_id` must be a document of the journal; the kernel does not
+  read whether that document justifies the withdrawal. `sbgk audit-stream withdraw` requires it. The owner's tools
+  `audit_revoke` and `audit_withdraw_text` take it as recommended and not required, so that the tools of 0.2 work on a journal
+  of rules 4: a withdrawal without a reason is accepted there. The Python client does not send it. What tells a planned change
+  from a withdrawal is the relation `supersedes`, not the reason.
+* **The independent verifier does not check any of this by meaning.** `yuce-verify` 0.3.0 checks the bytes of a journal of rules
+  4 as it checks one of rules 3 (levels J0 to J3); it recomputes no status, no cascade and no checkpoint. `yuce-verify` 0.2.1
+  refuses a journal of rules 4 at J2: it does not know the rules the journal names.
+* **Not measured yet:** the cost of the reads by key, of a checkpoint and of the status on a long journal of rules 4, of looking
+  for the readings a new version of a source opens again, of the scope of a submission that rests on a long chain, and the
+  memory of a journal of many sources. The sizes of the Size section are of journals of 0.2.
+
 ## Off by default, experimental
 
 * **The graph builder** (`--build-scope full`, a dedicated `builder` subject) and the links it proposes between records

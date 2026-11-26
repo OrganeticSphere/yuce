@@ -22,6 +22,8 @@ mod audit_index;
 mod audit_mcp;
 #[path = "audit_prov.rs"]
 mod audit_prov;
+#[path = "audit_stream.rs"]
+mod audit_stream;
 #[path = "audit_watch.rs"]
 mod audit_watch;
 #[path = "bridge.rs"]
@@ -104,6 +106,7 @@ const SWITCHES: &[&str] = &[
     "with-status",
     "rebuild",
     "check",
+    "empty-start",
 ];
 
 /// The flags each command reads. `parse_args` takes any `--name value`, so a typo such as `--expct` or `--allow-tool` would
@@ -137,6 +140,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "corpus-description",
     "docs",
     "dynamic-roles",
+    "empty-start",
     "evolution-cards",
     "evolution-document-order",
     "evolution-pairing",
@@ -165,6 +169,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "refine-budget-ms",
     "repo",
     "ring-rotate",
+    "rules",
     "run-id",
     "section-bytes",
     "select",
@@ -193,7 +198,7 @@ fn positional_args(cmd: &str) -> usize {
     match cmd {
         "diff" => 2,
         "update-doc" | "root" | "view" | "dump-nodes" | "dump-claims" | "node-table" | "timetravel" | "timetravel-all" | "cone" | "verify" | "tamper"
-        | "audit-read" => 1,
+        | "audit-read" | "audit-stream" => 1,
         _ => 0,
     }
 }
@@ -214,7 +219,26 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "audit-index" => &["check", "db", "rebuild", "wal"],
         "audit-prov" => &["out", "upto", "wal"],
         "audit-watch" | "watch" => &["docs", "every-ms", "listen", "note", "wal"],
-        "audit-read" => &["doc-id", "end", "from", "limit", "pretty", "record", "since", "start", "to", "unit-status", "wal"],
+        "audit-read" => &["doc-id", "end", "epoch", "from", "key", "limit", "pretty", "record", "required", "since", "start", "to", "unit-status", "wal"],
+        "audit-stream" => &[
+            "actor",
+            "base-ontology",
+            "doc-id",
+            "exact-quote",
+            "file",
+            "lines",
+            "manifest",
+            "pretty",
+            "raw-context",
+            "reason-source-id",
+            "record",
+            "records",
+            "rules",
+            "run-id",
+            "sources",
+            "task",
+            "wal",
+        ],
         "update-doc" => &["doc-id", "file", "out", "pretty"],
         "root" | "dump-claims" | "verify" => &["pretty"],
         "dump-nodes" => &["ids-only", "pretty"],
@@ -1012,6 +1036,12 @@ Audit server for a team of agents:
                 --listen; the measured v0.1 profile for a team of three or more, --profile solo for one agent, --profile custom
                 to take every flag as given.
                 Started again on an existing --wal without --manifest or --docs, it resumes that run.
+                --empty-start starts a run without a document: the owner puts each source while it goes on
+                (audit_put_document). It needs --reading-only: a run that makes its summaries in the journal would be asked for
+                them before any source came. --rules r2r-audit-rules/3 starts a run under the rules of 0.2, for the tools of 0.2
+                (default: r2r-audit-rules/4, which adds a claim on a claim, context checkpoints and the reads by key).
+                The owner's audit_revoke and audit_withdraw_text take the reason of a withdrawal, reason_source_id (a document
+                of the journal), in a journal of the rules 4: recommended, not required.
                 --unit-is-task (off by default) is for a plan, where each unit is a task to do: an answer that leaves a unit
                 with nothing accepted does not close it. In a reading run it turns an honest empty answer into retries.
                 --corpus-description <words> names the documents in the directives (default: the provided source documents).
@@ -1043,7 +1073,17 @@ Audit server for a team of agents:
                 tools: status, dependents (--record <id> or --doc-id <id> [--start --end]), active-claims [--doc-id], diff --from <n>
                 [--to <n>], record --record <id>, fallen [--since <n>] (what fell, and on what it stood), withdrawn-anchor (standing claims naming a hash, version, number, code or path only withdrawn text held), coverage [--doc-id]
                 [--unit-status <status>] (what each list item, paragraph and table row came to, and the packs of the gap pass);
-                --limit; a point <n> is a number of frames, as a seal's log_size; exit 1 if the journal is refused
+                --limit; a point <n> is a number of frames, as a seal's log_size; exit 1 if the journal is refused;
+                and of a journal of 0.3: key --key <key> (the value a key has now: the key of a claim is its subject, its value
+                its object), keys [--required <file of keys>] (every key, the value conflicts and the required keys no claim
+                says), checkpoint [--epoch <n>] (a context checkpoint as it reads now: only its records that are still active)
+  audit-stream  a journal that takes its sources as they come, one step at a time and without a server: audit-stream <step>
+                --wal <run.wal> [--actor <id>]; steps: start --run-id <id> (a genesis without a document), put --doc-id <id>
+                --file <file> (a source, or a new version of one), submit --task <id> --lines <file> (records over the sources
+                the lines quote), checkpoint [--records <file>] [--sources <a,b>] [--raw-context <doc>] [--manifest <file>] (a
+                context checkpoint of records active now; without --records every claim active now), withdraw --reason-source-id <doc> with --record <id> or
+                --doc-id <id> --exact-quote <text> (or --file), seal, close; exit 1 if the step is refused.
+                withdraw requires --reason-source-id, a document of the journal put before it (rules 4).
 
 Engine and container:
   apply         apply a JSONL stream: --ontology <file> --docs <dir> --stream <file> --out <container>
@@ -1163,6 +1203,10 @@ pub fn main() {
             audit_prov::cmd_audit_prov(&a);
             return;
         }
+        "audit-stream" => {
+            audit_stream::cmd_audit_stream(&a);
+            return;
+        }
         "audit-watch" | "watch" => {
             audit_watch::cmd_audit_watch(&a);
             return;
@@ -1247,6 +1291,7 @@ mod flag_tests {
             "audit-proof-verify",
             "audit-index",
             "audit-prov",
+            "audit-stream",
             "audit-watch",
             "watch",
             "update-doc",
@@ -1271,6 +1316,7 @@ mod flag_tests {
             include_str!("audit_mcp.rs"),
             include_str!("audit_index.rs"),
             include_str!("audit_prov.rs"),
+            include_str!("audit_stream.rs"),
             include_str!("audit_watch.rs"),
             include_str!("bridge.rs"),
             include_str!("mcp.rs"),
@@ -1299,6 +1345,7 @@ mod flag_tests {
         let audit = include_str!("audit_mcp.rs");
         let index = include_str!("audit_index.rs");
         let prov = include_str!("audit_prov.rs");
+        let stream = include_str!("audit_stream.rs");
         let watch = include_str!("audit_watch.rs");
         let one = include_str!("one_command.rs");
         for (command, src, function) in [
@@ -1329,6 +1376,8 @@ mod flag_tests {
             ("audit-proof-verify", audit, "cmd_audit_proof_verify"),
             ("audit-index", index, "cmd_audit_index"),
             ("audit-prov", prov, "cmd_audit_prov"),
+            ("audit-stream", stream, "cmd_audit_stream"),
+            ("audit-stream", stream, "finish"),
             ("audit-watch", watch, "cmd_audit_watch"),
             ("watch", watch, "cmd_audit_watch"),
             ("audit-serve", audit, "start_audit_server"),

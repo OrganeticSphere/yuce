@@ -172,8 +172,13 @@ pub fn status(s: &AuditState, entries: usize) -> Value {
     let mut out = json!({"status": "READ_STATUS", "run_id": s.run_id(), "journal_format": if s.is_v3() { "sbgk-session-log/3" } else { "sbgk-session-log/2" },
                          "entries": entries, "closed": s.is_closed(), "projections": summary(s)});
     if let Some(meta) = s.genesis_meta() {
-        out["rules_version"] = json!(super::state::RULES_VERSION);
+        out["rules_version"] = json!(meta.rules_version);
         out["questions"] = json!(meta.questions.as_array().map_or(0, Vec::len));
+        // rules 4 only: a journal under rules 3 has no claim on a claim and no context checkpoint, and its status reads as it did
+        if meta.rules_version != super::state::RULES_VERSION_3 {
+            out["claim_chains"] = super::vsc::claim_chains(s);
+            out["context_checkpoints"] = json!(s.context_epochs());
+        }
     }
     out
 }

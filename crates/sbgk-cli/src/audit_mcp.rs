@@ -37,8 +37,9 @@ use sbgk_core::audit::builder::{Builder, BuilderConfig, LINK_RELATIONS};
 use sbgk_core::audit::directives::{DispatchConfig, Dispatcher, GapProfile, ResearchQuestion, TaskKind, UNIT_STATUSES};
 use sbgk_core::audit::onto::AuditOntology;
 use sbgk_core::audit::sign::{self, NoteSigner, NoteVerifier};
+use sbgk_core::audit::state::RecordState;
 use sbgk_core::audit::state::{AuditState, GenesisSpec};
-use sbgk_core::audit::{proof, read, AuditStore, ConceptId, LinkId, LinkStatus, RecordId};
+use sbgk_core::audit::{proof, read, vsc, AuditStore, ConceptId, LinkId, LinkStatus, RecordId};
 use sbgk_core::hash::{from_hex, sha256, to_hex, Hash};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,8 +51,18 @@ const PROTOCOL: &str = "2025-06-18";
 /// The reading tools of 0.2 beyond `audit_status` and `audit_record` (SPEC_V02_STEP3): they never write, not even what the
 /// dispatcher keeps pending (see `reads_only`), and stay open after the run is closed (a preview of a withdrawal then answers with
 /// the refusal the withdrawal would get). `audit_leases` is one of them: it reads the dispatcher's open leases and takes no step.
-const READ_TOOLS: [&str; 7] =
-    ["audit_dependents", "audit_active_claims", "audit_diff", "audit_fallen", "audit_coverage", "audit_withdraw_preview", "audit_leases"];
+const READ_TOOLS: [&str; 10] = [
+    "audit_dependents",
+    "audit_active_claims",
+    "audit_diff",
+    "audit_fallen",
+    "audit_coverage",
+    "audit_withdraw_preview",
+    "audit_leases",
+    "audit_key",
+    "audit_keys",
+    "audit_context",
+];
 const UNAUTHORIZED: i64 = -32001;
 const FORBIDDEN: i64 = -32003;
 /// Longest `max_wait_ms` an `audit_acquire` can ask for.
@@ -102,6 +113,11 @@ impl Role {
                 "audit_fallen",
                 "audit_coverage",
                 "audit_withdraw_preview",
+                "audit_key",
+                "audit_keys",
+                "audit_context",
+                "audit_put_document",
+                "audit_checkpoint",
                 "audit_revoke",
                 "audit_withdraw_text",
                 "audit_seal",
@@ -552,12 +568,50 @@ fn tool_defs() -> Vec<Value> {
         t(
             "audit_revoke",
             "Withdraw an observation (its source no longer holds): its text closes in that document, every stored quote overlapping it goes with it, new ones are refused, and the answers resting on them are reopened.",
-            schema(json!({"record": s("full id of an observe record")}), &["record"]),
+            schema(
+                json!({"record": s("full id of an observe record"),
+                       "reason_source_id": s("recommended, not required (a journal of the rules 4): the document that is the reason of the withdrawal, put before it")}),
+                &["record"],
+            ),
+        ),
+        t(
+            "audit_key",
+            "The value a key has now, read by the exact key (a journal of 0.3): the key of a claim is its subject and its value its object. ACTIVE with the value and the claim that says it; VALUE_CONFLICT with every active claim of the key when they say different values; NO_ACTIVE_VALUE when every claim of the key was replaced or fell.",
+            schema(json!({"key": s("the key, as the exact string")}), &["key"]),
+        ),
+        t(
+            "audit_keys",
+            "Every key with its state and its value now, the keys whose active claims say different values, and the keys of 'required' that no active claim says (MISSING_REQUIRED_KEY). A projection over the journal: the kernel refused no record for it.",
+            schema(json!({"required": {"type": "array", "items": {"type": "string"}, "description": "keys that must have a value"}, "limit": {"type": "integer"}}), &[]),
+        ),
+        t(
+            "audit_context",
+            "A context checkpoint as it reads now (the last one, or the one of 'epoch'): only its records that are still active, to take back after a compaction of the context; the listed records that were withdrawn, lost a ground or were replaced since are named with their state, and each source says whether it still has the bytes the checkpoint named.",
+            schema(json!({"epoch": {"type": "integer"}}), &[]),
+        ),
+        t(
+            "audit_put_document",
+            "Add a source to the running journal, or put a new version of one (a journal of supplied documents; UTF-8 text). The quotes of an earlier version stand only while the document has that version.",
+            schema(json!({"doc_id": s("document id"), "text": s("the whole text of the document")}), &["doc_id", "text"]),
+        ),
+        t(
+            "audit_checkpoint",
+            "Write the context checkpoint of the next epoch (a journal of 0.3), before a compaction of the context: the records to keep (default: every claim active now), the sources they rest on with the hash of their bytes (default: every document), the source that holds the raw context, and an object of your own.",
+            schema(
+                json!({"records": {"type": "array", "items": {"type": "string"}, "description": "record ids, whole or short"},
+                       "sources": {"type": "array", "items": {"type": "string"}, "description": "document ids"},
+                       "raw_context": s("the document that holds the raw context"), "manifest": {"type": "object"}}),
+                &[],
+            ),
         ),
         t(
             "audit_withdraw_text",
             "Withdraw text of a document, quoted or not, with the effect of audit_revoke.",
-            schema(json!({"doc_id": s("document id"), "exact_quote": s("the text, byte for byte")}), &["doc_id", "exact_quote"]),
+            schema(
+                json!({"doc_id": s("document id"), "exact_quote": s("the text, byte for byte"),
+                       "reason_source_id": s("recommended, not required (a journal of the rules 4): the document that is the reason of the withdrawal, put before it")}),
+                &["doc_id", "exact_quote"],
+            ),
         ),
         t(
             "audit_seal",
@@ -824,6 +878,13 @@ impl AuditServer {
                     out["closed"] = json!(true);
                 }
                 out["projections"] = read::summary(&r.state);
+                // a journal of rules 4: what its claim chains come to, and its context checkpoints (the status of a journal of
+                // rules 3 reads as it did)
+                if r.state.rules_version() != sbgk_core::audit::state::RULES_VERSION_3 {
+                    out["rules_version"] = json!(r.state.rules_version());
+                    out["claim_chains"] = vsc::claim_chains(&r.state);
+                    out["context_checkpoints"] = json!(r.state.context_epochs());
+                }
                 let quality = r.state.graph_quality_metrics();
                 if !quality.is_null() {
                     out["graph_quality"] = quality;
@@ -904,7 +965,11 @@ impl AuditServer {
             "audit_revoke" => match record_arg(&g.state, args) {
                 Ok(r) => {
                     let before = withdrawal_point(&g.state);
-                    match g.state.revoke_observation(&who.id, &r) {
+                    let revoked = match args.get("reason_source_id").and_then(Value::as_str) {
+                        Some(reason) => g.state.revoke_observation_for(&who.id, &r, reason),
+                        None => g.state.revoke_observation(&who.id, &r),
+                    };
+                    match revoked {
                         Ok(also) => withdrawal_answer(&g.state, json!({"status": "REVOKED", "record": r.short(), "also_revoked": also}), before),
                         Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
                     }
@@ -914,13 +979,35 @@ impl AuditServer {
             "audit_withdraw_text" => match (args.get("doc_id").and_then(|x| x.as_str()), args.get("exact_quote").and_then(|x| x.as_str())) {
                 (Some(doc), Some(text)) => {
                     let before = withdrawal_point(&g.state);
-                    match g.state.withdraw_text(&who.id, doc, text) {
+                    let withdrawn = match args.get("reason_source_id").and_then(Value::as_str) {
+                        Some(reason) => g.state.withdraw_text_for(&who.id, doc, text, reason),
+                        None => g.state.withdraw_text(&who.id, doc, text),
+                    };
+                    match withdrawn {
                         Ok(also) => withdrawal_answer(&g.state, json!({"status": "REVOKED", "doc_id": doc, "also_revoked": also}), before),
                         Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
                     }
                 }
                 _ => bad_arg("give 'doc_id' and 'exact_quote'"),
             },
+            "audit_key" => match args.get("key").and_then(Value::as_str) {
+                Some(key) => vsc::key(&g.state, key),
+                None => bad_arg("missing 'key'"),
+            },
+            "audit_keys" => match strings_arg(args, "required") {
+                Ok(required) => vsc::keys(&g.state, &required.unwrap_or_default(), limit_arg(args)),
+                Err(e) => e,
+            },
+            "audit_context" => vsc::checkpoint(&g.state, args.get("epoch").and_then(Value::as_u64)),
+            "audit_put_document" => match (args.get("doc_id").and_then(Value::as_str), args.get("text").and_then(Value::as_str)) {
+                (Some(doc), Some(text)) => match g.state.put_document(&who.id, doc, text.as_bytes()) {
+                    Ok(()) => json!({"status": "PUT", "doc_id": doc, "bytes": text.len(), "raw_sha256": to_hex(&sha256(text.as_bytes())),
+                                     "documents": g.state.source_document_count()}),
+                    Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+                },
+                _ => bad_arg("give 'doc_id' and 'text'"),
+            },
+            "audit_checkpoint" => context_checkpoint(&mut g.state, &who.id, args),
             // a seal when the owner asks for one, between the seals the server writes by itself: the library's seal, a kernel frame
             // that replay already accepts at any point of a 0.2 journal (no rule changes)
             "audit_seal" => {
@@ -1023,6 +1110,43 @@ fn telemetry(args: &Value) -> bool {
 /// `telemetry` coordinates: it moves the run on (a circle's step, the attestation at the end) and writes what is pending.
 fn reads_only(name: &str, args: &Value) -> bool {
     READ_TOOLS.contains(&name) || matches!(name, "audit_record" | "audit_links") || (name == "audit_status" && telemetry(args))
+}
+
+/// An optional array of strings; a field sent as null is a field not given.
+fn strings_arg(args: &Value, key: &str) -> Result<Option<Vec<String>>, Value> {
+    match args.get(key).filter(|v| !v.is_null()) {
+        None => Ok(None),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| v.as_str().map(str::to_string).ok_or_else(|| bad_arg(format!("'{key}' is an array of strings"))))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(bad_arg(format!("'{key}' is an array of strings"))),
+    }
+}
+
+/// `audit_checkpoint`: the context checkpoint of the next epoch. Without `records`, every claim that is active now; without
+/// `sources`, every document of the journal.
+fn context_checkpoint(state: &mut AuditState, actor: &str, args: &Value) -> Value {
+    let records = match strings_arg(args, "records") {
+        Ok(Some(names)) => match names.iter().map(|name| record_arg(state, &json!({"record": name}))).collect::<Result<Vec<_>, _>>() {
+            Ok(records) => records,
+            Err(e) => return e,
+        },
+        Ok(None) => state.claims_with_states().into_iter().filter(|(_, s)| *s == RecordState::Active).map(|(r, _)| r.id).collect(),
+        Err(e) => return e,
+    };
+    let sources = match strings_arg(args, "sources") {
+        Ok(sources) => sources.unwrap_or_else(|| state.docs()),
+        Err(e) => return e,
+    };
+    let raw_context = args.get("raw_context").and_then(Value::as_str);
+    let manifest = args.get("manifest").filter(|v| !v.is_null()).cloned();
+    match state.context_checkpoint(actor, &records, &sources, raw_context, manifest) {
+        Ok(written) => json!({"status": "CHECKPOINTED", "checkpoint": written["checkpoint"], "epoch": written["epoch"], "cursor": written["cursor"],
+                              "listed": records.len(), "sources": sources.len()}),
+        Err(e) => json!({"status": "error", "code": "REFUSED", "error": e.to_json()}),
+    }
 }
 
 /// `record`: a full 64-hex id or a short `@id` of exactly one record.
@@ -1552,6 +1676,24 @@ fn create_docs_run(a: &Args, folder: &str, wal: &Path) -> AuditState {
 
 /// A new run from the corpus manifest and the selected report paths, or from a folder, prepared without its journal.
 fn create_run(a: &Args, wal: &Path) -> AuditState {
+    // a journal that takes its sources as they come (0.3.0): no document at the start, each one put by the owner
+    // (`audit_put_document`) while the run goes on
+    if a.sw("empty-start") {
+        if a.get("docs").is_some() || a.get("manifest").is_some() || a.get("repo").is_some() || a.get("select").is_some() {
+            fail("--empty-start starts a run without a document: give it without --docs, --manifest, --repo and --select");
+        }
+        // with no work open, a run that makes its summaries in the journal is asked for them at once: before any source came,
+        // and an answer `unknown` given then holds when the sources come
+        if !a.sw("reading-only") {
+            fail(
+                "--empty-start needs --reading-only: a run without a document has nothing to read yet, and would be asked for the \
+                  summaries of its questions before any source came. Start it with --reading-only: its questions still steer the \
+                  reading, and the summaries are made outside the journal",
+            );
+        }
+        return AuditState::prepare_from_docs(&run_base(a), &a.req("run-id"), Vec::new())
+            .unwrap_or_else(|e| fail(&format!("cannot create the run: {}", e.to_json())));
+    }
     if let Some(folder) = a.get("docs") {
         return create_docs_run(a, folder, wal);
     }
@@ -2247,9 +2389,13 @@ pub fn cmd_audit_proof_verify(a: &Args) {
 /// (`--doc-id`), `diff` (`--from`, `--to`), `record` (`--record`), `fallen` (`--since`) and `coverage` (`--doc-id`, `--unit-status`),
 /// each with `--limit`; and `withdrawn-anchor`, the standing claims that name what only withdrawn text held, all of them.
 pub fn cmd_audit_read(a: &Args) {
-    let tool = a.pos(0, "the reading tool: status, dependents, active-claims, diff, record, fallen, coverage or withdrawn-anchor");
-    if !matches!(tool.as_str(), "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen" | "coverage" | "withdrawn-anchor") {
-        fail(&format!("unknown reading tool '{tool}': status, dependents, active-claims, diff, record, fallen, coverage or withdrawn-anchor"));
+    const TOOLS: &str = "status, dependents, active-claims, diff, record, fallen, coverage, withdrawn-anchor, key, keys or checkpoint";
+    let tool = a.pos(0, &format!("the reading tool: {TOOLS}"));
+    if !matches!(
+        tool.as_str(),
+        "status" | "dependents" | "active-claims" | "diff" | "record" | "fallen" | "coverage" | "withdrawn-anchor" | "key" | "keys" | "checkpoint"
+    ) {
+        fail(&format!("unknown reading tool '{tool}': {TOOLS}"));
     }
     if let Some(status) = a.get("unit-status").filter(|st| !UNIT_STATUSES.contains(st)) {
         fail(&format!("--unit-status '{status}': one of {}", UNIT_STATUSES.join(", ")));
@@ -2309,6 +2455,17 @@ pub fn cmd_audit_read(a: &Args) {
         },
         "coverage" => read::coverage(&state, entries, a.get("doc-id"), a.get("unit-status"), limit),
         "withdrawn-anchor" => read::withdrawn_anchor(&state),
+        // the reads of 0.3 (`vsc`): the key of a claim is its subject and its value its object
+        "key" => vsc::key(&state, &a.req("key")),
+        "keys" => {
+            let required: Vec<String> = match a.get("required") {
+                Some(path) => serde_json::from_slice(&std::fs::read(path).unwrap_or_else(|e| fail(&format!("cannot read --required {path}: {e}"))))
+                    .unwrap_or_else(|e| fail(&format!("--required {path}: a JSON array of keys: {e}"))),
+                None => Vec::new(),
+            };
+            vsc::keys(&state, &required, limit)
+        }
+        "checkpoint" => vsc::checkpoint(&state, a.get("epoch").map(|n| n.parse().unwrap_or_else(|_| fail(&format!("--epoch: an integer, not '{n}'"))))),
         _ => read::fallen(&state, entries, since.map(snapshot), limit),
     };
     if journal.live {
@@ -2635,6 +2792,9 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
             fail(&format!("{wal} already holds a run whose genesis fixed its base ontology: resume it without --base-ontology"));
         }
         let state = AuditState::open(Path::new(&wal)).unwrap_or_else(|e| fail(&format!("cannot resume {wal}: {}", e.to_json())));
+        if a.get("rules").is_some_and(|rules| rules != state.rules_version()) {
+            fail(&format!("{wal} runs under {}: its genesis fixed its rules; resume it without --rules", state.rules_version()));
+        }
         if !state.is_v3() {
             fail(&format!(
                 "{wal} is a journal of the 0.1 format (sbgk-session-log/2): `sbgk audit-verify` still checks it, but this server writes only the 0.2 format; finish the run with a 0.1 release, or start a new run with another --wal"
@@ -2645,7 +2805,13 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
         if questions_file.is_none() {
             fail("--questions is required to start a run: the genesis names the questions of the run");
         }
-        create_run(a, Path::new(&wal))
+        let mut state = create_run(a, Path::new(&wal));
+        // the rules of 0.2 for a journal the tools of 0.2 must read (a verifier of 0.2.1 refuses the rules of 0.3); the genesis
+        // names them, and the run is judged by them
+        if let Some(rules) = a.get("rules") {
+            state.set_rules_version(rules).unwrap_or_else(|e| fail(&format!("--rules: {}", e.message)));
+        }
+        state
     };
     // a genesis that names no questions (a run the library started) takes them from --questions, as before 0.2
     let named = state.genesis_meta().map(|meta| meta.questions.clone()).filter(|q| q.as_array().is_some_and(|q| !q.is_empty()));
@@ -2659,9 +2825,14 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
     };
     let questions = parse_questions(&questions_value).unwrap_or_else(|e| fail(&format!("questions of the run: {e}")));
     // a question whose terms no document holds would lose its answer in silence (the architect, 11.11.2026): said at the start and in
-    // every status
-    let about_unmatched: Vec<Value> =
-        questions.iter().filter(|q| state.documents_mentioning(&q.about).is_empty()).map(|q| json!({"question": q.id, "about": q.about})).collect();
+    // every status. A run that has no document yet (`--empty-start`, before its first source) has none to hold a term: nothing
+    // is said of it, as the advice to give terms the documents use would be about documents that are not there
+    let no_document_yet = state.source_document_count() == 0;
+    let about_unmatched: Vec<Value> = questions
+        .iter()
+        .filter(|q| !no_document_yet && state.documents_mentioning(&q.about).is_empty())
+        .map(|q| json!({"question": q.id, "about": q.about}))
+        .collect();
     if !about_unmatched.is_empty() {
         eprintln!("{}", json!({"status": "warning", "message": ABOUT_UNMATCHED_NOTE, "questions": about_unmatched}));
     }

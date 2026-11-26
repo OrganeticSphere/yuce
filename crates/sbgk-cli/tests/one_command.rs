@@ -102,6 +102,9 @@ fn one_command_starts_a_run_on_a_folder_and_answers_as_the_agent_and_the_owner()
             "audit_fallen",
             "audit_coverage",
             "audit_withdraw_preview",
+            "audit_key",
+            "audit_keys",
+            "audit_context",
             "audit_more"
         ]
     );
