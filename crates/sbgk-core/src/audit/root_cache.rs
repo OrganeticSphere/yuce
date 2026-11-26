@@ -11,14 +11,19 @@ pub(super) struct Cache {
     pub(super) readable: bool,
     pub(super) claim_words: Option<Arc<super::super::read::ClaimWords>>,
     pub(super) support: Option<Arc<Support>>,
-    /// The flags before a command that can only append records and revoke or bind evidence, and the evidence it revoked or bound:
-    /// the flags after it are computed from them for what changed (`Core::support_flags_after`, 0.2.5 stage 3).
+    /// The flags before a command that can only append records, revoke or bind evidence and put a document, and the evidence it
+    /// revoked or bound: the flags after it are computed from them for what changed (`Core::support_flags_after`, 0.2.5 stage 3).
     pub(super) support_before: Option<Arc<Support>>,
     pub(super) changed_evidence: Vec<Hash>,
+    /// The documents the command put: the quotes of each are looked at again, as its version changed under them or came back.
+    pub(super) changed_docs: Vec<String>,
     /// Whether each record stands, by its position: the `grounded` flag of `support` in record order, kept and updated with it, so
     /// the reads that walk every record compare bytes instead of looking every record up (0.2.5 stage 3).
     pub(super) standing: Option<Arc<Vec<bool>>>,
     pub(super) standing_before: Option<Arc<Vec<bool>>>,
+    /// What `Core::stands_now` found while one submit runs: whether a record stands by its own grounds. Emptied at every command
+    /// and at every operation of a batch (`Core::execute`), as another operation may change what stands.
+    pub(super) stands: HashMap<RecordId, bool>,
     /// `quality::stale::suspects` of this state, dropped at every command: unlike the support flags it reads the checkpoints.
     pub(super) stale: Option<Arc<Vec<RecordId>>>,
     hash: Option<Hash>,
@@ -37,8 +42,10 @@ impl Default for Cache {
             support: None,
             support_before: None,
             changed_evidence: Vec::new(),
+            changed_docs: Vec::new(),
             standing: None,
             standing_before: None,
+            stands: HashMap::new(),
             stale: None,
             hash: None,
             fragments: Arc::default(),
@@ -65,9 +72,13 @@ impl Cache {
         self.support_before = None;
         self.standing_before = None;
         self.changed_evidence.clear();
+        self.changed_docs.clear();
+        self.stands.clear();
         if !checkpoints_alone(command) {
             let (before, standing) = (self.support.take(), self.standing.take());
-            if matches!(command["kind"].as_str(), Some("submit" | "revoke" | "revoke_text")) {
+            // a put document too (0.3.0): a journal that takes its sources as they come puts one before most of its records, and a
+            // whole pass over the records at each was the cost 0.2.5 took off the other three
+            if matches!(command["kind"].as_str(), Some("submit" | "revoke" | "revoke_text" | "put_document")) {
                 self.support_before = before;
                 self.standing_before = standing;
             }
@@ -79,6 +90,7 @@ impl Cache {
 
     pub(super) fn finish(&mut self) {
         self.readable = true;
+        self.stands.clear();
         // A new receipt changes the root even if execute failed and its state was rolled back.
         self.hash = None;
     }

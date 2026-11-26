@@ -1855,3 +1855,7 @@ fn records_whose_ids_share_the_first_eight_bytes_are_told_apart_by_a_longer_pref
     let missing = s.core.resolve(&neither, "worker", "task").unwrap_err();
     assert!(missing.message.contains("not found"), "{}", missing.message);
 }
+
+// ---- rules 4 (0.3.0): a journal that takes its sources as they come ----
+#[path = "state/stream_tests.rs"]
+mod stream;

@@ -56,7 +56,7 @@ test("journal --json: the report is JCS, deterministic, without paths", () => {
   assert.ok(!text.includes(".wal") && !text.includes("inputs") && !text.includes("\\"));
   const report = JSON.parse(text);
   assert.deepEqual(Object.keys(report).sort(), ["anchor", "computed", "first_failure", "input", "levels", "not_verified", "verdict", "verifier"]);
-  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/6", version: "0.2.1" });
+  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/7", version: "0.3.0" });
   assert.deepEqual(report.anchor, { head: { given: false, matched: null }, seal: { given: false, matched: null } });
   assert.deepEqual(report.not_verified, ["quotes_against_sources", "withdrawal_cascade", "signatures"]);
   assert.deepEqual(report.levels.J2, { result: "PASS", documents: 2, settings_hash: "a13963df2e41d383b808f40f7405e012cfd2568ec7154b7b992dc1cd4e081a8b" });
@@ -199,7 +199,7 @@ test("journal --docs --json: sources, J2, J3, not_verified", () => {
   assert.deepEqual(report.levels.J2, { result: "PASS", documents: 3, settings_hash: "c3fd19b720d1418ca1e016ad97046c973a7d0994e9eab46b9de48fefd44bfa46" });
   assert.deepEqual(report.levels.J3, { result: "PASS", records: 13, quotes: 5 });
   assert.deepEqual(report.not_verified, ["withdrawal_cascade", "signatures"]);
-  assert.equal(report.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
+  assert.equal(report.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
 });
 
 test("journal --docs with a document missing: INCOMPLETE, exit 3, the doc_id named", () => {

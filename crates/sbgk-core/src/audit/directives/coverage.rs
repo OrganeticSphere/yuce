@@ -241,7 +241,15 @@ pub(crate) fn coverage_with<S: AuditStore>(s: &S, section_bytes: usize, gap: &Ga
         let sections = sections(&d.id, &d.text, section_bytes);
         // the first reading of each section: over when answered or given up (`Some(false)`), and whether it was given up with
         // nothing recorded
-        let first: Vec<Option<bool>> = (0..sections.len()).map(|k| closed_task(&format!("doc:{}#{k}", d.id))).collect();
+        // (a reading closed for other bytes than the document has now is no reading of these: `sources.rs`)
+        let of_these_bytes = |key: &str| {
+            let context = s.checkpoint(&task_checkpoint(key)).map_or(Value::Null, |c| c["context"].clone());
+            super::sources::reading_current(s, &[], key, &context)
+        };
+        let first: Vec<Option<bool>> = (0..sections.len())
+            .map(|k| format!("doc:{}#{k}", d.id))
+            .map(|key| closed_task(&key).filter(|_| !s.doc_replaced(&d.id) || of_these_bytes(&key)))
+            .collect();
         let done = |k: usize| first.get(k).is_some_and(Option::is_some);
         let gave_up: Vec<bool> =
             first.iter().enumerate().map(|(k, f)| f.is_some() && readings.given_up(&format!("doc:{}#{k}", d.id), sections[k], *f == Some(false))).collect();

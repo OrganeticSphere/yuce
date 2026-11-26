@@ -276,8 +276,13 @@ impl Dispatcher {
     /// The durable record of a unit closed because every byte of it is withdrawn: its completion checkpoint, which `recover` reads
     /// as a closed task and the coverage table as a read unit. A retry is a new submission (a refused one keeps its receipt).
     pub(super) fn write_withdrawn<S: AuditStore>(&self, s: &mut S, key: &str, attempt: u32) -> Result<(), Value> {
-        let checkpoint = json!({"key": task_checkpoint(key), "from": 0, "to": 0, "context": {"kind": "EXTEND", "reason": WITHDRAWN_WHOLE}});
-        let id = if attempt == 0 { format!("withdrawn:{key}") } else { format!("withdrawn:{key}#retry{attempt}") };
+        let mut context = json!({"kind": "EXTEND", "reason": WITHDRAWN_WHOLE});
+        // closed on the bytes the document has now: a unit of a document that got other bytes can be closed so once for each version
+        let version = self.source_version(s, key);
+        self.source_context(s, key, version.as_deref(), &mut context);
+        let version = context[sources::SOURCE_VERSION].as_str().map(|v| format!("@{}", &v[..16])).unwrap_or_default();
+        let checkpoint = json!({"key": task_checkpoint(key), "from": 0, "to": 0, "context": context});
+        let id = if attempt == 0 { format!("withdrawn:{key}{version}") } else { format!("withdrawn:{key}{version}#retry{attempt}") };
         match s.submit_operations_id(&id, "kernel", &[], Some(checkpoint)) {
             Ok(r) if r["checkpointed"] == true && r["error"].is_null() => Ok(()),
             Ok(r) => Err(if r["error"].is_null() { json!({"code": "NOT_CHECKPOINTED", "reply": r}) } else { r["error"].clone() }),

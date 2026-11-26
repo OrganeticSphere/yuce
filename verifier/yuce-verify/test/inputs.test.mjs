@@ -81,7 +81,7 @@ test("B5: on every input, accept or refuse equals the kernel (sbgk audit-verify)
       assert.equal(accepted, kernelAccepted, rows.at(-1));
     }
   }
-  assert.equal(rows.length, 8 + 12 + 2);
+  assert.equal(rows.length, 9 + 12 + 2);
 });
 
 test("B4: corrupt/forger-full-rehash.wal: delivery 1 passed it; J0-J2 pass it without documents; J3 refuses it", async () => {

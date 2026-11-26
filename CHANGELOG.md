@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.3.0 (2026-11-26)
+
+* **A journal that takes its sources as they come.** A run may start without a document and take each source later, and a new
+  version of a source under the name it has. `sbgk audit-stream` writes such a journal one step at a time without a server
+  (`start`, `put`, `submit`, `checkpoint`, `withdraw`, `seal`, `close`); `sbgk audit-serve --empty-start --reading-only` starts
+  one on the server, where the owner puts each source with `audit_put_document` and an agent reads it as any document. A source
+  put again with other bytes is read again: the task of reading it is given for the new bytes, also after a restart, and the
+  run is not complete before. Sources are UTF-8 text.
+* **New rules by default: `r2r-audit-rules/4`.** A new journal names them in its genesis. They are the rules of 0.2 with these
+  additions; the journal format, the root format and the seal format do not change.
+  * A claim may rest on a claim. The rule stays AND: a claim stands while every ground of it stands. The status of a run counts
+    the longest chain and the standing claims without a quote of their own (`claim_chains`).
+  * A context checkpoint (`vsc:checkpoint:<epoch>`): the records an agent keeps across a compaction of its context, the
+    sources they rest on with the SHA-256 of their bytes, and the source that holds the raw context. It is a frame of its own,
+    its epochs count from 1 by one, and it lists records that are active when it is written. Read back, it gives only its
+    records that are still active, and names the others with their state.
+  * A planned change is told from a withdrawal: a relation `supersedes` leaves the old record standing and no longer current
+    (`SUPERSEDED`), and nothing that rested on it falls; a withdrawal makes the quote `WITHDRAWN` and what rested on it
+    `AFFECTED_BY_EVIDENCE_CHANGE`.
+  * A question may name the record it is about (`about_record`).
+  * The name of a source that comes later takes at most 512 bytes, as a name at the start does.
+* **The reads by exact key.** The key of a claim is its `subject` and its value its `object`. `sbgk audit-read key`, `keys` and
+  `checkpoint`, and the server's `audit_key`, `audit_keys`, `audit_context` and `audit_checkpoint`, read the value a key has
+  now, the keys whose active claims say different values (`VALUE_CONFLICT`), the required keys no active claim says
+  (`MISSING_REQUIRED_KEY`) and a context checkpoint as it reads now. These are reads: the kernel refuses no record for them.
+* **`yuce-verify` 0.2.1 refuses a journal of the rules 4; `yuce-verify` 0.3.0 takes both.** The independent verifier of this
+  release (`SPEC_INDEPENDENT_VERIFIER/7`, amendment 5) checks a journal of either rules at levels J0 to J3. The verifier of
+  0.2.1 answers a journal of the rules 4 with `GENESIS_FORMAT` at its first frame: it does not know the rules the journal
+  names.
+* **A run under the rules of 0.2: `--rules r2r-audit-rules/3`** on `audit-serve` and on `audit-stream start`
+  (`AuditState::set_rules_version` in the library). Such a journal is written, replayed and verified as 0.2 did, by the tools
+  of 0.2 too. What this mode promises: the format of the journal, and the reading, the replay and the verification of a
+  finished journal, are those of 0.2.5 and `yuce-verify` 0.2.1. What it does not promise: that the program of 0.2.5 can take
+  over a run that is not finished while a source put again with other bytes is still unread; the server of 0.2.5 counts that
+  reading as done. A new write of a document takes a name of at most 512 bytes under both rules; a journal of the rules 3 that
+  already holds a longer name is replayed as it was written.
+* **The reason of a withdrawal.** Under the rules 4 a withdrawal may name the document that is its reason
+  (`reason_source_id`, a document of the journal). `sbgk audit-stream withdraw` requires it. The owner's tools `audit_revoke`
+  and `audit_withdraw_text` take it as recommended and not required, so the tools of 0.2 go on working on a new journal. The
+  Python client does not send it.
+* **One submission rests on at most 256 documents.** The scope of a submission names the documents its lines quote and the
+  documents under every earlier record they rest on, and a scope names at most 256. A journal holds any number of sources; a
+  claim whose grounds, through the claims it rests on, reach more than 256 documents is refused. See
+  [LIMITATIONS.md](LIMITATIONS.md).
+* **Not in this release.** `sbgk mcp` (one agent on a folder) and the Python client start no run without a document.
+  `audit-serve --empty-start` needs `--reading-only`: a run that makes its summaries in the journal would be asked for them
+  before any source came, and the start says so. A formula of support other than AND, a recomputation of the cascade by the
+  verifier, binary sources and a run that takes new sources beside a version map are not in 0.3.0.
+* **Library.** A commit on a closed run is refused by the library too (the server refused it before). The refusal of a journal
+  that names unknown rules now names both rules this kernel replays.
+
+For a journal of the rules 3 no root, frame or journal format changes. `audit-verify` and the reads answer 22 clean-room
+journals and 52 archived ones byte for byte as 0.2.5 did, but for the message of the one journal that names unknown rules; the
+reading tools give 60,566 answers on journals of 0.2 and their cut copies byte for byte as 0.2.5 did; and a scripted server run
+of 1,378 calls under `--rules r2r-audit-rules/3` writes the journal 0.2.5 wrote, byte for byte. No speed or memory was
+measured for this release: the numbers of the Size section of LIMITATIONS are of 0.2.5.
+
 ## 0.2.5 (2026-11-26)
 
 * **Withdrawals, reopening and verifying no longer grow with the whole run.** What stayed linear in the size of the run after

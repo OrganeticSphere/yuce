@@ -129,9 +129,9 @@ test("6.9 vectors checks log_root in V9", async () => {
 });
 
 // the task statement 6.10 as changed by amendments 1, 2 and 3: /5.
-test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/6 (amendments 1, 2 and 3)", async () => {
+test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/7 (amendments 1, 2 and 3)", async () => {
   const r = await verify(base);
-  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/6");
+  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
 });
 
 test("6.11 the checks of one frame run in the order of SPEC 6.2", async () => {

@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod coverage;
 mod requests;
+mod sources;
 // the gap pass (SPEC_V02_GAP_PASS)
 pub(crate) mod gaps;
 pub use coverage::{by_status, coverage, Coverage, PACK_COLUMNS, UNIT_COLUMNS, UNIT_STATUSES};
@@ -229,6 +230,8 @@ struct Lease {
     /// A repair that names fallen answer rows: the most lines it takes. The report coverage of a new answer does not apply to it:
     /// the rows kept were covered when they were accepted, and a report whose only row fell need not come back.
     repair_lines: Option<usize>,
+    /// A reading of documents: the version of their bytes when the task was issued (`sources.rs`).
+    source_version: Option<String>,
 }
 
 /// Hints per claim in a RELATE turn (offline on four runs: the best three held the other side of 8 to 9 of 11 to 12 stale facts).
@@ -1587,7 +1590,10 @@ impl Dispatcher {
     fn open_work<S: AuditStore>(&self, s: &S, f: &Flags) -> Vec<Work> {
         // a closed unit whose records all fell to a withdrawal is open work again (the plan profile), before any call reopens it
         let (fallen, _) = self.fallen_units(s, f);
-        self.all_work(s, f).into_iter().filter(|w| (!self.handled.contains(&w.1) || fallen.contains(&w.1)) && !self.unresolved.contains(&w.1)).collect()
+        // and so is a reading closed for bytes its document no longer has (`sources.rs`)
+        let stale = self.stale_readings(s);
+        let open = |key: &String| !self.handled.contains(key) || fallen.contains(key) || stale.contains(key);
+        self.all_work(s, f).into_iter().filter(|w| open(&w.1) && !self.unresolved.contains(&w.1)).collect()
     }
 
     /// After a restart: tasks whose completion checkpoint is durable are done; leases are not restored, their work is issued
@@ -1682,6 +1688,10 @@ impl Dispatcher {
                     }
                 }
                 self.unresolved.insert(key);
+                continue;
+            }
+            // a reading closed for bytes its document no longer has is open work, as the live dispatcher has it (`sources.rs`)
+            if !sources::reading_current(s, &self.cfg.zones, &key, ctx) {
                 continue;
             }
             if let Some(q) = key.strip_prefix("rq:") {
@@ -2028,6 +2038,8 @@ impl Dispatcher {
         self.revalidate(s, &f);
         // the plan profile: a unit whose records all fell to a withdrawal is done again
         self.reopen_fallen_units(s, &f);
+        // and a reading done for bytes its document no longer has
+        self.reopen_replaced_sources(s);
         let mut work = self.open_work(s, &f);
         // a unit whose every byte is withdrawn has nothing left to quote: closed, never issued
         let withdrawn = self.close_withdrawn_units(s, &work);
@@ -2202,6 +2214,7 @@ impl Dispatcher {
             refusals: 0,
             relate: false,
             repair_lines,
+            source_version: self.source_version(s, &key),
         };
         *self.stats.issued.entry(kind.name().to_string()).or_default() += 1;
         if kind == TaskKind::Investigate {
@@ -3579,6 +3592,7 @@ impl Dispatcher {
         if let Some(reason) = unit_reason {
             context["reason"] = json!(reason);
         }
+        self.source_context(s, &lease.key, lease.source_version.as_deref(), &mut context);
         // the plan profile: what the unit is closed with and how often it was opened again, so that a recovered dispatcher sees
         // when they all fall as the live one does
         let unit_closure = self.cfg.unit_is_task && lease.kind == TaskKind::Extend && !lease.relate;
@@ -3710,6 +3724,7 @@ impl Dispatcher {
                 // the reading is stored and checkpointed, as a recovery sees it: a RELATE turn given back, refused or run out gives
                 // up only the turn, and the section is not issued again
                 self.handled.insert(lease.key.clone());
+                self.reopen_if_stale(s, &lease.key);
                 self.stats.committed += 1;
                 let l = self.leases.get_mut(task_id).expect("checked lease");
                 l.relate = true;
@@ -3726,6 +3741,7 @@ impl Dispatcher {
             self.gap_order += 1;
         }
         self.handled.insert(lease.key.clone());
+        self.reopen_if_stale(s, &lease.key);
         self.leases.remove(task_id);
         if !lease.relate {
             self.stats.committed += 1;
@@ -3968,6 +3984,7 @@ impl Dispatcher {
             refusals: 0,
             relate: false,
             repair_lines: None,
+            source_version: None,
         };
         self.leases.insert(task_id.to_string(), lease);
     }

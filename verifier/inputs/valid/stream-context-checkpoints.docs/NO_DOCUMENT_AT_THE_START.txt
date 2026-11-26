@@ -1,0 +1,3 @@
+The journal stream-context-checkpoints.wal starts without a document: its genesis record names no source.
+Every document of it comes later, in a put_document command, and level J3 takes its bytes from that command.
+This file is here so that the folder exists; no description of the genesis record names it.

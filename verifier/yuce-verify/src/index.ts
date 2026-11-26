@@ -15,8 +15,19 @@ export { EXIT, NOT_VERIFIED, NOT_VERIFIED_AFTER_J3, SPEC_ID, VERIFIER_VERSION, e
 export type { Anchor, Failure, HeadAnchor, J2Level, J3Level, Report, SealAnchor, SealEntry, Tail } from "./report.ts";
 export { CDC_MAX_CHUNK, CDC_WINDOW, anchorBytes, chunksOf, cutPoints, documentChunks, gearHex, occurrences, segmentsOf } from "./cdc.ts";
 export type { Chunk, DocumentChunks, Segment } from "./cdc.ts";
-export { EMPTY_RECORDS_ROOT, GENESIS_FORMATS, J2Checker, commandKind, gitDocumentId, isIdentifier, isSubmitResult, requestHash } from "./j2.ts";
-export { LINE_KEYS, LINE_REQUIRED, MAX_QUOTE_BYTES, RecordEngine, lineFormProblem, uniqueByPrefix } from "./j3.ts";
+export {
+  EMPTY_RECORDS_ROOT,
+  GENESIS_FORMATS,
+  J2Checker,
+  RULES_VERSIONS,
+  RULES_VERSION_4,
+  commandKind,
+  gitDocumentId,
+  isIdentifier,
+  isSubmitResult,
+  requestHash,
+} from "./j2.ts";
+export { LINE_KEYS, LINE_REQUIRED, MAX_QUOTE_BYTES, QUESTION_KEYS_RULES_4, RecordEngine, lineFormProblem, uniqueByPrefix } from "./j3.ts";
 export type { AcceptedRecord, DocumentFiles, RewriteOptions } from "./j3.ts";
 export { DOMAIN, LogTree, domainHash, logRootRecursive, recordLeaf, recordsRoot } from "./trees.ts";
 export { checkVectors } from "./vectors.ts";

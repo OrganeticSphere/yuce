@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// yuce-verify 0.2.1: independent verifier of YuCe journals, delivery 1 (levels J0, J1).
+// yuce-verify 0.3.0: independent verifier of YuCe journals, delivery 1 (levels J0, J1).
 // Built from src/ by scripts/build.mjs. No runtime dependencies.
 
 // src/json.ts
@@ -374,8 +374,8 @@ function fromPlain(v) {
 
 // src/report.ts
 var VERIFIER_NAME = "yuce-verify";
-var VERIFIER_VERSION = "0.2.1";
-var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/6";
+var VERIFIER_VERSION = "0.3.0";
+var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/7";
 var NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"];
 var NOT_VERIFIED_AFTER_J3 = ["withdrawal_cascade", "signatures"];
 function reportToJcs(report) {
@@ -600,10 +600,11 @@ async function recordsRoot(adapter, leaves) {
 var EMPTY_RECORDS_ROOT = "fe7c90ca2214e168f5ffe6cccb15729c3b8a03c403e48c406441cd589fdd8c41";
 var GENESIS_FORMATS = {
   format: "r2r-audit-genesis/3",
-  rules_version: "r2r-audit-rules/3",
   state_root_format: "r2r-state-root/2",
   seal_format: "r2r-seal/2"
 };
+var RULES_VERSIONS = ["r2r-audit-rules/3", "r2r-audit-rules/4"];
+var RULES_VERSION_4 = "r2r-audit-rules/4";
 var GENESIS_KEYS = [
   "format",
   "rules_version",
@@ -710,8 +711,13 @@ var J2Checker = class {
     const fail = (code, detail) => ({ code, detail });
     if (header.get("records_root") !== EMPTY_RECORDS_ROOT) return fail("GENESIS_RECORDS_ROOT", "header.records_root of frame 0 is not the empty records root");
     if (!hasExactKeys(body, GENESIS_KEYS)) return fail("GENESIS_KEYS", "the genesis record must have exactly its 15 keys");
-    for (const [k, v] of Object.entries(GENESIS_FORMATS)) {
-      if (body.get(k) !== v) return fail("GENESIS_FORMAT", `${k} is not "${v}"`);
+    if (body.get("format") !== GENESIS_FORMATS.format) return fail("GENESIS_FORMAT", `format is not "${GENESIS_FORMATS.format}"`);
+    const rules = body.get("rules_version");
+    if (typeof rules !== "string" || !RULES_VERSIONS.includes(rules)) {
+      return fail("GENESIS_FORMAT", `rules_version is not one of ${RULES_VERSIONS.map((r) => `"${r}"`).join(", ")}`);
+    }
+    for (const k of ["state_root_format", "seal_format"]) {
+      if (body.get(k) !== GENESIS_FORMATS[k]) return fail("GENESIS_FORMAT", `${k} is not "${GENESIS_FORMATS[k]}"`);
     }
     const field = (k, ok, what) => ok ? null : fail("GENESIS_FIELD", `${k} is not ${what}`);
     const mode = body.get("source_mode");
@@ -940,6 +946,7 @@ var LINE_KEYS = {
   question: ["kind", "local_id", "text", "about", "needed"],
   done: ["kind", "local_id", "rq_id", "directive_id", "answer_ids", "outcome", "text"]
 };
+var QUESTION_KEYS_RULES_4 = [...LINE_KEYS["question"], "about_record"];
 var LINE_REQUIRED = {
   observe: ["doc_id", "exact_quote"],
   claim: ["text", "subject", "stance", "based_on"],
@@ -948,7 +955,7 @@ var LINE_REQUIRED = {
   question: ["text", "about"],
   done: ["answer_ids"]
 };
-var STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stance", "from", "rel", "to"];
+var STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stance", "from", "rel", "to", "about_record"];
 var MAX_QUOTE_BYTES = 16384;
 var STRING_ARRAY_FIELDS = ["terms", "based_on", "about", "answer_ids"];
 var RecordEngine = class {
@@ -968,6 +975,8 @@ var RecordEngine = class {
   /** Leaves of the last frame, in order (for the forger and the tests). */
   lastFrameLeaves = [];
   quotes = 0;
+  /** Amendment 5, P5-2: the genesis record names the rules 4. */
+  rules4 = false;
   get recordCount() {
     return this.records.length;
   }
@@ -977,6 +986,7 @@ var RecordEngine = class {
   }
   /** J3-0 on the genesis record (already checked by J2). */
   async genesis(body) {
+    this.rules4 = body.get("rules_version") === RULES_VERSION_4;
     const sources = body.get("source_documents");
     for (const docId of [...sources.keys()].sort()) {
       const desc = sources.get(docId);
@@ -1069,7 +1079,7 @@ var RecordEngine = class {
   }
   async line(g, directive, scope, line, j, leaves) {
     const fail = (code, detail) => ({ code, detail: `line ${j}: ${detail}` });
-    const form = lineFormProblem(line);
+    const form = lineFormProblem(line, this.rules4);
     if (form !== null) return fail("RECORD_FORM", form);
     const l = line;
     const kind = l.get("kind");
@@ -1101,6 +1111,11 @@ var RecordEngine = class {
         if (r === null) return fail("UNRESOLVED_REFERENCE", `answer_ids ${quoted(arr[k])} does not resolve`);
         supports.push(r);
       }
+    }
+    let about = null;
+    if (kind === "question" && l.has("about_record")) {
+      about = resolve(l.get("about_record"), (v) => l.set("about_record", v));
+      if (about === null) return fail("UNRESOLVED_REFERENCE", `about_record ${quoted(l.get("about_record"))} does not resolve`);
     }
     let evidence = null;
     if (kind === "observe") {
@@ -1143,6 +1158,7 @@ var RecordEngine = class {
       body.set("to", at(to));
     }
     if (kind === "done") body.set("answer_ids", supports.map(at));
+    if (about !== null) body.set("about_record", at(about));
     if (evidence !== null) {
       body.set("evidence_id", evidence.get("id"));
       body.set("document_version", evidence.get("version"));
@@ -1206,11 +1222,11 @@ function inScope(scope, docId, start, end, length) {
   if (ranges.length === 0) return true;
   return ranges.some(([d, a, z]) => d === docId && a <= start && end <= z && a < z && z <= length);
 }
-function lineFormProblem(line) {
+function lineFormProblem(line, rules4 = false) {
   if (!isObject(line)) return "the line is not an object";
   const kind = line.get("kind");
   if (typeof kind !== "string" || !Object.hasOwn(LINE_KEYS, kind)) return "kind is not one of the six kinds";
-  const allowed = LINE_KEYS[kind];
+  const allowed = rules4 && kind === "question" ? QUESTION_KEYS_RULES_4 : LINE_KEYS[kind];
   for (const k of line.keys()) if (!allowed.includes(k)) return `key ${JSON.stringify(k)} is not allowed for ${kind}`;
   if (typeof line.get("local_id") !== "string") return "local_id is not a string";
   for (const k of STRING_FIELDS) if (line.has(k) && typeof line.get(k) !== "string") return `${k} is not a string`;
@@ -2328,6 +2344,9 @@ export {
   MAX_QUOTE_BYTES,
   NOT_VERIFIED,
   NOT_VERIFIED_AFTER_J3,
+  QUESTION_KEYS_RULES_4,
+  RULES_VERSIONS,
+  RULES_VERSION_4,
   ReadError,
   RecordEngine,
   SEAL_FORMAT_ID,

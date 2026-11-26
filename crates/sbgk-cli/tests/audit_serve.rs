@@ -235,8 +235,8 @@ fn rights_come_from_the_subject_token_on_every_method() {
     let mut own = Client::connect(server.port, OWN);
     assert_eq!(
         own.tools().len(),
-        17,
-        "nine tools of 0.1, the four reading tools of 0.2, audit_seal and the coverage of 0.2.1, the preview of 0.2.2, audit_leases"
+        22,
+        "nine tools of 0.1, the four reading tools of 0.2, audit_seal and the coverage of 0.2.1, the preview of 0.2.2, audit_leases, and the five of 0.3.0: audit_key, audit_keys, audit_context, audit_put_document, audit_checkpoint"
     );
     assert_eq!(own.call("audit_acquire", json!({}))["code"], -32003, "roles do not stack");
 
@@ -3054,4 +3054,186 @@ fn a_frame_cut_in_the_middle_of_its_write_is_a_torn_tail_and_the_journal_resumes
         assert_eq!((code, v["status"].as_str()), (Some(0), Some("VERIFIED")), "{v}");
         std::fs::write(&wal, &whole).unwrap();
     }
+}
+
+/// 0.3.0: a run that starts without a document. The owner puts each source while the run goes on, an agent reads it as any
+/// document, and the owner reads a value back by its key, writes a context checkpoint and withdraws a text for a reason.
+#[test]
+fn a_run_that_starts_without_a_document_takes_its_sources_as_they_come() {
+    let fx = Fixture::new("stream");
+    // a run without a graph builder names none among its subjects
+    let subjects = json!({"subjects": [{"token": W1, "role": "swarm", "id": "w1"}, {"token": OWN, "role": "owner", "id": "own"}]});
+    std::fs::write(fx.0.join("readers.json"), subjects.to_string()).unwrap();
+    let args: Vec<String> = ["--wal", &fx.p("run.wal"), "--subjects", &fx.p("readers.json"), "--questions", &fx.p("questions.json"), "--run-id", "stream-run"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(["--empty-start", "--build-scope", "none", "--reading-only"].map(String::from))
+        .collect();
+    // a start without a document is not a start on a folder too
+    let both =
+        Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(&args).args(["--docs", &fx.p("repo")]).output().unwrap();
+    assert_eq!(both.status.code(), Some(2));
+    assert!(!Path::new(&fx.p("run.wal")).exists(), "a refused start leaves no journal");
+    // nor of a run that makes its summaries in the journal: it would be asked for them before any source came
+    let in_journal: Vec<String> = args.iter().filter(|arg| *arg != "--reading-only").cloned().collect();
+    let refused = Command::new(BIN).args(["audit-serve", "--profile", "custom", "--listen", "127.0.0.1:0"]).args(&in_journal).output().unwrap();
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(2), "{said}");
+    assert!(said.contains("--empty-start needs --reading-only") && said.contains("Start it with --reading-only"), "{said}");
+    assert!(!Path::new(&fx.p("run.wal")).exists(), "a refused start leaves no journal");
+
+    let server = Server::start(&args);
+    let (mut own, mut w1) = (Client::connect(server.port, OWN), Client::connect(server.port, W1));
+    let status = own.call("audit_status", json!({}));
+    assert_eq!((status["rules_version"].as_str(), status["context_checkpoints"].as_u64()), (Some("r2r-audit-rules/4"), Some(0)), "{status}");
+    // no document yet: the run is not warned that no document holds a term of its questions
+    assert_eq!(status.get("about_unmatched"), None, "{status}");
+    assert_ne!(w1.call("audit_acquire", json!({}))["status"], "DIRECTIVE", "nothing to read yet");
+    assert_eq!(w1.call("audit_put_document", json!({"doc_id": "x", "text": "x"}))["code"], -32003, "a source is the owner's to put");
+
+    let put = own.call("audit_put_document", json!({"doc_id": "context-1", "text": "# Context\n\nTopic A is 10.\n\nTopic B is 5.\n"}));
+    assert_eq!((put["status"].as_str(), put["documents"].as_u64()), (Some("PUT"), Some(1)), "{put}");
+    let t = w1.call("audit_acquire", json!({}));
+    assert_eq!((t["status"].as_str(), t["kind"].as_str()), (Some("DIRECTIVE"), Some("EXTEND")), "{t}");
+    assert!(section(t["prompt"].as_str().unwrap()).contains("Topic A is 10."), "{t}");
+    let p = t["local_id_prefix"].as_str().unwrap();
+    let lines = json!([
+        {"kind": "observe", "local_id": format!("{p}o1"), "doc_id": "context-1", "exact_quote": "Topic A is 10.", "terms": ["topic"]},
+        {"kind": "observe", "local_id": format!("{p}o2"), "doc_id": "context-1", "exact_quote": "Topic B is 5.", "terms": ["topic"]},
+        {"kind": "claim", "local_id": format!("{p}c1"), "text": "A is 10.", "subject": "A", "object": "10", "stance": "reported", "based_on": [format!("{p}o1")]},
+        {"kind": "claim", "local_id": format!("{p}c2"), "text": "B is 5.", "subject": "B", "object": "5", "stance": "reported", "based_on": [format!("{p}o2")]},
+        // rules 4: a claim on two claims
+        {"kind": "claim", "local_id": format!("{p}c3"), "text": "A and B make 15.", "subject": "A+B", "object": "15", "stance": "reported",
+         "based_on": [format!("{p}c1"), format!("{p}c2")]},
+    ]);
+    let stored = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}));
+    assert_eq!(stored["status"], "COMMITTED", "{stored}");
+
+    let sum = own.call("audit_key", json!({"key": "A+B"}));
+    assert_eq!((sum["state"].as_str(), sum["value"].as_str()), (Some("ACTIVE"), Some("15")), "{sum}");
+    assert_eq!(own.call("audit_key", json!({}))["code"], "BAD_ARGUMENT");
+    let chains = own.call("audit_status", json!({"telemetry": true}))["claim_chains"].clone();
+    assert_eq!((chains["max_depth"].as_u64(), chains["standing_without_own_quote"].as_u64()), (Some(1), Some(1)), "{chains}");
+    let written = own.call("audit_checkpoint", json!({"raw_context": "context-1"}));
+    assert_eq!((written["status"].as_str(), written["epoch"].as_u64(), written["listed"].as_u64()), (Some("CHECKPOINTED"), Some(1), Some(3)), "{written}");
+    assert_eq!(own.call("audit_context", json!({}))["active"].as_array().map(Vec::len), Some(3));
+
+    // B is withdrawn for a reason that is itself a source: B and the sum fall, A stands
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "notice-1", "text": "Notice: the statement of B was an error.\n"}))["documents"], 2);
+    let unknown = own.call("audit_withdraw_text", json!({"doc_id": "context-1", "exact_quote": "Topic B is 5.", "reason_source_id": "no-such-notice"}));
+    assert_eq!(unknown["error"]["field"], "reason_source_id", "{unknown}");
+    let gone = own.call("audit_withdraw_text", json!({"doc_id": "context-1", "exact_quote": "Topic B is 5.", "reason_source_id": "notice-1"}));
+    assert_eq!((gone["status"].as_str(), gone["also_revoked"].as_u64(), gone["fell"].as_u64()), (Some("REVOKED"), Some(1), Some(2)), "{gone}");
+    let first = own.call("audit_context", json!({"epoch": 1}));
+    assert_eq!((first["active"].as_array().map(Vec::len), first["active"][0]["key"].as_str()), (Some(1), Some("A")), "{first}");
+    assert_eq!(first["dropped"]["AFFECTED_BY_EVIDENCE_CHANGE"].as_array().map(Vec::len), Some(2), "{first}");
+    let table = own.call("audit_keys", json!({"required": ["A", "B", "Z"]}));
+    let missing: Vec<&str> = table["missing_required_keys"].as_array().unwrap().iter().map(|m| m["key"].as_str().unwrap()).collect();
+    assert_eq!(missing, ["B", "Z"], "{table}");
+    assert_eq!(own.call("audit_keys", json!({"required": "A"}))["code"], "BAD_ARGUMENT");
+    assert_eq!(own.call("audit_context", json!({"epoch": 2}))["status"], "NO_CONTEXT_CHECKPOINT");
+
+    drop((own, w1, server));
+    let out = Command::new(BIN).args(["audit-verify", "--wal", &fx.p("run.wal")]).output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!((out.status.code(), v["status"].as_str(), v["sources"]["put_document_entries"].as_u64()), (Some(0), Some("VERIFIED"), Some(2)), "{v}");
+    // and the reads of the journal answer as the server did
+    let read = Command::new(BIN).args(["audit-read", "checkpoint", "--epoch", "1", "--wal", &fx.p("run.wal")]).output().unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&read.stdout).unwrap(), first);
+}
+
+/// Codex review of b27625da, findings 2 and 3. A source the owner puts again with other bytes is read again: the task of its
+/// reading was keyed by the name and the section alone, so the new bytes got no task, live or after a restart. And a name past
+/// the bound of a document's name is not put: the task that read it could not be closed.
+#[test]
+fn a_source_put_again_with_other_bytes_is_read_again_and_a_name_past_the_bound_is_not_put() {
+    let fx = Fixture::new("replaced");
+    let subjects = json!({"subjects": [{"token": W1, "role": "swarm", "id": "w1"}, {"token": OWN, "role": "owner", "id": "own"}]});
+    std::fs::write(fx.0.join("readers.json"), subjects.to_string()).unwrap();
+    let resume: Vec<String> = ["--wal", &fx.p("run.wal"), "--subjects", &fx.p("readers.json"), "--questions", &fx.p("questions.json")]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(["--build-scope", "none", "--reading-only"].map(String::from))
+        .collect();
+    let fresh: Vec<String> = resume.iter().cloned().chain(["--run-id", "replaced-run", "--empty-start"].map(String::from)).collect();
+    // one reading: the task of a document's section, answered with a quote and a claim of the key
+    let reading = |w1: &mut Client, doc: &str, text: &str, key: &str, value: &str| {
+        let t = w1.call("audit_acquire", json!({}));
+        assert_eq!((t["status"].as_str(), t["key"].as_str()), (Some("DIRECTIVE"), Some(format!("doc:{doc}#0").as_str())), "{t}");
+        assert!(section(t["prompt"].as_str().unwrap()).contains(text), "the task shows the bytes the document has now: {t}");
+        let p = t["local_id_prefix"].as_str().unwrap();
+        let lines = json!([
+            {"kind": "observe", "local_id": format!("{p}o"), "doc_id": doc, "exact_quote": text, "terms": ["value"]},
+            {"kind": "claim", "local_id": format!("{p}c"), "text": format!("{key} is {value}."), "subject": key, "object": value, "stance": "reported",
+             "based_on": [format!("{p}o")]},
+        ]);
+        let stored = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}));
+        assert_eq!(stored["status"], "COMMITTED", "{stored}");
+    };
+    let idle = |w1: &mut Client| assert_ne!(w1.call("audit_acquire", json!({}))["status"], "DIRECTIVE", "no reading is open");
+
+    let server = Server::start(&fresh);
+    let (mut own, mut w1) = (Client::connect(server.port, OWN), Client::connect(server.port, W1));
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "a", "text": "Alpha is one.\n"}))["status"], "PUT");
+    reading(&mut w1, "a", "Alpha is one.", "alpha", "one");
+    idle(&mut w1);
+    // the same bytes again are no new version
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "a", "text": "Alpha is one.\n"}))["status"], "PUT");
+    idle(&mut w1);
+
+    // other bytes under the name: the value fell, and the new bytes get a reading
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "a", "text": "Alpha is two.\n"}))["status"], "PUT");
+    assert_eq!(own.call("audit_key", json!({"key": "alpha"}))["state"], "NO_ACTIVE_VALUE");
+    // the run is not complete with bytes nobody read, before any agent asks for a task
+    let status = own.call("audit_status", json!({}));
+    assert_eq!((status["reading_done"].as_bool(), status["completion"]["open_work"].as_u64()), (Some(false), Some(1)), "{status}");
+    assert_eq!(status["completion"]["complete"], false, "{status}");
+    let open = w1.call("audit_acquire", json!({}));
+    assert_eq!((open["status"].as_str(), open["key"].as_str()), (Some("DIRECTIVE"), Some("doc:a#0")), "{open}");
+    assert!(section(open["prompt"].as_str().unwrap()).contains("Alpha is two."), "{open}");
+    // a restart before the answer: the journal says the reading is of other bytes, and the task is given again
+    drop((own, w1, server));
+    let server = Server::start(&resume);
+    let (mut own, mut w1) = (Client::connect(server.port, OWN), Client::connect(server.port, W1));
+    reading(&mut w1, "a", "Alpha is two.", "alpha", "two");
+    idle(&mut w1);
+    let value = own.call("audit_key", json!({"key": "alpha"}));
+    assert_eq!((value["state"].as_str(), value["value"].as_str()), (Some("ACTIVE"), Some("two")), "{value}");
+    // a restart after the answer: the reading names the version it read, and stays done
+    drop((own, w1, server));
+    let server = Server::start(&resume);
+    let (mut own, mut w1) = (Client::connect(server.port, OWN), Client::connect(server.port, W1));
+    idle(&mut w1);
+    // a third version, and a new source beside it: both are read
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "a", "text": "Alpha is three.\n"}))["status"], "PUT");
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "b", "text": "Beta is five.\n"}))["status"], "PUT");
+    reading(&mut w1, "a", "Alpha is three.", "alpha", "three");
+    reading(&mut w1, "b", "Beta is five.", "beta", "five");
+    idle(&mut w1);
+    // other bytes come while the task of the earlier ones is out: its answer is stored, it is an answer on the earlier bytes, and
+    // the reading is given again for the bytes the document has now
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "c", "text": "Gamma is one.\nDelta is two.\n"}))["status"], "PUT");
+    let out = w1.call("audit_acquire", json!({}));
+    assert_eq!((out["status"].as_str(), out["key"].as_str()), (Some("DIRECTIVE"), Some("doc:c#0")), "{out}");
+    // (bytes of the same length: a quote outside the byte range the task was issued with is refused by the rule of 0.2)
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": "c", "text": "Gamma is one.\nDelta is six.\n"}))["status"], "PUT");
+    let p = out["local_id_prefix"].as_str().unwrap();
+    let kept = json!([{"kind": "observe", "local_id": format!("{p}o"), "doc_id": "c", "exact_quote": "Gamma is one.", "terms": ["value"]}]);
+    let stored = w1.call("audit_submit", json!({"task_id": out["task_id"], "lines": kept}));
+    assert_eq!(stored["status"], "COMMITTED", "{stored}");
+    reading(&mut w1, "c", "Delta is six.", "delta", "six");
+    idle(&mut w1);
+
+    // finding 3: a name of 513 bytes is refused where it comes in; one of 512 is put, read and its task closed
+    let (fits, long) = ("n".repeat(512), "n".repeat(513));
+    let refused = own.call("audit_put_document", json!({"doc_id": long, "text": "Gamma is seven.\n"}));
+    assert_eq!((refused["code"].as_str(), refused["error"]["field"].as_str()), (Some("REFUSED"), Some("doc_id")), "{refused}");
+    assert_eq!(own.call("audit_put_document", json!({"doc_id": fits, "text": "Gamma is seven.\n"}))["status"], "PUT");
+    reading(&mut w1, &fits, "Gamma is seven.", "gamma", "seven");
+    idle(&mut w1);
+
+    drop((own, w1, server));
+    let out = Command::new(BIN).args(["audit-verify", "--wal", &fx.p("run.wal")]).output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!((out.status.code(), v["status"].as_str(), v["sources"]["documents"].as_u64()), (Some(0), Some("VERIFIED"), Some(4)), "{v}");
 }

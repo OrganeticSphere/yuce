@@ -14,8 +14,8 @@ only build it. It checks levels J0 to J3:
 | Folder | What it holds |
 |---|---|
 | `yuce-verify/` | the verifier: TypeScript sources, the single built file `dist/yuce-verify.mjs`, the tests |
-| `spec/` | the specification it was written from, `SPEC_INDEPENDENT_VERIFIER/6` (version 3 with its amendments 1 to 4) in an English translation of the original, and the control vectors |
-| `inputs/` | 22 test journals (valid, corrupt, boundary), the source documents of each (`<name>.docs/`) and the results expected of them (`expected.json`) |
+| `spec/` | the specification it was written from, `SPEC_INDEPENDENT_VERIFIER/7` (version 3 with its amendments 1 to 5) in an English translation of the original, and the control vectors |
+| `inputs/` | 23 test journals (valid, corrupt, boundary), the source documents of each (`<name>.docs/`) and the results expected of them (`expected.json`) |
 
 ## Run it
 

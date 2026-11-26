@@ -33,6 +33,7 @@ pub mod sources;
 pub mod state;
 pub mod trees;
 pub mod versions;
+pub mod vsc;
 
 use crate::error::KernelError;
 use crate::hash::{to_hex, Hash};
@@ -214,6 +215,15 @@ pub trait AuditStore {
     /// from a store that has none; nothing derived from the text is then kept from one call to the next.
     fn doc_stamp(&self, _doc_id: &str) -> Option<Hash> {
         None
+    }
+    /// Whether a document was ever given other bytes than it had (a new version put under its name). The reading of such a
+    /// document names the version it read, and is over for that version alone. A store whose documents never change says no.
+    fn doc_replaced(&self, _doc_id: &str) -> bool {
+        false
+    }
+    /// The documents `doc_replaced` says yes for.
+    fn replaced_docs(&self) -> Vec<String> {
+        Vec::new()
     }
     /// The bytes of a document that standing accepted quotes are bound to, for the gap pass (SPEC_V02_GAP_PASS section 3). The
     /// default places each standing quote at its first occurrence, as a store without bound spans can.
