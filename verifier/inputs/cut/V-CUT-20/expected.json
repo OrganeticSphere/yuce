@@ -1,0 +1,14 @@
+{
+ "verdict": "PASS",
+ "across": {
+  "paragraphs_fallen": 0,
+  "observations_checked": 0
+ },
+ "notes": "c1 rests on [o1, o1] and c2 on [c1, c1]: each ground is written once in the export",
+ "ids": {
+  "o1": "e8ad8fd952ab0012d49b346ea9e237fd7e00be11eae33c23e1fc93f423f4fcbc",
+  "c1": "72e7c52e73990f9835e84856b71d13d3e830fc4f266bda7724e8e764929de27b",
+  "c2": "fd688c42b08d466857257ea0e4f4f3eb226e0ddd8334ec5ecbb8dfda2b1b5da9"
+ },
+ "cut_hash": "7d303d4e5f0ed3b4f0ccabb9b3bc6d832168b3059d0512f181b8bda002cc0f66"
+}

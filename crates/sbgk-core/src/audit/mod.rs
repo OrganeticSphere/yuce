@@ -15,11 +15,13 @@
 
 mod answer_guidance;
 pub mod builder;
+pub mod cut;
 pub mod directives;
 pub mod follow;
 pub mod index;
 #[cfg(test)]
 pub(crate) mod mem;
+pub mod observation;
 pub mod onto;
 pub(crate) mod persistence;
 pub use persistence::LOCKED_WHOLE;

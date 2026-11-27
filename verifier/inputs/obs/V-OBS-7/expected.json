@@ -1,0 +1,6 @@
+{
+ "verdict": "FAIL",
+ "code": "REPORT_FORM",
+ "report": "report.json",
+ "notes": "V-OBS-1's report with a UTF-8 byte-order mark before it"
+}

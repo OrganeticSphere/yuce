@@ -1,0 +1,14 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "DELIVERY_MISSING",
+   "export": "e1",
+   "journal": "b",
+   "doc_id": "inbound",
+   "frame": 1
+  }
+ ],
+ "notes": "the put_document of frame 1 has outcome error",
+ "cut_hash": "723b0505c6a85a1ba2acdc1aa61810b13435d67fbe7e310b469cdd994eb3d2f4"
+}

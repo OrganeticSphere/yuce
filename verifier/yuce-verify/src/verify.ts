@@ -1,23 +1,43 @@
-// Levels J0 ... J3 (SPEC sections 5 and 6; amendment 3, P3-5 and P3-10), in
-// one streaming pass.
+// Levels J0 ... J3 (SPEC sections 5 and 6; amendment 3, P3-5 and P3-10) and
+// J4a (amendment 6), in one streaming pass.
 //
 // Order of failures (SPEC 5.0, 9; amendment 3, P3-10). One failure is
 // reported: the first J0 failure anywhere in the file; otherwise the first J1
 // failure (ANCHOR_NOT_FOUND last); otherwise the first J2 failure; otherwise,
-// with --docs, the first J3 failure. Every level runs frame by frame in the
+// with --docs, the first J3 failure; otherwise the first J4a failure (a seal
+// whose projections differ, then a quittance). Every level runs frame by frame in the
 // same pass and keeps its first failure; a level stops once an earlier level
 // has failed, since its result is then not reported.
 //
 // Memory: J0 and J1 hold one line, the O(log n) log-tree stack and the list of
 // seals. J2 holds the pairs (actor, submission_id); J3 the documents and the
-// ids, anchors and local names of accepted records (TZ v4, section 5).
+// ids, anchors and local names of accepted records (TZ v4, section 5); J4a,
+// for every accepted record, what amendment 6, P6-2 lists.
 
 import type { HashAdapter } from "./hash.ts";
 import { concatBytes, fromHex, toHex, utf8 } from "./hash.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { depthExceeds, hasExactKeys, isHashText, isObject, jcs, parseJson } from "./json.ts";
-import type { Anchor, Failure, HeadAnchor, J1Level, J2Level, J3Level, Report, SealAnchor, SealEntry, Tail } from "./report.ts";
+import type {
+  Anchor,
+  CascadeReach,
+  Failure,
+  HeadAnchor,
+  J1Level,
+  J2Level,
+  J3Level,
+  J4aLevel,
+  QuittanceResult,
+  Report,
+  SealAnchor,
+  SealEntry,
+  Tail,
+} from "./report.ts";
 import { NOT_VERIFIED, NOT_VERIFIED_AFTER_J3, SPEC_ID, VERIFIER_NAME, VERIFIER_VERSION } from "./report.ts";
+import type { Cascade, CascadeStatus, DependencyPair, StatusRow } from "./j4a.ts";
+import type { ParsedQuittance } from "./quittance.ts";
+import { checkQuittance, parseQuittance } from "./quittance.ts";
+import { sealFormProblem } from "./seal.ts";
 import { DOMAIN, LogTree, domainHash } from "./trees.ts";
 import { J2Checker } from "./j2.ts";
 import type { DocumentFiles } from "./j3.ts";
@@ -36,18 +56,6 @@ export const DEFAULT_MAX_DEPTH = 64;
 
 const OUTER_KEYS = ["body", "hash", "header"] as const;
 const HEADER_KEYS = ["body_hash", "format", "previous", "records_root", "seq", "wal_op"] as const;
-const SEAL_KEYS = [
-  "audit_root",
-  "engine_root",
-  "format",
-  "log_root",
-  "log_size",
-  "projections",
-  "run_id",
-  "wal_head",
-] as const;
-const SEAL_HASH_FIELDS = ["log_root", "wal_head", "audit_root", "engine_root"] as const;
-const PROJECTION_KEYS = ["dependencies", "status"] as const;
 
 export interface VerifyOptions {
   /** Lowercase 64-hex seal hash obtained outside this file (`--expect-seal`). */
@@ -61,6 +69,28 @@ export interface VerifyOptions {
    * matter (amendment 3, P3-2). Absent: J3 is NOT_CHECKED.
    */
   documents?: readonly Uint8Array[] | undefined;
+  /** Amendment 6, P6-11: quittances given with the journal (`--quittance`), checked by J4a. */
+  quittances?: readonly { file: string; bytes: Uint8Array }[] | undefined;
+  /** Amendment 6, P6-1: receives the rows and pairs computed at every seal (`--dump-projections`). */
+  onProjections?: ((point: ProjectionPoint) => void) | undefined;
+  /** Called at every seal J4a compared and found equal, with the state before the seal frame (for a cut). */
+  onSeal?: ((n: number, status: CascadeStatus, cascade: Cascade) => void | Promise<void>) | undefined;
+}
+
+/** Amendment 6, P6-1: what `--dump-projections` writes for one seal, in the form of the vectors' rows. */
+export interface ProjectionPoint {
+  seal_position: number;
+  status_hash: string;
+  dependencies_hash: string;
+  status_rows: StatusRow[];
+  dependency_pairs: DependencyPair[];
+  equals_seal: boolean;
+}
+
+/** The report, and the state of J4a after the last frame (null when J4a did not run). */
+export interface DetailedResult {
+  report: Report;
+  cascade: Cascade | null;
 }
 
 /** Indexes document files by the SHA-256 of their bytes (P3-6). */
@@ -81,6 +111,11 @@ export type ByteSource = AsyncIterable<Uint8Array> | Iterable<Uint8Array> | Read
  * Errors thrown by the source are rethrown as ReadError.
  */
 export async function verifyJournal(source: ByteSource, options: VerifyOptions, adapter: HashAdapter): Promise<Report> {
+  return (await verifyJournalDetailed(source, options, adapter)).report;
+}
+
+/** As verifyJournal, and also returns the state of J4a after the last frame. */
+export async function verifyJournalDetailed(source: ByteSource, options: VerifyOptions, adapter: HashAdapter): Promise<DetailedResult> {
   const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   const fileHash = adapter.createSha256();
   const files = options.documents === undefined ? null : await indexDocuments(options.documents, adapter);
@@ -133,7 +168,8 @@ export async function verifyJournal(source: ByteSource, options: VerifyOptions, 
       v.failJ0(v.position, "TORN_TAIL", `${pendingLen} bytes after the last LF are not a frame`);
     }
   }
-  return v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === undefined ? null : options.documents.length);
+  const report = v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === undefined ? null : options.documents.length);
+  return { report, cascade: report.levels.J4a.result === "NOT_RUN" ? null : v.cascade };
 }
 
 function toAsyncIterator(source: ByteSource): AsyncIterator<Uint8Array> | Iterator<Uint8Array> {
@@ -184,6 +220,14 @@ class FrameVerifier {
   private j3NotSupplied: string | null = null;
   private readonly j3: RecordEngine | null;
 
+  // J4a state (with --docs)
+  private j4aFailure: Failure | null = null;
+  private sealsCompared = 0;
+  private lastCompared: number | null = null;
+  private readonly quittances: ParsedQuittance[];
+  /** The seals the quittances name: the header and body of the frame, and the rows J4a computed there. */
+  private readonly quittanceSeals = new Map<number, { header: string; body: string; rows: StatusRow[] }>();
+
   constructor(
     private readonly adapter: HashAdapter,
     private readonly options: VerifyOptions,
@@ -192,7 +236,12 @@ class FrameVerifier {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.tree = new LogTree(adapter);
     this.j2 = new J2Checker(adapter);
-    this.j3 = files === null ? null : new RecordEngine(adapter, files);
+    this.j3 = files === null ? null : new RecordEngine(adapter, files, null, true);
+    this.quittances = (options.quittances ?? []).map((q) => parseQuittance(q.file, q.bytes));
+  }
+
+  get cascade(): Cascade | null {
+    return this.j3?.cascade ?? null;
   }
 
   get j0Stopped(): boolean {
@@ -302,9 +351,11 @@ class FrameVerifier {
     }
     // Level J3, with --docs, while J1 and J2 have not failed.
     if (this.j3 !== null && this.j1Failure === null && this.j2Failure === null && this.j3Failure === null && this.j3NotSupplied === null) {
-      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body);
+      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body, i);
       if (r !== null && "notSupplied" in r) this.j3NotSupplied = r.notSupplied;
       else if (r !== null) this.j3Failure = { level: "J3", frame: i, code: r.code, detail: r.detail };
+      // Level J4a at a seal frame J1 accepted, while J3 has not failed (amendment 6, P6-1).
+      else if (this.lastSealPos === i) await this.j4aSeal(i, header, body);
     }
 
     this.prevHash = hash;
@@ -394,28 +445,13 @@ class FrameVerifier {
     };
     const form = (detail: string): false => fail("SEAL_FORM", detail);
 
-    // J1-1
-    if (!hasExactKeys(command, ["kind", "seal"])) return form("command must have exactly the keys kind, seal");
+    // J1-1 (shared with the seal body of a quittance, amendment 6, P6-11)
     const outcome = body.get("outcome");
-    if (!isObject(outcome) || !hasExactKeys(outcome, ["kind", "result"])) return form("outcome must have exactly the keys kind, result");
-    if (outcome.get("kind") !== "value") return form('outcome.kind is not "value"');
-    const result = outcome.get("result");
-    if (!isObject(result) || !hasExactKeys(result, ["seal", "seal_hash"])) {
-      return form("outcome.result must have exactly the keys seal, seal_hash");
-    }
-    const seal = command.get("seal");
-    if (!isObject(seal) || !hasExactKeys(seal, SEAL_KEYS)) return form("the seal must have exactly its eight keys");
-    const projections = seal.get("projections");
-    if (!isObject(projections) || !hasExactKeys(projections, PROJECTION_KEYS)) {
-      return form("seal.projections must have exactly the keys dependencies, status");
-    }
-    if (typeof seal.get("format") !== "string") return form("seal.format is not a string");
-    if (typeof seal.get("run_id") !== "string") return form("seal.run_id is not a string");
-    if (typeof seal.get("log_size") !== "number") return form("seal.log_size is not a number");
-    for (const k of SEAL_HASH_FIELDS) if (!isHashText(seal.get(k))) return form(`seal.${k} is not a hash`);
-    for (const k of PROJECTION_KEYS) if (!isHashText(projections.get(k))) return form(`seal.projections.${k} is not a hash`);
-    const sealHash = result.get("seal_hash");
-    if (!isHashText(sealHash)) return form("outcome.result.seal_hash is not a hash");
+    const problem = sealFormProblem(command, outcome);
+    if (problem !== null) return form(problem);
+    const result = (outcome as JsonObject).get("result") as JsonObject;
+    const seal = command.get("seal") as JsonObject;
+    const sealHash = result.get("seal_hash") as string;
     // J1-2
     const sealJcs = jcs(seal);
     if (jcs(result.get("seal")!) !== sealJcs) return form("outcome.result.seal differs from command.seal");
@@ -446,6 +482,85 @@ class FrameVerifier {
     this.seals.push({ n: i, seal_hash: computed });
     this.lastSealPos = i;
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // J4a
+  // -------------------------------------------------------------------------
+
+  /** Amendment 6, P6-1: the projections over the state after frames 0 ... n-1, compared with the seal at n. */
+  private async j4aSeal(n: number, header: JsonObject, body: JsonObject): Promise<void> {
+    const cascade = this.j3!.cascade!;
+    // The first failing seal ends J4a; later seals are computed only for a dump.
+    if (this.j4aFailure !== null && this.options.onProjections === undefined) return;
+    const st = await cascade.status();
+    const projections = ((body.get("command") as JsonObject).get("seal") as JsonObject).get("projections") as JsonObject;
+    const statusOk = st.status === projections.get("status");
+    const dependenciesOk = st.dependencies === projections.get("dependencies");
+    this.options.onProjections?.({
+      seal_position: n,
+      status_hash: st.status,
+      dependencies_hash: st.dependencies,
+      status_rows: st.rows,
+      dependency_pairs: st.pairs,
+      equals_seal: statusOk && dependenciesOk,
+    });
+    if (this.j4aFailure !== null) return;
+    this.sealsCompared++;
+    this.lastCompared = n;
+    if (!statusOk) {
+      this.j4aFailure = {
+        level: "J4a",
+        frame: n,
+        code: "PROJECTION_STATUS_MISMATCH",
+        detail: `the status projection computed over frames 0..${n - 1} is ${st.status}, the seal names ${String(projections.get("status"))}`,
+      };
+      return;
+    }
+    if (!dependenciesOk) {
+      this.j4aFailure = {
+        level: "J4a",
+        frame: n,
+        code: "PROJECTION_DEPENDENCIES_MISMATCH",
+        detail: `the dependency projection computed over frames 0..${n - 1} is ${st.dependencies}, the seal names ${String(projections.get("dependencies"))}`,
+      };
+      return;
+    }
+    if (this.quittances.some((q) => q.n === n)) this.quittanceSeals.set(n, { header: jcs(header), body: jcs(body), rows: st.rows });
+    await this.options.onSeal?.(n, st, cascade);
+  }
+
+  /** Amendment 6, P6-11: every quittance, in the order given, after the last frame. */
+  private checkQuittances(j4aRan: boolean): QuittanceResult[] {
+    const out: QuittanceResult[] = [];
+    for (const q of this.quittances) {
+      if (!j4aRan) {
+        out.push({ file: q.file, verdict: "NOT_RUN", code: null });
+        continue;
+      }
+      let failure;
+      if (q.problem !== null || q.n === null) failure = checkQuittance(q, undefined);
+      else {
+        // The check needs J4a to pass up to the quittance's seal.
+        const f = this.j4aFailure;
+        if (f !== null && f.frame !== null && q.n >= f.frame) {
+          out.push({ file: q.file, verdict: "NOT_RUN", code: null });
+          continue;
+        }
+        failure = checkQuittance(q, this.quittanceSeals.get(q.n));
+      }
+      out.push({ file: q.file, verdict: failure === null ? "PASS" : "FAIL", code: failure === null ? null : failure.code });
+      if (failure !== null) this.j4aFailure ??= { level: "J4a", frame: null, code: failure.code, detail: `${q.file}: ${failure.detail}` };
+    }
+    return out;
+  }
+
+  /** Amendment 6, P6-1: the reach of the cascade check. */
+  private reach(n: number): CascadeReach {
+    if (this.lastCompared === null) return { seals_checked: 0, checked_through_frame: null, unchecked_frames: n - 1 };
+    const after = n - 1 - this.lastCompared;
+    const close = this.closedAt === this.lastCompared + 1 ? 1 : 0;
+    return { seals_checked: this.sealsCompared, checked_through_frame: this.lastCompared, unchecked_frames: after - close };
   }
 
   // -------------------------------------------------------------------------
@@ -509,8 +624,26 @@ class FrameVerifier {
     else if (this.j3NotSupplied !== null) j3 = { result: "NOT_CHECKABLE", reason: `document ${this.j3NotSupplied} not supplied` };
     else j3 = { result: "PASS", records: this.j3.recordCount, quotes: this.j3.quotes };
 
+    // Amendment 6, P6-1 and P6-11: J4a runs only when J3 passed.
+    const j3Pass = j3.result === "PASS";
+    let j4a: J4aLevel;
+    let cascade: CascadeReach | null = null;
+    const quittances = this.checkQuittances(j3Pass);
+    if (!j3Pass) j4a = { result: "NOT_RUN", reason: j3.result === "NOT_CHECKED" ? "J3 not run" : j3.result === "FAIL" ? "J3 failed" : "J3 not checkable" };
+    else {
+      j4a = { result: this.j4aFailure === null ? "PASS" : "FAIL" };
+      cascade = this.reach(n);
+    }
+
+    let notVerified: string[];
+    if (!j3Pass) notVerified = [...NOT_VERIFIED];
+    else if (j4a.result !== "PASS" || cascade!.checked_through_frame === null) notVerified = [...NOT_VERIFIED_AFTER_J3];
+    else if (cascade!.unchecked_frames > 0) notVerified = ["withdrawal_cascade_after_last_seal", "signatures"];
+    else notVerified = ["signatures"];
+    if (this.quittances.length > 0) notVerified.splice(notVerified.indexOf("signatures"), 0, "quittance_inclusion");
+
     const j0Result = j0Pass ? "PASS" : "FAIL";
-    const results = [j0Result, j1.result, j2.result, j3.result];
+    const results = [j0Result, j1.result, j2.result, j3.result, j4a.result];
     const verdict = results.includes("FAIL") ? "FAIL" : this.j3NotSupplied !== null && j3.result === "NOT_CHECKABLE" ? "INCOMPLETE" : "PASS";
     return {
       verifier: { name: VERIFIER_NAME, version: VERIFIER_VERSION, spec: SPEC_ID },
@@ -526,16 +659,19 @@ class FrameVerifier {
         J1: j1,
         J2: j2,
         J3: j3,
+        J4a: j4a,
         J5: { result: "NOT_CHECKED" },
       },
+      cascade,
+      quittances,
       anchor,
       computed: {
         wal_head: j0Pass ? this.prevHash : null,
         closed: tail === null ? null : tail.kind === "closed",
       },
-      not_verified: j3.result === "PASS" ? [...NOT_VERIFIED_AFTER_J3] : [...NOT_VERIFIED],
+      not_verified: notVerified,
       verdict,
-      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null),
+      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null) ?? (j3Pass ? this.j4aFailure : null),
     };
   }
 

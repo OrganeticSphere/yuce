@@ -19,7 +19,7 @@ await build({
   banner: {
     js: [
       "#!/usr/bin/env node",
-      `// yuce-verify ${pkg.version}: independent verifier of YuCe journals, delivery 1 (levels J0, J1).`,
+      `// yuce-verify ${pkg.version}: independent verifier of YuCe journals, delivery 3: levels J0-J3 and J4a, the cut check, the observation report.`,
       "// Built from src/ by scripts/build.mjs. No runtime dependencies.",
     ].join("\n"),
   },

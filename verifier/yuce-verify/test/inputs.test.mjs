@@ -3,7 +3,14 @@
 // B5 (the accept/refuse verdict equals the kernel's) and B6 (without documents).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXPECTED, docsOf, outcome, readRoom, verify } from "./helpers.mjs";
+import { readFileSync } from "node:fs";
+import { EXPECTED, docsOf, outcome, readRoom, room, verify } from "./helpers.mjs";
+
+/** Amendment 6: the expected reach of the cascade check of each journal (set A). */
+const J4A = JSON.parse(readFileSync(room("inputs/j4a/expected.json"), "utf8")).set_a;
+/** Amendment 6, P6-1: not_verified after a J4a PASS, from the reach of the check. */
+const notVerifiedAfterJ4a = (c) =>
+  c.checked_through_frame === null ? ["withdrawal_cascade", "signatures"] : c.unchecked_frames > 0 ? ["withdrawal_cascade_after_last_seal", "signatures"] : ["signatures"];
 
 const J1_CODES = new Set([
   "FRAME_AFTER_CLOSE",
@@ -27,7 +34,7 @@ const run = async (section, name, entry) =>
   verify(readRoom(`inputs/${section}/${name}`), entry.docs === undefined ? {} : { documents: docsOf(entry.docs) });
 
 for (const [name, want] of Object.entries(EXPECTED.valid)) {
-  test(`B2: valid/${name} with its documents passes J0-J3 with the values of expected.json`, async () => {
+  test(`B2: valid/${name} with its documents passes J0-J3 and J4a with the values of expected.json`, async () => {
     const report = await run("valid", name, want);
     assert.equal(report.verdict, "PASS", JSON.stringify(report.first_failure));
     // J0-J1 as in delivery 1 (A2)
@@ -41,7 +48,11 @@ for (const [name, want] of Object.entries(EXPECTED.valid)) {
     assert.deepEqual(report.levels.J2, want.J2);
     assert.deepEqual(report.levels.J3, want.J3);
     assert.deepEqual(report.input.sources, { given: true, files: docsOf(want.docs).length });
-    assert.deepEqual(report.not_verified, ["withdrawal_cascade", "signatures"]);
+    // J4a (amendment 6, set A)
+    const j4a = J4A[`valid/${name}`];
+    assert.deepEqual(report.levels.J4a, { result: j4a.J4a });
+    assert.deepEqual(report.cascade, j4a.cascade);
+    assert.deepEqual(report.not_verified, notVerifiedAfterJ4a(j4a.cascade));
   });
 
   test(`B6: valid/${name} without documents passes J0-J2, J3 not checked`, async () => {

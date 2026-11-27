@@ -1,0 +1,55 @@
+{
+  "journal": "d9-refused-and-late-answers.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "862a26577e3f8c6e8a0987b1c233eed788a8313297c0697d7e866088b3d491e6",
+      "dependency_pairs": [
+        [
+          "af762283010cd6c58cb606c4d3ff19e016fb43bb22ac36278545cd53c118ddf5",
+          "cabdbdb12e90e91baa3343d7a8b03e0c43594d7544c830efd00e7448a7868e24"
+        ],
+        [
+          "d7a2c9b525c53a8b39455be139cb5ac98310e4aedb9589fb162dc52c4f484911",
+          "62782eb4f8ca22395ac50c18115d6ec704ae767fc651c130e5bf73c2cee5c05f"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 8,
+      "status_hash": "f2f5dece164076445f50194b9d707b83553a8d76886cfdb07aab3d7baaed91e9",
+      "status_rows": [
+        [
+          "62782eb4f8ca22395ac50c18115d6ec704ae767fc651c130e5bf73c2cee5c05f",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "d7a2c9b525c53a8b39455be139cb5ac98310e4aedb9589fb162dc52c4f484911",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "cabdbdb12e90e91baa3343d7a8b03e0c43594d7544c830efd00e7448a7868e24",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "af762283010cd6c58cb606c4d3ff19e016fb43bb22ac36278545cd53c118ddf5",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 1
+}

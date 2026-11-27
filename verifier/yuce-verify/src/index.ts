@@ -1,5 +1,6 @@
 // yuce-verify: independent verifier of YuCe journals (sbgk-session-log/3),
-// delivery 1, levels J0 and J1. Built from the specification text only.
+// delivery 3: levels J0-J3 and J4a, the cut check, the observation report.
+// Built from the specification text only.
 //
 // This module is the single delivery file `yuce-verify.mjs`. Under Node.js,
 // run as a script, it is the command line; imported (Node.js or a browser),
@@ -30,6 +31,40 @@ export {
 export { LINE_KEYS, LINE_REQUIRED, MAX_QUOTE_BYTES, QUESTION_KEYS_RULES_4, RecordEngine, lineFormProblem, uniqueByPrefix } from "./j3.ts";
 export type { AcceptedRecord, DocumentFiles, RewriteOptions } from "./j3.ts";
 export { DOMAIN, LogTree, domainHash, logRootRecursive, recordLeaf, recordsRoot } from "./trees.ts";
+export { Cascade, EMPTY_PROJECTIONS, LINK_DOMAIN, PROJECTION_DOMAIN, linkId, projectionHashes } from "./j4a.ts";
+export type { CascadeRecord, CascadeStatus, DependencyPair, Link, Observation, RevocationReason, StatusRow } from "./j4a.ts";
+export { QUITTANCE_FORMAT, checkQuittance, parseQuittance } from "./quittance.ts";
+export { PROJECTION_KEYS, SEAL_HASH_FIELDS, SEAL_KEYS, sealFormProblem } from "./seal.ts";
+export type { ParsedQuittance, QuittanceFailure } from "./quittance.ts";
+export {
+  CUT_DOMAIN,
+  CUT_FORMAT,
+  CUT_NOT_VERIFIED,
+  CUT_REPORT_FORMAT,
+  EXPORT_FORMAT,
+  checkManifest,
+  parseManifest,
+  cutHash,
+  cutHumanLine,
+  exportEscape,
+  exportParagraph,
+  exportParagraphs,
+  exportText,
+  verifyCut,
+} from "./cut.ts";
+export type { CutBundle, CutFailure, CutJournalState, CutReport, CutResult, DeliveredExport, Manifest } from "./cut.ts";
+export {
+  OBS_REPORT_DOMAIN,
+  OBS_REPORT_FORMAT,
+  checkReport,
+  firstDifference,
+  observationReport,
+  observationReportForCut,
+  observationReportForJournal,
+  partThroughSeal,
+  reportHash,
+} from "./obs.ts";
+export type { ObsDelivery, ObsInput, ObsJournal, ObsOutcome, ReportCheck } from "./obs.ts";
 export { checkVectors } from "./vectors.ts";
 export type { VectorOutcome } from "./vectors.ts";
 export {
@@ -87,6 +122,7 @@ export async function nodeMain(proc: NodeProcess): Promise<number> {
         await walk(path);
         return out;
       },
+      writeFile: async (path, text) => fs.promises.writeFile(path, text),
     },
     adapter,
   );

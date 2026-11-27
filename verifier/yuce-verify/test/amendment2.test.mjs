@@ -75,12 +75,12 @@ test("P2-2: J1-11 is unchanged, audit-close compared exactly, both ways", async 
   assert.deepEqual(outcome(await verify(await mutate(kernelFrame3("audit-close")))), j1("KERNEL_ID_MISUSE", 3));
 });
 
-// P2-3 asked for /4; amendment 3 replaces it with /5.
-test("P2-3: the report names the spec id of the latest amendment (/5)", async () => {
-  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/7");
-  assert.equal((await verify(base)).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
+// P2-3 asked for /4; the later amendments replace it, up to /8 (amendment 6).
+test("P2-3: the report names the spec id of the latest amendment (/8)", async () => {
+  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/8");
+  assert.equal((await verify(base)).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/8");
   const r = spawnSync(process.execPath, [BUNDLE, "journal", SMALL, "--json"], { cwd: ROOM, encoding: "utf8" });
-  assert.equal(JSON.parse(r.stdout).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
+  assert.equal(JSON.parse(r.stdout).verifier.spec, "SPEC_INDEPENDENT_VERIFIER/8");
 });
 
 test("P2-3: results on the inputs do not change (boundary/auto-seal-ack.wal still KERNEL_ID_MISUSE at frame 1)", async () => {

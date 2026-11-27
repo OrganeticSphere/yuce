@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { getPath, loadFrames, rechain, saveFrames, setPath } from "./forge.mjs";
 import { BUNDLE, ROOM, SMALL, docsOf, outcome, readRoom, textOf, verify, yv } from "./helpers.mjs";
 
@@ -31,11 +32,27 @@ function questionLine() {
   throw new Error("the input has no question with about_record");
 }
 
-test("P5: the report names SPEC_INDEPENDENT_VERIFIER/7 and the version 0.3.0", async () => {
-  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/7");
-  assert.equal(yv.VERIFIER_VERSION, "0.3.0");
+// Amendment 5 asked for /7 (0.3.0); amendment 6 replaces it with /8 (0.3.1).
+test("P5: the report names the spec id of the latest amendment (/8) and the version 0.3.1", async () => {
+  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/8");
+  assert.equal(yv.VERIFIER_VERSION, "0.3.1");
   const r = spawnSync(process.execPath, [BUNDLE, "journal", SMALL, "--json"], { cwd: ROOM, encoding: "utf8" });
-  assert.deepEqual(JSON.parse(r.stdout).verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/7", version: "0.3.0" });
+  assert.deepEqual(JSON.parse(r.stdout).verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/8", version: "0.3.1" });
+});
+
+// The release 0.3.1: package.json, its lock file, the report and the banner of the
+// built file name one version, the lock file names the license of package.json,
+// and the banner names the delivery of today.
+test("release: package.json, package-lock.json, VERIFIER_VERSION and the banner of dist/yuce-verify.mjs agree", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
+  assert.equal(pkg.version, yv.VERIFIER_VERSION);
+  assert.deepEqual([lock.version, lock.packages[""].version], [pkg.version, pkg.version]);
+  assert.equal(pkg.license, "Apache-2.0");
+  assert.equal(lock.packages[""].license, pkg.license);
+  const banner = readFileSync(BUNDLE, "utf8").split("\n")[1];
+  assert.equal(banner, `// yuce-verify ${yv.VERIFIER_VERSION}: independent verifier of YuCe journals, delivery 3: levels J0-J3 and J4a, the cut check, the observation report.`);
+  assert.ok(pkg.description.endsWith("delivery 3: levels J0-J3 and J4a, the cut check, the observation report."), pkg.description);
 });
 
 test("P5-1: a genesis record names the rules 3 or 4, and no other", async () => {
@@ -59,7 +76,9 @@ test("P5-4: the journal that starts without a document passes J0-J3", async () =
   assert.equal(withDocs.verdict, "PASS", JSON.stringify(withDocs.first_failure));
   assert.equal(withDocs.levels.J2.documents, 0);
   assert.equal(withDocs.levels.J3.result, "PASS");
-  assert.deepEqual(withDocs.not_verified, ["withdrawal_cascade", "signatures"]);
+  // amendment 6: J4a checked the cascade at its seal (frame 10); the close frame after it is not counted
+  assert.deepEqual(withDocs.not_verified, ["signatures"]);
+  assert.deepEqual(withDocs.cascade, { seals_checked: 1, checked_through_frame: 10, unchecked_frames: 0 });
   // and with no file at all: every version of every document comes from a put_document command
   const noFiles = await verify(STREAM, { documents: [] });
   assert.deepEqual([noFiles.verdict, noFiles.levels.J3], ["PASS", withDocs.levels.J3]);

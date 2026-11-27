@@ -1,0 +1,103 @@
+{
+  "journal": "open-two-seals.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "604f60c113440cf6a5d5d0952e710aaa6897da58c8d29094886b86613d7c801b",
+      "dependency_pairs": [
+        [
+          "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+          "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8"
+        ],
+        [
+          "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+          "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 3,
+      "status_hash": "c0e3d69f4102c2b0710ab12219504c05b9e74fc7f64de7d659c707d09a7fdb03",
+      "status_rows": [
+        [
+          "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "604f60c113440cf6a5d5d0952e710aaa6897da58c8d29094886b86613d7c801b",
+      "dependency_pairs": [
+        [
+          "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+          "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8"
+        ],
+        [
+          "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+          "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 6,
+      "status_hash": "3353e601ac63c7cb70a745310cf7d9225e5733aae5d649e1053e937a41199b21",
+      "status_rows": [
+        [
+          "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+          "claim",
+          false,
+          false,
+          [
+            "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86"
+          ]
+        ],
+        [
+          "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 2
+}

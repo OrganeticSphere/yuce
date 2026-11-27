@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { BUNDLE, ROOM, SMALL, yv } from "./helpers.mjs";
+import { BUNDLE, ROOM, SMALL, fixture, yv } from "./helpers.mjs";
 
 const run = (...args) => {
   const r = spawnSync(process.execPath, [BUNDLE, ...args], { cwd: ROOM, encoding: "utf8" });
@@ -55,8 +55,12 @@ test("journal --json: the report is JCS, deterministic, without paths", () => {
   assert.equal(yv.jcs(parsed.value), text);
   assert.ok(!text.includes(".wal") && !text.includes("inputs") && !text.includes("\\"));
   const report = JSON.parse(text);
-  assert.deepEqual(Object.keys(report).sort(), ["anchor", "computed", "first_failure", "input", "levels", "not_verified", "verdict", "verifier"]);
-  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/7", version: "0.3.0" });
+  assert.deepEqual(Object.keys(report).sort(), ["anchor", "cascade", "computed", "first_failure", "input", "levels", "not_verified", "quittances", "verdict", "verifier"]);
+  assert.deepEqual(report.verifier, { name: "yuce-verify", spec: "SPEC_INDEPENDENT_VERIFIER/8", version: "0.3.1" });
+  // amendment 6: without documents J3 does not run, so neither does J4a
+  assert.deepEqual(report.levels.J4a, { result: "NOT_RUN", reason: "J3 not run" });
+  assert.equal(report.cascade, null);
+  assert.deepEqual(report.quittances, []);
   assert.deepEqual(report.anchor, { head: { given: false, matched: null }, seal: { given: false, matched: null } });
   assert.deepEqual(report.not_verified, ["quotes_against_sources", "withdrawal_cascade", "signatures"]);
   assert.deepEqual(report.levels.J2, { result: "PASS", documents: 2, settings_hash: "a13963df2e41d383b808f40f7405e012cfd2568ec7154b7b992dc1cd4e081a8b" });
@@ -183,12 +187,12 @@ test("--help prints the usage", () => {
 // ---------------------------------------------------------------------------
 const KBP = "inputs/valid/kinds-batch-put.wal";
 const KBP_DOCS = "inputs/valid/kinds-batch-put.docs";
-const NOT_VERIFIED_J3 = "Not verified: withdrawal cascade, signatures.";
+const CASCADE_KBP = "Cascade: checked at 1 seals. Not verified: signatures.";
 
 test("journal --docs: J0-J3 PASS line, exit 0", () => {
   const r = run("journal", KBP, "--docs", KBP_DOCS);
   assert.equal(r.code, 0);
-  assert.equal(r.out, `J0-J3 PASS. Frames: 8. Seals: 1. Records: 13. Quotes: 5. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED_J3}\n`);
+  assert.equal(r.out, `J0-J3 PASS. Frames: 8. Seals: 1. Records: 13. Quotes: 5. Tail: closed. ${NOT_ANCHORED} ${CASCADE_KBP}\n`);
 });
 
 test("journal --docs --json: sources, J2, J3, not_verified", () => {
@@ -198,22 +202,27 @@ test("journal --docs --json: sources, J2, J3, not_verified", () => {
   assert.deepEqual(report.input.sources, { given: true, files: 3 });
   assert.deepEqual(report.levels.J2, { result: "PASS", documents: 3, settings_hash: "c3fd19b720d1418ca1e016ad97046c973a7d0994e9eab46b9de48fefd44bfa46" });
   assert.deepEqual(report.levels.J3, { result: "PASS", records: 13, quotes: 5 });
-  assert.deepEqual(report.not_verified, ["withdrawal_cascade", "signatures"]);
-  assert.equal(report.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
+  assert.deepEqual(report.levels.J4a, { result: "PASS" });
+  assert.deepEqual(report.cascade, { seals_checked: 1, checked_through_frame: 6, unchecked_frames: 0 });
+  assert.deepEqual(report.not_verified, ["signatures"]);
+  assert.equal(report.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/8");
 });
 
+// The documents of kinds-batch-put.wal without vector-a.txt, found next to this test whatever the folder layout.
+const NO_VECTOR_A = fixture("docs-without-vector-a");
+
 test("journal --docs with a document missing: INCOMPLETE, exit 3, the doc_id named", () => {
-  const r = run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a");
+  const r = run("journal", KBP, "--docs", NO_VECTOR_A);
   assert.equal(r.code, 3);
   assert.equal(
     r.out,
     `J0-J2 PASS. Frames: 8. Seals: 1. J3 not checkable: document vector-a.txt not supplied. Tail: closed. ${NOT_ANCHORED} ${NOT_VERIFIED}\n`,
   );
-  const report = JSON.parse(run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a", "--json").out);
+  const report = JSON.parse(run("journal", KBP, "--docs", NO_VECTOR_A, "--json").out);
   assert.equal(report.verdict, "INCOMPLETE");
   assert.deepEqual(report.levels.J3, { result: "NOT_CHECKABLE", reason: "document vector-a.txt not supplied" });
   assert.deepEqual(report.input.sources, { given: true, files: 2 });
-  assert.equal(run("journal", KBP, "--docs", "yuce-verify/test/fixtures/docs-without-vector-a", "--quiet").code, 3);
+  assert.equal(run("journal", KBP, "--docs", NO_VECTOR_A, "--quiet").code, 3);
 });
 
 test("journal --docs: a J3 failure, exit 1", () => {

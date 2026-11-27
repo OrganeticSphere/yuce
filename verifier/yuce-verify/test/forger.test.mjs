@@ -2,12 +2,16 @@
 // hashes, seals; with the documents also record ids and records roots) passes
 // J0-J2. J3 catches it when a changed quote is not in its source. A quote
 // replaced by another phrase that occurs once in the same document, or a change
-// outside the records, passes J0-J3: only an anchor kept outside the file tells.
+// outside the records, passes J0-J3. Since delivery 3 the forger also recomputes
+// the projections of every seal, and the same journals pass J4a too: only an
+// anchor kept outside the file tells. A forger that leaves the projections as
+// they were is caught by J4a.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { FORGED, makeForged } from "./make-forged.mjs";
-import { EXPECTED, docsOf, fixture, outcome, readRoom, textOf, verify } from "./helpers.mjs";
+import { forgeWithRecords, readDocs } from "./forge.mjs";
+import { EXPECTED, docsOf, fixture, outcome, readRoom, room, textOf, verify } from "./helpers.mjs";
 
 /** What J3 answers on each forged journal, with the documents of its original. */
 const WITH_DOCUMENTS = {
@@ -15,7 +19,7 @@ const WITH_DOCUMENTS = {
   "forged-revoke.wal": { verdict: "PASS" }, // a revoke accepts no records: invisible to J3
   "forged-checkpoint.wal": { verdict: "PASS" }, // a checkpoint accepts no records: invisible to J3
   "forged-records-quote-not-in-source.wal": { verdict: "FAIL", level: "J3", code: "QUOTE_NOT_IN_SOURCE", frame: 1 },
-  "forged-records-same-document.wal": { verdict: "PASS" }, // the honest boundary of J3 (P3-10)
+  "forged-records-same-document.wal": { verdict: "PASS" }, // the honest boundary of J3 (P3-10) and of J4a
 };
 
 for (const spec of FORGED) {
@@ -79,6 +83,20 @@ test("B4: the records forger rewrote record ids, an '@' reference and records ro
   const ref = JSON.parse(f[3]).body.command.lines[1].based_on[0];
   assert.notEqual(ref, "@479c73e57790c6f3");
   assert.equal(ref, "@" + JSON.parse(f[1]).body.outcome.result.accepted[0]);
+});
+
+test("B4, amendment 6: the same-document forgery passes J4a only because the forger recomputed the projections", async () => {
+  const spec = FORGED.find((s) => s.file === "forged-records-same-document.wal");
+  const docs = docsOf(EXPECTED.valid["kinds-batch-put.wal"].docs);
+  const full = await verify(readFileSync(fixture(`forged/${spec.file}`)), { documents: docs });
+  assert.deepEqual(full.levels.J4a, { result: "PASS" });
+  assert.deepEqual(full.cascade, { seals_checked: 1, checked_through_frame: 6, unchecked_frames: 0 });
+  // The same forgery with the projections of the seal left as they were: J4a refuses it at the seal.
+  const text = readFileSync(room(spec.from), "utf8");
+  const partial = await forgeWithRecords(text, readDocs(room(spec.docs)), spec.frame, spec.path, JSON.parse(spec.value), { projections: false });
+  const report = await verify(partial, { documents: docs });
+  assert.deepEqual(outcome(report), { verdict: "FAIL", level: "J4a", code: "PROJECTION_STATUS_MISMATCH", frame: 6 });
+  assert.equal(report.levels.J3.result, "PASS");
 });
 
 test("A6: at least one forged journal has a seal before the forged frame and one has none", () => {

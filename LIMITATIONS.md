@@ -225,14 +225,73 @@ What YuCe 0.1 does not do, does not show, or does at a cost.
 * **The reason of a withdrawal is named, not judged.** `reason_source_id` must be a document of the journal; the kernel does not
   read whether that document justifies the withdrawal. `sbgk audit-stream withdraw` requires it. The owner's tools
   `audit_revoke` and `audit_withdraw_text` take it as recommended and not required, so that the tools of 0.2 work on a journal
-  of rules 4: a withdrawal without a reason is accepted there. The Python client does not send it. What tells a planned change
-  from a withdrawal is the relation `supersedes`, not the reason.
-* **The independent verifier does not check any of this by meaning.** `yuce-verify` 0.3.0 checks the bytes of a journal of rules
-  4 as it checks one of rules 3 (levels J0 to J3); it recomputes no status, no cascade and no checkpoint. `yuce-verify` 0.2.1
-  refuses a journal of rules 4 at J2: it does not know the rules the journal names.
-* **Not measured yet:** the cost of the reads by key, of a checkpoint and of the status on a long journal of rules 4, of looking
-  for the readings a new version of a source opens again, of the scope of a submission that rests on a long chain, and the
-  memory of a journal of many sources. The sizes of the Size section are of journals of 0.2.
+  of rules 4: a withdrawal without a reason is accepted there. The Python client sends it when it is given (`revoke` and
+  `withdraw_text`, `reason_source_id`, from 0.3.1). What tells a planned change from a withdrawal is the relation `supersedes`,
+  not the reason.
+* **The independent verifier does not check any of this by meaning.** `yuce-verify` 0.3.1 checks the bytes of a journal of rules
+  3 or 4 (levels J0 to J3) and recomputes the status rows and the dependency pairs at every seal (J4a); it does not judge the
+  reason of a withdrawal, the meaning of a claim or a context checkpoint. `yuce-verify` 0.2.1 refuses a journal of rules 4 at
+  J2: it does not know the rules the journal names.
+* **Measured once, on one laptop, on synthetic journals of rules 4 (0.3.1).** On a journal of 101 000 records, opened in 5.6 s:
+  the chains of claims its status counts, 4 ms; the scope of a submission that rests on a chain of 998 claims, under 1 ms; a
+  context checkpoint of 51 000 records, 0.15 s to write and 22 ms to read back. With 2 000 readings done, looking for the
+  readings a new version of a source opens again takes 3 ms. Not measured yet: the reads by key and the memory of a journal of
+  many sources. The sizes of the Size section are of journals of 0.2.
+
+## A cut of several journals and the observation report (0.3.1)
+
+* **A cut delivers nothing and judges no meaning.** `sbgk audit-cut` makes an export and the manifest of a cut from what the
+  journals show. A withdrawal reaches another party's journal only when that party's operator withdraws the exported text
+  there. A cut sees a dependency only through the bytes of a delivered export: a claim that restates another party's claim
+  without quoting the export is invisible to it.
+* **A delivery is a document of the genesis or a `put_document` frame of its own.** A batch that brings the exact bytes of an
+  export into a journal cannot be declared: the command refuses to make such a cut, and the verifier fails one.
+* **An export carries a claim on a claim by the id of its ground only**, not by its text.
+* **A journal's part ends with the seal the cut names**, and with the close right after it where the cut says the journal is
+  closed. The frames after it are not replayed and nothing is said of them; the command says how many they are.
+  `sbgk audit-verify` is the check of a whole journal file.
+* **The report of a bundle is given only where the check of the bundle passes.** `sbgk audit-observation --bundle` reads the
+  manifest as it is written and asks what the independent verifier asks, the documents of every genesis record in
+  `<journal>/docs` among it. A refusal names the level of the check that failed and its reason in words; the failure codes of
+  the bundle check are the verifier's. The report of one journal (`--wal`) asks for the documents of its genesis record
+  too, in the folder of `--docs`; a document is known by its bytes, so the kernel does not say which file is which document.
+* **Only the named part of a journal file is validated.** Where a seal is named (`--seal`, `--at`, a manifest), the part ends
+  with that seal or with the close right after it: a given manifest decides by `closed`; `audit-cut export --seal` and
+  `audit-cut manifest --at` take a close that follows the seal; the report of one journal ends at the seal. The frames after
+  the part are neither replayed nor validated, only counted: a report or an export of that part says nothing of
+  damage after it. With no seal named the command takes the last seal itself and the whole file is its input: it answers
+  only where `sbgk audit-verify` verifies that file. A torn last line, or a frame after the last seal that does not replay,
+  is a refusal that says how to name the seal.
+* **An output is written over no file of its input, and only of the input a command knows.** `sbgk audit-cut` and
+  `sbgk audit-observation` refuse an `--out` that names the journal, the list of records, a document in `--docs` or beside
+  the journal (`<folder of the journal>/docs`), the manifest or an export of the bundle. A document kept anywhere else, and
+  not given to the command, is not known to it.
+* **The time axis of the observation report is canonical for the report only.** A claim is `stale` there by the report's own
+  rule. The kernel has two other readings of a later state, the temporal status of `quality/stale.rs` and the state the reads
+  by exact key give (`SUPERSEDED`), and for one claim the three can answer differently. Aligning the kernel's readings with
+  the report is planned for 0.3.2.
+* **The report has no single score.** Its three axes are never merged into one status and its counters are never summed. It
+  says whether a question about a claim exists, not whether it was answered: the journal has no link from an answer back to
+  a question record.
+* **A refused answer and a late one are counted, not read.** The journal records an answer the kernel refused, wholly or in
+  part (`task-repair:`), and an answer sent to a task that was already closed (`task-conflict:`), each as a checkpoint with the
+  SHA-256 of the canonical JSON of a line or of the answer, and the report counts them (`rejected_submissions`,
+  `late_submissions`). The checkpoint holds no text of a line and no message of a refusal. A line the store itself refused is
+  still in the frame of its submit, whole, as in every journal before: a replay runs the command again to the same refusal.
+  Only a line refused before the store, by a rule of the dispatcher, is in no frame. An answer is late when the journal shows
+  its task ended: its answer committed, given up, or given back as a failed attempt. A task given back plainly, a lease that
+  ran out where attempts are not counted, and a failure of a reader of a ring outside the count of attempts leave no trace
+  the kernel reads, and an answer after them is not recorded; nor is one to a card of the builder. The kernel does not read
+  whether a late answer contradicts the answer that closed the task; the same late answer from the same agent is recorded
+  once, and at most 16 late answers to one task are recorded. The server keeps the acknowledgement of a committed answer in
+  memory: after a restart the committed answer sent again cannot be told from another, and it is recorded once, as late.
+* **Signatures are not part of a cut.** The manifest names no key; a signed checkpoint of a seal is checked apart
+  (`sbgk audit-verify --checkpoint`).
+* **Measured once, on one laptop, on a synthetic journal of 101 000 records (26 MB).** `sbgk audit-observation` of the whole
+  journal takes 7.5 s with a peak working set of 700 MiB, of its part up to an early seal 0.16 s; `sbgk audit-cut export` of
+  every claim 6.5 s; `yuce-verify journal` 6.7 s. **`yuce-verify report --check` is slow on long journals:** 65 s with a peak
+  working set of 1.4 GiB on that journal, against 1.8 s on one of 11 000 records; `yuce-verify report` without `--check` was
+  not measured apart. Not measured yet: a cut of several long journals.
 
 ## Off by default, experimental
 

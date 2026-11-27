@@ -1,0 +1,39 @@
+{
+  "journal": "run.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "c72e01f7f1c0756bb9bd5d6d89ae27a30ff48658e63875a4b1e291ff5ef19aa6",
+      "dependency_pairs": [
+        [
+          "13d98ec17ce90c8cd7309e54ab1801103553dac08659dfc59e2553115f032cda",
+          "3d04cb04660afe492b4a21ccc35096d0bd61a491513a64f3e8e591a20166029e"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 5,
+      "status_hash": "6b68e3b745ca1a6d7db3d1a530629a3bae7883e312e9e539f0e8e52014f3cb19",
+      "status_rows": [
+        [
+          "3d04cb04660afe492b4a21ccc35096d0bd61a491513a64f3e8e591a20166029e",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "13d98ec17ce90c8cd7309e54ab1801103553dac08659dfc59e2553115f032cda",
+          "claim",
+          false,
+          false,
+          [
+            "3d04cb04660afe492b4a21ccc35096d0bd61a491513a64f3e8e591a20166029e"
+          ]
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 1
+}

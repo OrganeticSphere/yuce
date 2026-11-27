@@ -1,0 +1,203 @@
+{
+  "journal": "d3-version-back-and-reclose.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "20281c06328d2f9bc59b33c7d53cca0be85feef5151eb7cf2872c1a2e1220b06",
+      "dependency_pairs": [
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 3,
+      "status_hash": "eb9503afe1406524c04687a00870882c3fa2bbc8d5c8ca3f0c76fd50dc256b7f",
+      "status_rows": [
+        [
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "20281c06328d2f9bc59b33c7d53cca0be85feef5151eb7cf2872c1a2e1220b06",
+      "dependency_pairs": [
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 5,
+      "status_hash": "8e923aa2279ae8be70ce7709024448c2a6f28311158e93b7996fb3ec21dce7f0",
+      "status_rows": [
+        [
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "claim",
+          false,
+          false,
+          [
+            "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+          ]
+        ],
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "claim",
+          false,
+          false,
+          [
+            "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+          ]
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "20281c06328d2f9bc59b33c7d53cca0be85feef5151eb7cf2872c1a2e1220b06",
+      "dependency_pairs": [
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 8,
+      "status_hash": "8e923aa2279ae8be70ce7709024448c2a6f28311158e93b7996fb3ec21dce7f0",
+      "status_rows": [
+        [
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "claim",
+          false,
+          false,
+          [
+            "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+          ]
+        ],
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "claim",
+          false,
+          false,
+          [
+            "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+          ]
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "20281c06328d2f9bc59b33c7d53cca0be85feef5151eb7cf2872c1a2e1220b06",
+      "dependency_pairs": [
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 10,
+      "status_hash": "0ee1f2cc764b95282cdb4189ad8dd5ef7e4cb973dcf123c350c67cf18daecd3f",
+      "status_rows": [
+        [
+          "f6b4fedb697f56cc209e6c1d3f25f39f5884b82833795a602a6105524120257f",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "dc9e8bb30e78c285513fe2e1e09f69a3dec12340c0a79a5c5da7ed6e5ae5fa68",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "beda434440ef3f92ef1a9eb21d5d539b90340c5fc97130b3ebd22b2937b6e808",
+          "claim",
+          false,
+          false,
+          [
+            "36083a8f448dae2169910da10e7172efc803953164d30153196bf6bf241176b1"
+          ]
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 4
+}

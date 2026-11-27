@@ -1,0 +1,5 @@
+{
+ "verdict": "FAIL",
+ "code": "REPORT_HASH_MISMATCH",
+ "report": "report.json"
+}

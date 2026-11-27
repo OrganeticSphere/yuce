@@ -399,6 +399,12 @@ fn a_context_checkpoint_is_refused_unless_it_follows_the_last_one_and_lists_what
 /// bytes again, quotes, claims on claims, planned changes, withdrawals by record and by text, and a put document inside a batch.
 /// After every command the flags kept from the state before equal a whole pass (`support_flags` checks it too, in every test), the
 /// index of the claims by key equals a walk of the records, and a replay of the journal ends at the same roots.
+///
+/// The same histories pin the rule the independent verifier is given for an observation (its specification, amendment 6,
+/// P6-4): an observation stands exactly when its anchor is not revoked and its document is at the version the quote was bound
+/// to. The kernel asks three things of it (an evidence node that is active, a binding, an equal version). After every command
+/// the two rules agree on every observation; a binding never changes; and an anchor once revoked stays revoked, also when the
+/// bytes of its version come back.
 #[test]
 fn a_put_document_keeps_the_flags_and_the_indices_a_whole_pass_computes() {
     let versions = [
@@ -409,6 +415,9 @@ fn a_put_document_keeps_the_flags_and_the_indices_a_whole_pass_computes() {
     ];
     let lines = ["Alpha one.", "Alpha two.", "Alpha three.", "Alpha four.", "Alpha two, as amended.", "Alpha zero."];
     let (mut puts, mut chained, mut withdrawn, mut replaced, mut checkpoints) = (0, 0, 0, 0, 0);
+    // what the rule of P6-4 met: quotes that came back with their version, quotes off the current version whose anchor is not
+    // revoked, and quotes of the current version whose anchor is
+    let (mut came_back, mut off_version, mut revoked_on_version) = (0usize, 0usize, 0usize);
     for seed in 0..10u64 {
         let mut rng = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         let mut next = move |n: u64| {
@@ -418,6 +427,11 @@ fn a_put_document_keeps_the_flags_and_the_indices_a_whole_pass_computes() {
         let path = TempPath::new();
         let mut s = stream(&path.0);
         s.put_document("feed", "a", versions[0].as_bytes()).unwrap();
+        // the verifier's side of P6-4, kept by the test: the anchors seen revoked, the binding of each observation as first
+        // seen, and whether it stood after the command before
+        let mut revoked: BTreeSet<Hash> = BTreeSet::new();
+        let mut bindings: HashMap<RecordId, (Hash, Hash, usize, usize)> = HashMap::new();
+        let mut stood: HashMap<RecordId, bool> = HashMap::new();
         for step in 0..60u64 {
             let claims: Vec<RecordId> = s.records_since(0).iter().filter(|r| r.kind == RecordKind::Claim).map(|r| r.id).collect();
             let observes: Vec<RecordId> = s.records_since(0).iter().filter(|r| r.kind == RecordKind::Observe).map(|r| r.id).collect();
@@ -517,6 +531,21 @@ fn a_put_document_keeps_the_flags_and_the_indices_a_whole_pass_computes() {
                 );
                 assert_eq!(matches!(state, RecordState::Active | RecordState::Superseded(_)), standing[position], "seed {seed} step {step}");
             }
+            for r in s.core.data.records.iter().filter(|r| r.kind == RecordKind::Observe) {
+                let b = s.core.data.evidence.get(&r.id).expect("an observation is bound when it is accepted");
+                let bound = (b.evidence, b.version, b.start, b.end);
+                assert_eq!(*bindings.entry(r.id).or_insert(bound), bound, "seed {seed} step {step}: a binding never changes");
+                if s.core.session.engine.status_of(&b.evidence) == Some(crate::node::EV_REVOKED) {
+                    revoked.insert(b.evidence);
+                }
+                let on_version = s.core.session.arena.doc(r.doc_id.as_deref().expect("a quote names its document")).map(|d| d.version_id) == Some(b.version);
+                let by_two = !revoked.contains(&b.evidence) && on_version;
+                assert_eq!(s.core.observe_grounded(r), by_two, "seed {seed} step {step}: {} by the kernel's rule and by P6-4", r.id.short());
+                assert_eq!(fresh.get(&r.id).map(|v| v.0), Some(by_two), "seed {seed} step {step}: {} in the flags", r.id.short());
+                came_back += usize::from(stood.insert(r.id, by_two) == Some(false) && by_two);
+                off_version += usize::from(!on_version && !revoked.contains(&b.evidence));
+                revoked_on_version += usize::from(on_version && revoked.contains(&b.evidence));
+            }
             let _ = s.audit_root();
         }
         let held = (told(&s), s.claim_chains(), vsc::keys(&s, &[], Some(5000)));
@@ -527,6 +556,10 @@ fn a_put_document_keeps_the_flags_and_the_indices_a_whole_pass_computes() {
     assert!(
         puts > 100 && chained > 40 && withdrawn > 30 && replaced > 10 && checkpoints > 20,
         "{puts} puts, {chained} chains, {withdrawn} withdrawals, {replaced} planned changes, {checkpoints} context checkpoints"
+    );
+    assert!(
+        came_back > 5 && off_version > 100 && revoked_on_version > 100,
+        "{came_back} quotes came back with their version, {off_version} looks at a quote off the current version, {revoked_on_version} at a revoked one on it"
     );
 }
 

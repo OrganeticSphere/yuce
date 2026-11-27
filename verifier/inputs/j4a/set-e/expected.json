@@ -1,0 +1,27 @@
+{
+ "journal": "cut/V-CUT-1/a/run.wal",
+ "seal_frame": 6,
+ "E1-with-status.proof.json": {
+  "J4a": "PASS",
+  "code": null
+ },
+ "E2-without-status.proof.json": {
+  "J4a": "PASS",
+  "code": null
+ },
+ "E4-other-journal.proof.json": {
+  "J4a": "FAIL",
+  "code": "QUITTANCE_SEAL_UNKNOWN"
+ },
+ "E3-status-altered.proof.json": {
+  "J4a": "FAIL",
+  "code": "QUITTANCE_STATUS_MISMATCH",
+  "record": "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+  "note": "E1 with the status row of c2 written as not standing"
+ },
+ "E5-seal-without-result.proof.json": {
+  "J4a": "FAIL",
+  "code": "QUITTANCE_FORM",
+  "note": "E1 with seal.body.outcome.result taken out"
+ }
+}

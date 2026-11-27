@@ -1,0 +1,18 @@
+{
+ "cut_hash": "6123ffa119f5158b0b89a75eca59a6160306a47b16bc0eebd2aa014a790f8aed",
+ "failures": [
+  {
+   "code": "CUT_UNDECLARED_DELIVERY",
+   "doc_id": "export-e",
+   "export": "e1",
+   "frame": 1,
+   "journal": "b"
+  }
+ ],
+ "ids": {
+  "c3": "75a2cd774c83fd5d1245f4b4271538f02e4a2aac89ab249f07dcc0d366615ff5",
+  "o3": "e3ad7d0dcfb67df067ba8423e2d714dff5f3f2ede2cd9d519938f50f7042dadf"
+ },
+ "notes": "the receiving journal takes the exact bytes of e1 in by an operation of a batch (written by the library), and no delivery is declared",
+ "verdict": "FAIL"
+}

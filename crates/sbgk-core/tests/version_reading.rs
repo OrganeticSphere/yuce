@@ -427,6 +427,41 @@ fn argon_v04_restart_before_submit_has_distinct_task_id() {
     println!("V04 restart: old {} != new {}; stale public submit refused", old["task_id"], new["task_id"]);
 }
 
+/// Where a run counts attempts, a task given up with a reason or timed out loses its lease on a path of its own, not through
+/// an ordinary release. The grant of a CHANGE task is closed durably there too: the review of 6600f9c8 found the store still
+/// taking records under the grant of a task the dispatcher reported released.
+#[test]
+fn a_change_grant_does_not_survive_a_task_given_up_with_a_reason_or_timed_out_where_attempts_are_counted() {
+    for how in ["reason", "timeout"] {
+        let mut f = Fixture::new();
+        // the journal's own setting of the count of attempts, as a server writes it at the start of a run
+        let policy = json!({"key":"audit:mcp:coverage","from":0,"to":0,"context":{"agent_attempts":3}});
+        assert_eq!(f.s().submit_operations_id("policy", "kernel", &[], Some(policy)).unwrap()["checkpointed"], true);
+        let cfg = DispatchConfig { versions: true, relation_lines: false, agent_attempts: Some(3), ..Default::default() };
+        let mut d = Dispatcher::new(cfg, vec![]);
+        let t = d.acquire_for(f.s(), "a", true, None, Some(&[TaskKind::Change]), 0);
+        assert_eq!(t["kind"], "CHANGE", "{t}");
+        let task = t["task_id"].as_str().unwrap();
+        d.persist_change_lease(f.s(), task).unwrap();
+        let scope = versions::card_scope(&f.map["cards"][0]);
+        let out = match how {
+            "reason" => d.fail_task(f.s(), task, "a", "ALL_ANSWERS_REFUSED"),
+            _ => d.timeout_task(f.s(), task, "a"),
+        };
+        assert_eq!(out["status"], "RELEASED", "{how}: {out}");
+        assert!(f.s().has_checkpoint(&format!("version:closed:{task}")), "{how}: the grant is closed in the journal");
+        let late = f.s().submit_records_id("stale-direct-core", "a", task, &scope, &records("late_"));
+        assert!(late.error.is_some(), "{how}: the store takes nothing under the closed grant");
+        assert_eq!(d.submit(f.s(), task, "a", &[], 1)["status"], "STALE_TASK", "{how}");
+        // the closure and the refused late write replay
+        let roots = (f.s().audit_root(), f.s().engine_root(), f.s().session_root(), f.s().wal_head());
+        f.state.take();
+        let recovered = AuditState::open(&f.path).unwrap();
+        assert_eq!((recovered.audit_root(), recovered.engine_root(), recovered.session_root(), recovered.wal_head()), roots, "{how}");
+        f.state = Some(recovered);
+    }
+}
+
 #[test]
 fn argon_v04_core_grants_do_not_survive_release_expiry_completion_or_restart() {
     let mut surviving = Vec::new();

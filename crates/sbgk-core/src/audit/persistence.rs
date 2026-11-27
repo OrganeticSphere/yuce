@@ -538,9 +538,38 @@ impl AuditJournal {
         Ok(bytes)
     }
 
+    /// The checks of `read` on the first frames of the file only: the first `required` frames must be there and pass, the one
+    /// after them is taken too when `and_next` and it passes, and nothing after that is validated. Returns the scan of the
+    /// frames taken and the number of complete lines of the file after them. The part of a journal that a cut names is read so,
+    /// as a file of its own (`SPEC_CUT_AND_BUNDLE_v1`, B1): bytes outside the part do not take the part away.
+    pub(crate) fn read_prefix(path: &Path, required: usize, and_next: bool) -> KResult<(JournalScan, usize)> {
+        let mut bytes = Self::slurp(&mut File::open(path).map_err(|e| io_error("open", e))?)?;
+        let wanted = required.saturating_add(usize::from(and_next));
+        let (mut end, mut found) = (0, 0);
+        while found < wanted {
+            let Some(i) = bytes[end..].iter().position(|b| *b == b'\n') else { break };
+            end += i + 1;
+            found += 1;
+        }
+        if found < required || required == 0 {
+            return Err(error(format!("audit WAL holds {found} complete frames: frame {} is not among them", required.saturating_sub(1))));
+        }
+        let lines_after = bytes[end..].iter().filter(|b| **b == b'\n').count();
+        bytes.truncate(end);
+        let scan = Self::check_first(bytes, required)?;
+        let after = lines_after + (found - scan.payloads.len());
+        Ok((scan, after))
+    }
+
     /// The checks of every complete frame among `bytes`.
     fn check(bytes: Vec<u8>) -> KResult<JournalScan> {
-        let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        Self::check_first(bytes, usize::MAX)
+    }
+
+    /// As `check`, but only the first `required` frames must pass: at the first frame after them that does not, the scan ends,
+    /// and that frame and the bytes after it are left out of it.
+    fn check_first(mut bytes: Vec<u8>, required: usize) -> KResult<JournalScan> {
+        let mut complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         if complete == 0 {
             return Err(error("audit WAL has no complete genesis frame"));
         }
@@ -552,13 +581,25 @@ impl AuditJournal {
         let mut records_roots = Vec::new();
         let mut chain = FrameChain::new();
         let mut start = 0;
+        let mut ends_early = false;
         for line in bytes[..complete - 1].split(|b| *b == b'\n') {
             // checked and dropped: the payload is parsed again when it is replayed
-            let (_, head, records_root) = chain.frame(line)?;
+            let (_, head, records_root) = match chain.frame(line) {
+                Ok(frame) => frame,
+                Err(e) if lines.len() < required => return Err(e),
+                Err(_) => {
+                    ends_early = true;
+                    break;
+                }
+            };
             lines.push((start, start + line.len()));
             start += line.len() + 1;
             heads.push(head);
             records_roots.extend(records_root);
+        }
+        if ends_early {
+            bytes.truncate(start);
+            complete = start;
         }
         let (length, sha256) = (bytes.len() as u64, sha256(&bytes));
         let format = chain.format.expect("a complete genesis frame");

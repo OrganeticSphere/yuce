@@ -10,7 +10,7 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObj
 export type JsonObject = Map<string, JsonValue>;
 
 export type ParseResult =
-  | { ok: true; value: JsonValue; badNumber: boolean }
+  | { ok: true; value: JsonValue; badNumber: boolean; duplicateKey: boolean }
   | { ok: false; error: string };
 
 /** Largest integer a journal may contain: 2^53 - 1 (SPEC section 2). */
@@ -78,13 +78,15 @@ type Container =
  * whitespace only from {space, tab, LF, CR}. Numbers must follow the RFC
  * grammar (else the text is not JSON); numbers that are valid JSON but are not
  * an integer from 0 to 2^53-1 written as plain digits set badNumber (SPEC
- * section 2, J0-5). A lone surrogate, raw or escaped, is a parse error.
+ * section 2, J0-5). A key repeated in one object sets duplicateKey (the
+ * value keeps the last one). A lone surrogate, raw or escaped, is a parse error.
  * The parser is iterative, so deep nesting cannot overflow the call stack.
  */
 export function parseJson(text: string): ParseResult {
   const n = text.length;
   let pos = 0;
   let badNumber = false;
+  let duplicateKey = false;
 
   const fail = (msg: string): never => {
     throw new ParseError(`${msg} at character ${pos}`);
@@ -303,6 +305,7 @@ export function parseJson(text: string): ParseResult {
           }
           fail("expected ',' or ']'");
         } else {
+          if (top.members.has(top.key)) duplicateKey = true;
           top.members.set(top.key, value);
           if (d === 0x2c) {
             pos++;
@@ -321,7 +324,7 @@ export function parseJson(text: string): ParseResult {
     }
     skipWs();
     if (pos !== n) fail("unexpected data after the JSON value");
-    return { ok: true, value: result, badNumber };
+    return { ok: true, value: result, badNumber, duplicateKey };
   } catch (e) {
     if (e instanceof ParseError) return { ok: false, error: e.message };
     throw e;

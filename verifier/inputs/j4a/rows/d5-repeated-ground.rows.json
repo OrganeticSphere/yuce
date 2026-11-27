@@ -1,0 +1,67 @@
+{
+  "journal": "d5-repeated-ground.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "e19c555620493a985988df05a9e42ccf928c199b4c372ff7a1a4f9cd08b16431",
+      "dependency_pairs": [
+        [
+          "f36378403316f76ac192e0541492b2c09a9889afdaf51108f87b0a471da7f25f",
+          "fcfff857145ea0918e1b89d1a31c2bff59c8866dba13965913eae50dcedcfb95"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 3,
+      "status_hash": "c7f57f3c21f0d664a1a72db9ba811885738e7a4aa8a3de938baefb949bddef94",
+      "status_rows": [
+        [
+          "fcfff857145ea0918e1b89d1a31c2bff59c8866dba13965913eae50dcedcfb95",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "f36378403316f76ac192e0541492b2c09a9889afdaf51108f87b0a471da7f25f",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "e19c555620493a985988df05a9e42ccf928c199b4c372ff7a1a4f9cd08b16431",
+      "dependency_pairs": [
+        [
+          "f36378403316f76ac192e0541492b2c09a9889afdaf51108f87b0a471da7f25f",
+          "fcfff857145ea0918e1b89d1a31c2bff59c8866dba13965913eae50dcedcfb95"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 6,
+      "status_hash": "4593d023e1ccd2fbd200d1fa85a137ddd40f56cf16cf7fd8cf50fbeb3bd0490c",
+      "status_rows": [
+        [
+          "fcfff857145ea0918e1b89d1a31c2bff59c8866dba13965913eae50dcedcfb95",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "f36378403316f76ac192e0541492b2c09a9889afdaf51108f87b0a471da7f25f",
+          "claim",
+          false,
+          false,
+          [
+            "fcfff857145ea0918e1b89d1a31c2bff59c8866dba13965913eae50dcedcfb95"
+          ]
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 2
+}

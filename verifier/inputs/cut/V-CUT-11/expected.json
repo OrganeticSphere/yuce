@@ -1,0 +1,12 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_IMPORT_MODIFIED",
+   "journal": "b",
+   "doc_id": "inbound",
+   "frame": 2
+  }
+ ],
+ "cut_hash": "dc5820ec64a79c2f16878907e2030b45b699f38a51973e0bc9b86e725730584b"
+}

@@ -1,0 +1,16 @@
+{
+ "verdict": "PASS",
+ "across": {
+  "paragraphs_fallen": 1,
+  "observations_checked": 1
+ },
+ "ids": {
+  "o1": "71dfd8901f29686199b79fa3960eb78d62dd45b3a8affab9c5a24cc3b91d5ff4",
+  "o2": "826a3cacc7f793b63d3971fac9f70aa367aa40fc26a5c599cdb232863c449a3a",
+  "c1": "4bc85d9f3c2c06db0ba84a29fcc659c869c2f64f033992412f019fb3e3dfd12f",
+  "c2": "d4e8457c8bca8f79c8bba7bb39aaf382e28f57d257253bde89be64f890b35291",
+  "o3": "a4ed0b2288d693888a41cd7abd3a25cec81f52a30baa7ca9041bc8915c5add6c",
+  "c3": "83ad41e07652ec34a70a42158ed4e52ff71d10493692ad5e12693e50f0b4cbf0"
+ },
+ "cut_hash": "089329f62c6fdb03352fad3521f5786e8706b72c26b2ef6cc41da4a08f49822d"
+}

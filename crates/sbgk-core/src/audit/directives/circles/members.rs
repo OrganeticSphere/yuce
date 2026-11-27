@@ -148,6 +148,16 @@ impl Dispatcher {
         }
         self.persist_members(s)
     }
+    /// The grant of a CHANGE task is closed durably before its lease goes on a path that removes the lease itself, as an
+    /// ordinary release closes it (`release_durable`). Without the `version:closed` checkpoint the store goes on taking
+    /// records under the grant of a task the dispatcher reports released (the review of 6600f9c8).
+    fn close_change_grant<S: AuditStore>(&mut self, s: &mut S, task: &str, kind: TaskKind) -> Result<(), Value> {
+        if self.cfg.versions && kind == TaskKind::Change {
+            self.pending_version_closures.insert(task.into(), ("released".into(), 0));
+            self.persist_version_closures(s).map_err(|e| json!({"status":"error","code":"CHANGE_CLOSURE_NOT_DURABLE","error":e.to_json()}))?;
+        }
+        Ok(())
+    }
     /// Authenticated self-report of a transport/model timeout. No subject can evict another subject.
     pub fn timeout_task<S: AuditStore>(&mut self, s: &mut S, task: &str, agent: &str) -> Value {
         if self.cfg.circles.is_none() && self.cfg.agent_attempts.is_none() {
@@ -158,6 +168,9 @@ impl Dispatcher {
         };
         if l.agent != agent {
             return json!({"status":"error","code":"TASK_NOT_OWNED","task_id":task});
+        }
+        if let Err(error) = self.close_change_grant(s, task, l.kind) {
+            return error;
         }
         // a RELATE turn's reading is stored: its timeout records no failure of the reading's key (claude-reviewer's RV-02 of 8509eb18)
         if self.cfg.agent_attempts.is_some() && !l.relate {
@@ -184,6 +197,71 @@ impl Dispatcher {
         }
         self.leases.remove(task);
         json!({"status":"RELEASED","task_id":task,"timed_out":true,"excluded_until_next_shift":true})
+    }
+    /// An agent's own report that its attempt at a task failed for a reason that is no timeout (`audit_release` with `reason`,
+    /// 0.3.1): every answer of the model was refused, the model gave nothing to send. The lease goes back and the attempt
+    /// counts as a failed one, as a failed lease released does. The journal gets the reason the agent gave, never a timeout
+    /// that did not happen: in the count of attempts when the run bounds them (`agent_attempts`), in the mark of the ring for
+    /// a reader of one, and otherwise in a checkpoint `task-failed:<task>` of its own (a RELATE turn is never in the count:
+    /// its reading is stored). The grant of a CHANGE task is closed first, as a release closes it. Whether a reader of a ring is left out
+    /// until the next shift is the server's setting (`exclude_on_failure`), not the agent's choice. No subject reports for
+    /// another. `reason` is a code the caller has checked (`failure_reason`).
+    pub fn fail_task<S: AuditStore>(&mut self, s: &mut S, task: &str, agent: &str, reason: &str) -> Value {
+        let Some(l) = self.leases.get(task).cloned() else {
+            return json!({"status":"STALE_TASK","task_id":task});
+        };
+        if l.agent != agent {
+            return json!({"status":"error","code":"TASK_NOT_OWNED","task_id":task});
+        }
+        if let Err(error) = self.close_change_grant(s, task, l.kind) {
+            return error;
+        }
+        let mut out = json!({"status":"RELEASED","task_id":task,"reason":reason});
+        let reader = self.cfg.circles.as_ref().is_some_and(|c| c.readers.iter().any(|a| a == agent));
+        let counted = self.cfg.agent_attempts.is_some();
+        // a RELATE turn's reading is stored: its failure is no failure of the reading's key, as for a timeout
+        let in_the_count = counted && !l.relate;
+        if in_the_count {
+            match self.agent_failure_record(s, &l.key, task, agent, reason) {
+                Ok(e) => out["failures"] = e["failures"].clone(),
+                Err(error) => return json!({"status":"error","code":"AGENT_FAILURE_CHECKPOINT_REFUSED","error":error}),
+            }
+        }
+        if reader {
+            if self.cfg.exclude_on_failure {
+                self.exclude_member(agent, task, reason);
+                out["excluded_until_next_shift"] = json!(true);
+            } else {
+                self.members.events.push(json!({"kind":"ATTEMPT_FAILED","agent":agent,"task":task,"reason":reason,"sync_step":self.members.epoch}));
+                self.members.dirty = true;
+            }
+            if let Err(e) = self.persist_members(s) {
+                return json!({"status":"error","code":"RING_CHECKPOINT_REFUSED","error":e});
+            }
+        } else if !in_the_count {
+            // neither the count of attempts nor the mark of a ring carries the reason: a checkpoint of its own does. A failed
+            // RELATE turn of a counted run is such a case (the review of 6600f9c8: its reason was written nowhere)
+            let attempt = self.next_attempt(task);
+            let context = json!({"task_id":task,"work_key":l.key,"kind":l.kind.name(),"agent":agent,"attempt":attempt,"reason":reason});
+            let checkpoint = json!({"key":format!("task-failed:{task}"),"from":0,"to":0,"context":context});
+            match s.submit_operations_id(&format!("{task}#failed{attempt}"), "kernel", &[], Some(checkpoint)) {
+                Ok(v) if v["checkpointed"] == true && v["error"].is_null() => {}
+                Ok(v) => return json!({"status":"error","code":"FAILURE_CHECKPOINT_REFUSED","error":v["error"]}),
+                Err(e) => return json!({"status":"error","code":"FAILURE_CHECKPOINT_REFUSED","error":e.to_json()}),
+            }
+        }
+        if counted {
+            self.leases.remove(task);
+            out["unresolved"] = json!(self.unresolved.contains(&l.key));
+        } else {
+            self.mark_failed(task);
+            let released = self.release_durable(s, task, agent);
+            if released["status"] != "RELEASED" {
+                return released;
+            }
+            out["unresolved"] = released["unresolved"].clone();
+        }
+        out
     }
     pub(in crate::audit::directives) fn expire_circle_lease(&mut self, agent: &str, task: &str, kind: TaskKind) -> bool {
         let reader = self.cfg.circles.as_ref().is_some_and(|c| c.readers.iter().any(|a| a == agent));

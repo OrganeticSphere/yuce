@@ -1,0 +1,11 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_JOURNAL_MISMATCH",
+   "journal": "a",
+   "field": "wal_head"
+  }
+ ],
+ "cut_hash": "ac429b8d86063bc4a010b6eab395d5a99a4675e3edc985fac803c4ee6b80bbbf"
+}
