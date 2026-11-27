@@ -432,9 +432,10 @@ handed out one slip at a time, and what is accepted is bound into one record tha
 
 YuCe was conceived and led by Aset Uisin (OrganeticSphere). It was built with a team of AI models, each in its own role:
 
-* **Gemini Argon**: architecture and system design.
+* **Gemini Neon**: architecture and system design.
 * **Claude Opus 5.5**: software development.
-* **ChatGPT-6.1 Sol**: software development, code review and verification.
+* **Claude Fable 5.2**: research and software development.
+* **ChatGPT-6.2 Sol**: software development, code review and verification.
 
 The benchmark answers were graded by other models, named with each comparison in [BENCHMARKS.md](BENCHMARKS.md).
 
