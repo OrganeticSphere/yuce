@@ -1,0 +1,5 @@
+yuce-export/1 run=cut-a20 seal=9863327b4bcacb4db3c5ef3538cb7bc8d0b0431e5098b918648aac6cef3932f0 records=2
+
+Record 72e7c52e73990f9835e84856b71d13d3e830fc4f266bda7724e8e764929de27b: Party A reports that gamma holds in the east. Quotes: [source] "Gamma holds in the eastern field."
+
+Record fd688c42b08d466857257ea0e4f4f3eb226e0ddd8334ec5ecbb8dfda2b1b5da9: Party A concludes that the east is held. Rests on: 72e7c52e73990f9835e84856b71d13d3e830fc4f266bda7724e8e764929de27b

@@ -318,11 +318,24 @@ fn cached_submit_ack_is_bound_to_the_authenticated_worker_and_exact_lines() {
     let before = owner.call("audit_status", json!({}));
     assert_eq!(other.call("audit_submit", arguments.clone())["code"], "TASK_NOT_OWNED");
     assert_eq!(worker.call("audit_submit", json!({"task_id":task["task_id"],"lines":[]}))["code"], "SUBMISSION_MISMATCH");
+    // 0.3.1 (Codex's review of dbb7de2a): a refused mismatch is a late answer the journal keeps, one checkpoint of the kernel
+    // each, as after a restart; it changes no record, no task and no card
+    let mismatched = owner.call("audit_status", json!({}));
+    for field in ["records", "dispatch", "builder"] {
+        assert_eq!(mismatched[field], before[field], "a refused mismatch must not change {field}");
+    }
+    assert_ne!(mismatched["audit_root"], before["audit_root"], "the late answers are in the journal");
     drop(worker);
     let mut reconnected = Client::connect(server.port, W1);
     assert_eq!(reconnected.call("audit_submit", arguments), first, "the original accepted IDs and all ACK fields survive reconnect");
     let after = owner.call("audit_status", json!({}));
     for field in ["audit_root", "engine_root", "wal_head", "transaction_sequence", "records", "dispatch", "builder"] {
-        assert_eq!(after[field], before[field], "cache hits and refused mismatches must not change {field}");
+        assert_eq!(after[field], mismatched[field], "a cache hit must not change {field}");
     }
+    drop((reconnected, other, owner, server));
+    use sbgk_core::audit::AuditStore;
+    let state = sbgk_core::audit::state::AuditState::open(&fixture.0.join("run.wal")).unwrap();
+    let mut late: Vec<Value> = state.checkpoint_keys("task-conflict:").iter().map(|k| state.checkpoint(k).unwrap()["context"].clone()).collect();
+    late.sort_by_key(|c| c["agent"].as_str().unwrap().to_string());
+    assert_eq!(late.iter().map(|c| (c["agent"].as_str().unwrap(), c["lines"].as_u64().unwrap())).collect::<Vec<_>>(), [("w1", 0), ("w2", 1)], "{late:?}");
 }

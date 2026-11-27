@@ -1,0 +1,10 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_FORM"
+  }
+ ],
+ "notes": "the manifest of V-CUT-1 with the key mode written twice",
+ "cut_hash": null
+}

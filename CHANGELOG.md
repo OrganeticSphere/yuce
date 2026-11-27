@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.3.1 (2026-11-28)
+
+* **A cut of several journals.** Several parties keep journals of their own; a cut binds them at named seals, with the exports
+  from one journal to another and their deliveries, and a receiver checks the whole bundle offline.
+  * `sbgk audit-cut export --wal <journal> [--seal <n>] [--records <file>] --out <file>`: an export of claims at a seal, one
+    paragraph each, with the quotes they rest on (`yuce-export/1`).
+  * `sbgk audit-cut manifest --bundle <folder> [--at <name>=<n>,...]`: the manifest of the bundle (`yuce-cut/1`), made of what
+    the journals show. A delivery is a document of a genesis record or a `put_document` frame of its own; a batch that brings in
+    an export's exact bytes cannot be declared, and such a cut is refused.
+  * The rules are `SPEC_CUT_AND_BUNDLE_v1` (levels B0 to B4), with the vectors `V-CUT-1` to `V-CUT-26`.
+* **The observation report.** `sbgk audit-observation --wal <journal> [--seal <n>] --docs <folder>`, or `--bundle <folder>`, writes
+  `yuce-observation-report/1`: for every claim three separate axes (support, dispute, time), who made it and on which bytes,
+  what it rests on within its journal and across journals, the questions about it and the conflicting values of exact keys,
+  and the counts of answers refused and answers sent to a task already closed. The axes are never merged into one status. A
+  report is given only of an input the independent verifier admits: a manifest is read as it is written. The rules are
+  `SPEC_OBSERVATION_REPORT_v1`, with the vectors `V-OBS-1` to `V-OBS-9`.
+* **`yuce-verify` 0.3.1 recomputes the withdrawal cascade.** At every seal of a journal it recomputes the status rows and the
+  dependency pairs the seal names (level J4a, amendment 6), checks a bundle (`yuce-verify cut`) and computes or checks an
+  observation report byte for byte (`yuce-verify report`). Where the vectors of the specifications and the seals of their
+  journals give a report, the kernel's and the verifier's are equal byte for byte; where the input journal or bundle is not
+  admitted, both refuse.
+* **Refused and late answers are recorded in checkpoints without their text.**
+  * An answer the kernel refused, in part or whole, gets `task-repair:<task>:<attempt>`: the place of the line, the SHA-256 of
+    its canonical JSON and the code of the refusal, with the field (a name of the kernel's own) and the rule where they are
+    known; not the text of a line or the message of a refusal.
+  * An answer sent to a task the journal shows ended gets `task-conflict:<task>:<n>`: who sent it, how many lines it had, the
+    SHA-256 of the answer, and how and by whom the task ended. It is written also while the server still holds the
+    acknowledgement of the task; the same late answer from the same agent is recorded once, and at most 16 for one task.
+  * A line the store itself refused stays in the frame of its submit, as in every journal before, so that a replay reaches the
+    same refusal; see LIMITATIONS.
+* **A task given back for a reason of the agent's own.** `audit_release` takes `reason`, a code such as `ALL_ANSWERS_REFUSED`:
+  the attempt is counted and the journal keeps the reason, in the count of attempts, in the mark of a ring or in a checkpoint
+  `task-failed:<task>`. The Python client sends `reason` and, for `revoke` and `withdraw_text`, `reason_source_id`.
+* **Reading a part of a journal.** Where a seal is named (`--seal`, `--at`, a manifest), only the part up to it is read and
+  checked. Whether the close right after the seal belongs to the part:
+  * a given manifest decides it by `closed`;
+  * `audit-cut export --seal` and `audit-cut manifest --at` take a close that follows the seal into the part, and the manifest
+    then says `closed: true`;
+  * the report of one journal (`audit-observation --wal`) ends at the seal.
+
+  With no seal named, the whole file is the input, as for `sbgk audit-verify`: a torn last line is refused, and the refusal
+  names the last seal. A command writes its output over no file of its input.
+* **Fixed.** A CHANGE task that timed out where attempts are counted closes its grant: in 0.3.0 the store went on taking records
+  under it. A task given back for a reason closes its grant the same way.
+* **Changed.** The checkpoints of a task no longer name the local ids of the lines whose references got their `@`.
+* **Not changed.** The journal format, the root format, the seal format and the rules `r2r-audit-rules/4`.
+* The costs measured on long journals, and the slow report of the independent verifier on them, are in LIMITATIONS.
+
 ## 0.3.0 (2026-11-26)
 
 * **A journal that takes its sources as they come.** A run may start without a document and take each source later, and a new

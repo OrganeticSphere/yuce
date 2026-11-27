@@ -1,0 +1,87 @@
+{
+  "journal": "d8-batch-prefix-put-not-applied.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "735c02e15998c4eb17a3cc1ce68ff0da89a72fb74872469b73de317452c0049f",
+      "dependency_pairs": [
+        [
+          "88c51f0c3582078d37014f31709cb0b4e0a2a6b88e843cd2a8b6005238f5bf80",
+          "15deecedea01488a0b82871314442ce659a13e2c2380546c02dd5ee5c2d33123"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 3,
+      "status_hash": "a074caa62b009e30ae5a24da468199dee75e608f8171e3c12b59fb9314c6d9a2",
+      "status_rows": [
+        [
+          "15deecedea01488a0b82871314442ce659a13e2c2380546c02dd5ee5c2d33123",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "88c51f0c3582078d37014f31709cb0b4e0a2a6b88e843cd2a8b6005238f5bf80",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "49d4c37a1bc9540dd229a60a592629fb41f9e0d208b784b177eb37276571b834",
+      "dependency_pairs": [
+        [
+          "88135efe7332a78e204d41745510437c1b11eff1d91f27a6f5ac59446f1231bc",
+          "071ce58f914cabef4856f6963dc9e0b087feb9379517860f3c5c03a3f30c9762"
+        ],
+        [
+          "88135efe7332a78e204d41745510437c1b11eff1d91f27a6f5ac59446f1231bc",
+          "15deecedea01488a0b82871314442ce659a13e2c2380546c02dd5ee5c2d33123"
+        ],
+        [
+          "88c51f0c3582078d37014f31709cb0b4e0a2a6b88e843cd2a8b6005238f5bf80",
+          "15deecedea01488a0b82871314442ce659a13e2c2380546c02dd5ee5c2d33123"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 5,
+      "status_hash": "72854237b169b755fd577209028d0b5991ac1b0af306100ac72b5019aa24f4d6",
+      "status_rows": [
+        [
+          "15deecedea01488a0b82871314442ce659a13e2c2380546c02dd5ee5c2d33123",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "88c51f0c3582078d37014f31709cb0b4e0a2a6b88e843cd2a8b6005238f5bf80",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "071ce58f914cabef4856f6963dc9e0b087feb9379517860f3c5c03a3f30c9762",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "88135efe7332a78e204d41745510437c1b11eff1d91f27a6f5ac59446f1231bc",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 2
+}

@@ -1,0 +1,22 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_FORM"
+  }
+ ],
+ "notes": "inbound declared twice at frame 0",
+ "ids": {
+  "o1": "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86",
+  "o2": "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8",
+  "c1": "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+  "c2": "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+  "o3": "e3ad7d0dcfb67df067ba8423e2d714dff5f3f2ede2cd9d519938f50f7042dadf",
+  "c3": "75a2cd774c83fd5d1245f4b4271538f02e4a2aac89ab249f07dcc0d366615ff5",
+  "o_inbound": "efe7855e19406be5391a3a433004f5180c4d02da270c97fd705e1972ca45c80f",
+  "o_second": "156f9d79c0d601de03f73bc4cd5ac1e448925461db2d82ab61c29eaef66e1c35",
+  "k1": "66d7e660ef618a79ec085829529ed3f0f24a2993d0cad73b500c7c37fd19a9fe",
+  "k2": "dacaf2593b3246e05a9b8021a87bf6eabe50d64fd23fe5c84af7e4a43e500345"
+ },
+ "cut_hash": "6dd7b1934af6cf2251f0a32bc680a1fe17376bc44be6832f8a0f24c5dbf79bb4"
+}

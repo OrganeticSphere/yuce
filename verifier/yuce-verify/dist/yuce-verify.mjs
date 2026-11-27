@@ -1,6 +1,212 @@
 #!/usr/bin/env node
-// yuce-verify 0.3.0: independent verifier of YuCe journals, delivery 1 (levels J0, J1).
+// yuce-verify 0.3.1: independent verifier of YuCe journals, delivery 3: levels J0-J3 and J4a, the cut check, the observation report.
 // Built from src/ by scripts/build.mjs. No runtime dependencies.
+
+// src/hash.ts
+async function nodeHashAdapter() {
+  const crypto = await import("node:crypto");
+  return {
+    async sha256(data) {
+      return new Uint8Array(crypto.createHash("sha256").update(data).digest());
+    },
+    createSha256() {
+      const h = crypto.createHash("sha256");
+      return {
+        update(data) {
+          h.update(data);
+        },
+        async digest() {
+          return new Uint8Array(h.digest());
+        }
+      };
+    }
+  };
+}
+function subtleHashAdapter(subtle) {
+  const s = subtle ?? globalThis.crypto.subtle;
+  const digest = async (data) => new Uint8Array(await s.digest("SHA-256", data));
+  return {
+    sha256: digest,
+    createSha256() {
+      const chunks = [];
+      let total = 0;
+      return {
+        update(data) {
+          chunks.push(data.slice());
+          total += data.length;
+        },
+        async digest() {
+          const all = new Uint8Array(total);
+          let off = 0;
+          for (const c of chunks) {
+            all.set(c, off);
+            off += c.length;
+          }
+          return digest(all);
+        }
+      };
+    }
+  };
+}
+async function defaultHashAdapter() {
+  const g = globalThis;
+  if (g.process?.versions?.node !== void 0) return nodeHashAdapter();
+  return subtleHashAdapter();
+}
+var HEX = "0123456789abcdef";
+function toHex(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    s += HEX[b >> 4] + HEX[b & 15];
+  }
+  return s;
+}
+function fromHex(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+function concatBytes(parts) {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+var encoder = new TextEncoder();
+function utf8(s) {
+  return encoder.encode(s);
+}
+
+// src/cdc.ts
+var CDC_WINDOW = 512;
+var CDC_MAX_CHUNK = 2048;
+var MASK64 = (1n << 64n) - 1n;
+var GEAR_HI = new Uint32Array(256);
+var GEAR_LO = new Uint32Array(256);
+(() => {
+  let st = 0x5342474b43444301n;
+  for (let i = 0; i < 256; i++) {
+    st = st + 0x9e3779b97f4a7c15n & MASK64;
+    let z = st;
+    z = (z ^ z >> 30n) * 0xbf58476d1ce4e5b9n & MASK64;
+    z = (z ^ z >> 27n) * 0x94d049bb133111ebn & MASK64;
+    z = z ^ z >> 31n;
+    GEAR_HI[i] = Number(z >> 32n);
+    GEAR_LO[i] = Number(z & 0xffffffffn);
+  }
+})();
+function gearHex(i) {
+  return GEAR_HI[i].toString(16).padStart(8, "0") + GEAR_LO[i].toString(16).padStart(8, "0");
+}
+function cutPoints(bytes, w = CDC_WINDOW) {
+  const n = bytes.length;
+  if (n === 0) return [];
+  const hi = new Uint32Array(n);
+  const lo = new Uint32Array(n);
+  let fh = 0;
+  let fl = 0;
+  for (let p = 0; p < n; p++) {
+    const b = bytes[p];
+    let l = fl * 2 + GEAR_LO[b];
+    const carry = l >= 4294967296 ? l >= 8589934592 ? 2 : 1 : 0;
+    l -= carry * 4294967296;
+    const h = (fh << 1 >>> 0) + GEAR_HI[b] + carry >>> 0;
+    fh = h;
+    fl = l;
+    hi[p] = h;
+    lo[p] = l;
+  }
+  const greater = (a, b) => hi[a] > hi[b] || hi[a] === hi[b] && lo[a] > lo[b];
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+  let next = 0;
+  const cuts = [];
+  for (let c = 0; c < n; c++) {
+    const right = Math.min(n - 1, c + w);
+    while (next <= right) {
+      while (tail > head && greater(next, queue[tail - 1])) tail--;
+      queue[tail++] = next;
+      next++;
+    }
+    const left = c - w;
+    while (queue[head] < left) head++;
+    if (queue[head] === c) cuts.push(c + 1);
+  }
+  if (cuts[cuts.length - 1] !== n) cuts.push(n);
+  return cuts;
+}
+function chunksOf(bytes, w = CDC_WINDOW, max = CDC_MAX_CHUNK) {
+  const out = [];
+  let start = 0;
+  for (const t of cutPoints(bytes, w)) {
+    while (t - start > max) {
+      out.push({ start, end: start + max });
+      start += max;
+    }
+    if (t > start) {
+      out.push({ start, end: t });
+      start = t;
+    }
+  }
+  return out;
+}
+var VERSION_PREFIX = utf8("SBGK-DOCVER-v1");
+async function documentChunks(adapter, bytes) {
+  const chunks = chunksOf(bytes);
+  const hashes = [];
+  for (const c of chunks) hashes.push(await adapter.sha256(bytes.subarray(c.start, c.end)));
+  const version = await adapter.sha256(concatBytes([VERSION_PREFIX, ...hashes]));
+  return { chunks, hashes, version };
+}
+function segmentsOf(doc, start, end) {
+  const out = [];
+  doc.chunks.forEach((c, k) => {
+    if (c.start < end && c.end > start) {
+      out.push({ hash: doc.hashes[k], from: Math.max(start, c.start) - c.start, to: Math.min(end, c.end) - c.start });
+    }
+  });
+  return out;
+}
+function u16le(n) {
+  return new Uint8Array([n & 255, n >>> 8 & 255]);
+}
+function u32le(n) {
+  return new Uint8Array([n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24 & 255]);
+}
+var AnchorEncodingError = class extends Error {
+};
+async function anchorBytes(adapter, docId, quote, segments) {
+  const id = utf8(docId);
+  if (id.length > 65535) throw new AnchorEncodingError("doc_id longer than 65535 bytes");
+  if (segments.length > 255) throw new AnchorEncodingError("quote crosses more than 255 chunks");
+  if (quote.length > 4294967295) throw new AnchorEncodingError("quote longer than 2^32 - 1 bytes");
+  const parts = [new Uint8Array([1]), u16le(id.length), id, await adapter.sha256(quote), u32le(quote.length), new Uint8Array([segments.length])];
+  for (const s of segments) parts.push(s.hash, u32le(s.from), u32le(s.to));
+  return concatBytes(parts);
+}
+function occurrences(bytes, q, limit) {
+  const out = [];
+  if (q.length === 0 || q.length > bytes.length) return out;
+  const first = q[0];
+  let p = bytes.indexOf(first, 0);
+  while (p >= 0 && p + q.length <= bytes.length) {
+    let k = 1;
+    while (k < q.length && bytes[p + k] === q[k]) k++;
+    if (k === q.length) {
+      out.push(p);
+      if (out.length >= limit) break;
+    }
+    p = bytes.indexOf(first, p + 1);
+  }
+  return out;
+}
 
 // src/json.ts
 var MAX_JOURNAL_INTEGER_TEXT = "9007199254740991";
@@ -41,6 +247,7 @@ function parseJson(text) {
   const n = text.length;
   let pos = 0;
   let badNumber = false;
+  let duplicateKey = false;
   const fail = (msg) => {
     throw new ParseError(`${msg} at character ${pos}`);
   };
@@ -262,6 +469,7 @@ function parseJson(text) {
           }
           fail("expected ',' or ']'");
         } else {
+          if (top.members.has(top.key)) duplicateKey = true;
           top.members.set(top.key, value);
           if (d === 44) {
             pos++;
@@ -280,7 +488,7 @@ function parseJson(text) {
     }
     skipWs();
     if (pos !== n) fail("unexpected data after the JSON value");
-    return { ok: true, value: result, badNumber };
+    return { ok: true, value: result, badNumber, duplicateKey };
   } catch (e) {
     if (e instanceof ParseError) return { ok: false, error: e.message };
     throw e;
@@ -372,144 +580,6 @@ function fromPlain(v) {
   return m;
 }
 
-// src/report.ts
-var VERIFIER_NAME = "yuce-verify";
-var VERIFIER_VERSION = "0.3.0";
-var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/7";
-var NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"];
-var NOT_VERIFIED_AFTER_J3 = ["withdrawal_cascade", "signatures"];
-function reportToJcs(report) {
-  return jcs(fromPlain(report));
-}
-var NOT_VERIFIED_SENTENCE = "Not verified: quotes against sources, withdrawal cascade, signatures.";
-var NOT_VERIFIED_AFTER_J3_SENTENCE = "Not verified: withdrawal cascade, signatures.";
-function humanLine(report) {
-  const parts = [];
-  const f = report.first_failure;
-  const { J1: j1, J3: j3 } = report.levels;
-  if (report.verdict === "FAIL" && f !== null) {
-    parts.push(f.frame === null ? `FAIL at ${f.level}: ${f.code}.` : `FAIL at ${f.level}, frame ${f.frame}: ${f.code}.`);
-  } else if (j1.result === "PASS") {
-    const head = `Frames: ${report.input.frames}. Seals: ${j1.seals.length}.`;
-    if (j3.result === "PASS") parts.push(`J0-J3 PASS. ${head} Records: ${j3.records}. Quotes: ${j3.quotes}.`);
-    else if (j3.result === "NOT_CHECKABLE") parts.push(`J0-J2 PASS. ${head} J3 not checkable: ${j3.reason}.`);
-    else parts.push(`J0-J2 PASS. ${head}`);
-    parts.push(tailSentence(j1.tail));
-    parts.push(anchorSentence(report.anchor, report.input.frames));
-  } else {
-    parts.push(`${report.verdict}.`);
-  }
-  parts.push(j3.result === "PASS" ? NOT_VERIFIED_AFTER_J3_SENTENCE : NOT_VERIFIED_SENTENCE);
-  return parts.join(" ");
-}
-function tailSentence(tail) {
-  switch (tail.kind) {
-    case "closed":
-      return "Tail: closed.";
-    case "sealed":
-      return "Tail: sealed, run not closed.";
-    case "unsealed":
-      return `Tail: ${tail.frames_after_last_seal} unsealed frames.`;
-    case "no_seals":
-      return "Tail: no seals.";
-  }
-}
-function anchorSentence(anchor, frames) {
-  const seal = anchor.seal.matched === true ? anchor.seal : null;
-  const head = anchor.head.matched === true;
-  if (seal !== null && head) return `Anchor: matched seal at n=${seal.at_n} and head at n=${frames}.`;
-  if (seal !== null) return `Anchor: matched seal at n=${seal.at_n}.`;
-  if (head) return `Anchor: matched head at n=${frames}.`;
-  return "Anchor: not given - journal is internally consistent; authenticity not established.";
-}
-var EXIT = { pass: 0, fail: 1, usage: 2, incomplete: 3 };
-function exitCodeFor(verdict) {
-  if (verdict === "PASS") return EXIT.pass;
-  if (verdict === "FAIL") return EXIT.fail;
-  return EXIT.incomplete;
-}
-
-// src/hash.ts
-async function nodeHashAdapter() {
-  const crypto = await import("node:crypto");
-  return {
-    async sha256(data) {
-      return new Uint8Array(crypto.createHash("sha256").update(data).digest());
-    },
-    createSha256() {
-      const h = crypto.createHash("sha256");
-      return {
-        update(data) {
-          h.update(data);
-        },
-        async digest() {
-          return new Uint8Array(h.digest());
-        }
-      };
-    }
-  };
-}
-function subtleHashAdapter(subtle) {
-  const s = subtle ?? globalThis.crypto.subtle;
-  const digest = async (data) => new Uint8Array(await s.digest("SHA-256", data));
-  return {
-    sha256: digest,
-    createSha256() {
-      const chunks = [];
-      let total = 0;
-      return {
-        update(data) {
-          chunks.push(data.slice());
-          total += data.length;
-        },
-        async digest() {
-          const all = new Uint8Array(total);
-          let off = 0;
-          for (const c of chunks) {
-            all.set(c, off);
-            off += c.length;
-          }
-          return digest(all);
-        }
-      };
-    }
-  };
-}
-async function defaultHashAdapter() {
-  const g = globalThis;
-  if (g.process?.versions?.node !== void 0) return nodeHashAdapter();
-  return subtleHashAdapter();
-}
-var HEX = "0123456789abcdef";
-function toHex(bytes) {
-  let s = "";
-  for (let i = 0; i < bytes.length; i++) {
-    const b = bytes[i];
-    s += HEX[b >> 4] + HEX[b & 15];
-  }
-  return s;
-}
-function fromHex(hex) {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
-  return out;
-}
-function concatBytes(parts) {
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
-}
-var encoder = new TextEncoder();
-function utf8(s) {
-  return encoder.encode(s);
-}
-
 // src/trees.ts
 var DOMAIN = {
   frameBody: "R2R-FRAME-BODY/2",
@@ -594,6 +664,487 @@ async function recordsRoot(adapter, leaves) {
     await recordsRoot(adapter, leaves.slice(0, k)),
     await recordsRoot(adapter, leaves.slice(k))
   );
+}
+
+// src/j4a.ts
+var PROJECTION_DOMAIN = { status: "R2R-PROJ-STATUS/2", dependencies: "R2R-PROJ-DEPS/2" };
+var LINK_DOMAIN = "R2R-AUDIT-LINK/1";
+var EMPTY_PROJECTIONS = {
+  status: "88f19ee44d285b626e63507ebd361e8ce71ccc967e93d303dad85d908ac5a875",
+  dependencies: "65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133"
+};
+async function linkId(adapter, from, rel, to) {
+  const domain = utf8(LINK_DOMAIN);
+  return toHex(await adapter.sha256(concatBytes([domain, utf8(jcs([from, rel, to]))])));
+}
+async function projectionHashes(adapter, rows, pairs) {
+  return {
+    status: toHex(await domainHash(adapter, PROJECTION_DOMAIN.status, utf8(jcs(rows)))),
+    dependencies: toHex(await domainHash(adapter, PROJECTION_DOMAIN.dependencies, utf8(jcs(pairs))))
+  };
+}
+var tripleKey = (from, rel, to) => jcs([from, rel, to]);
+var HEX64 = /^[0-9a-fA-F]{64}$/;
+var Cascade = class {
+  constructor(adapter, docs) {
+    this.adapter = adapter;
+    this.docs = docs;
+  }
+  adapter;
+  docs;
+  records = [];
+  byId = /* @__PURE__ */ new Map();
+  byDoc = /* @__PURE__ */ new Map();
+  /** P6-2: the revoked anchor ids, with the reason of the first revocation. */
+  revoked = /* @__PURE__ */ new Map();
+  /** P6-2: per document name, the texts withdrawn from it (key: the text, value: its bytes). */
+  withdrawn = /* @__PURE__ */ new Map();
+  /** P6-2: the links, keyed by the triple. */
+  links = /* @__PURE__ */ new Map();
+  linkIds = /* @__PURE__ */ new Map();
+  /**
+   * Observation report, section 6: frames that record a refused answer (`task-repair:`) or a late one
+   * (`task-conflict:`). Not part of the projections.
+   */
+  rejectedSubmissions = 0;
+  lateSubmissions = 0;
+  get accepted() {
+    return this.records;
+  }
+  record(id) {
+    return this.byId.get(id);
+  }
+  get allLinks() {
+    return [...this.links.values()];
+  }
+  /** P6-2, P6-3: a record accepted by J3; an accepted relation creates its link right away (P6-6). */
+  async addRecord(r) {
+    const rec = { ...r, index: this.records.length };
+    this.records.push(rec);
+    this.byId.set(rec.id, rec);
+    if (rec.obs !== null) {
+      const list = this.byDoc.get(rec.obs.docId);
+      if (list === void 0) this.byDoc.set(rec.obs.docId, [rec]);
+      else list.push(rec);
+    }
+    if (rec.kind === "relation" && rec.ends !== null) await this.createLink(rec.ends.from, rec.ends.rel, rec.ends.to, rec.grounds);
+  }
+  /** P6-3: a command other than submit and put_document that ran (as a frame, or as a batch operation with a result). */
+  async command(command) {
+    if (!isObject(command)) return;
+    switch (command.get("kind")) {
+      case "revoke":
+        return this.revoke(command);
+      case "revoke_text":
+        return this.revokeText(command);
+      case "add_link":
+        return this.addLink(command);
+      case "set_link_status":
+        return this.setLinkStatus(command);
+      default:
+        return;
+    }
+  }
+  /**
+   * Observation report, section 6: a `batch` frame with outcome `value` whose `command.checkpoint.key`
+   * starts with `task-repair:` (a refused answer) or `task-conflict:` (a late one), and whose
+   * `outcome.result.checkpointed` is `true`.
+   */
+  noteFrame(command, outcome) {
+    if (!isObject(command) || command.get("kind") !== "batch" || !isObject(outcome) || outcome.get("kind") !== "value") return;
+    const checkpoint = command.get("checkpoint");
+    const key = isObject(checkpoint) ? checkpoint.get("key") : void 0;
+    const result = outcome.get("result");
+    if (typeof key !== "string" || !isObject(result) || result.get("checkpointed") !== true) return;
+    if (key.startsWith("task-repair:")) this.rejectedSubmissions++;
+    else if (key.startsWith("task-conflict:")) this.lateSubmissions++;
+  }
+  /** P6-5: the re-close step of a put_document, after the new bytes and version are in place. */
+  async reclose(docId) {
+    const texts = this.withdrawn.get(docId);
+    if (texts === void 0) return;
+    for (const t of [...texts.values()]) this.close(docId, t, await this.hits(docId, t));
+  }
+  // -------------------------------------------------------------------------
+  // P6-5: withdrawals
+  // -------------------------------------------------------------------------
+  /** hits(D, T): live observations bound to the current version of D whose span overlaps an occurrence of T. */
+  async hits(docId, t) {
+    if (t.length === 0) return [];
+    const bytes = this.docs.bytes(docId);
+    const candidates = this.byDoc.get(docId);
+    if (bytes === void 0 || candidates === void 0) return [];
+    const found = occurrences(bytes, t, Number.MAX_SAFE_INTEGER);
+    if (found.length === 0) return [];
+    const version = await this.docs.version(docId);
+    const out = [];
+    for (const r of candidates) {
+      const o = r.obs;
+      if (o.version !== version || this.revoked.has(o.anchor)) continue;
+      if (found.some((p) => o.start < p + t.length && p < o.end)) out.push(r);
+    }
+    return out;
+  }
+  revokeAnchor(anchor, reason) {
+    if (!this.revoked.has(anchor)) this.revoked.set(anchor, reason);
+  }
+  /** close(D, T, H). */
+  close(docId, t, hits) {
+    for (const h of hits) this.revokeAnchor(h.obs.anchor, "withdrawn");
+    let texts = this.withdrawn.get(docId);
+    if (texts === void 0) this.withdrawn.set(docId, texts = /* @__PURE__ */ new Map());
+    const key = toHex(t);
+    if (!texts.has(key)) texts.set(key, t);
+  }
+  isWithdrawn(docId, t) {
+    return this.withdrawn.get(docId)?.has(toHex(t)) === true;
+  }
+  async revokeText(command) {
+    const docId = command.get("doc_id");
+    const quote = command.get("exact_quote");
+    if (typeof docId !== "string" || typeof quote !== "string") return;
+    const t = utf8(quote);
+    this.close(docId, t, await this.hits(docId, t));
+  }
+  async revoke(command) {
+    const ref = command.get("record");
+    if (typeof ref !== "string") return;
+    const r = HEX64.test(ref) ? this.byId.get(ref.toLowerCase()) : void 0;
+    if (r === void 0 || r.obs === null) return;
+    const { docId, quoteBytes: t, anchor } = r.obs;
+    const already = this.isWithdrawn(docId, t);
+    const hits = already ? [] : await this.hits(docId, t);
+    this.revokeAnchor(anchor, already ? "revoked" : "withdrawn");
+    if (!already) this.close(docId, t, hits);
+  }
+  // -------------------------------------------------------------------------
+  // P6-6: links
+  // -------------------------------------------------------------------------
+  /** P6-6: a 64-digit hex string names a record id; otherwise "@" and 16 to 64 hex digits of exactly one record. */
+  resolve(ref) {
+    if (HEX64.test(ref)) return ref.toLowerCase();
+    if (!/^@[0-9a-fA-F]{16,64}$/.test(ref)) return null;
+    const prefix = ref.slice(1).toLowerCase();
+    let found = null;
+    for (const r of this.records) {
+      if (r.id.startsWith(prefix)) {
+        if (found !== null) return null;
+        found = r.id;
+      }
+    }
+    return found;
+  }
+  resolveList(v) {
+    if (!Array.isArray(v)) return null;
+    return v.map((x) => typeof x === "string" ? this.resolve(x) : null);
+  }
+  async createLink(from, rel, to, basis) {
+    const key = tripleKey(from, rel, to);
+    if (this.links.has(key)) return;
+    const id = await linkId(this.adapter, from, rel, to);
+    this.links.set(key, { id, from, rel, to, status: "proposed", basis: [...basis], acceptanceBasis: null });
+    this.linkIds.set(id, key);
+  }
+  async addLink(command) {
+    const from = command.get("from");
+    const rel = command.get("rel");
+    const to = command.get("to");
+    const basis = this.resolveList(command.get("basis"));
+    if (typeof from !== "string" || typeof rel !== "string" || typeof to !== "string" || basis === null) return;
+    const f = this.resolve(from);
+    const t = this.resolve(to);
+    if (f === null || t === null) return;
+    await this.createLink(f, rel, t, basis);
+  }
+  async setLinkStatus(command) {
+    const link = command.get("link");
+    const status = command.get("status");
+    if (typeof link !== "string" || typeof status !== "string") return;
+    const key = this.linkIds.get(link.toLowerCase());
+    if (key === void 0) return;
+    const l = this.links.get(key);
+    l.status = status;
+    if (status === "accepted") l.acceptanceBasis = this.resolveList(command.get("basis")) ?? [];
+  }
+  // -------------------------------------------------------------------------
+  // P6-4, P6-7, P6-8: support and projections
+  // -------------------------------------------------------------------------
+  /** P6-4 for every observation; null for other records. */
+  async observationsGrounded() {
+    const versions = /* @__PURE__ */ new Map();
+    const out = [];
+    for (const r of this.records) {
+      if (r.obs === null) {
+        out.push(null);
+        continue;
+      }
+      if (this.revoked.has(r.obs.anchor)) {
+        out.push(false);
+        continue;
+      }
+      if (!versions.has(r.obs.docId)) versions.set(r.obs.docId, await this.docs.version(r.obs.docId));
+      out.push(versions.get(r.obs.docId) === r.obs.version);
+    }
+    return out;
+  }
+  /** P6-7, P6-8: the support values and the two projections over the current state. */
+  async status() {
+    const n = this.records.length;
+    const og = await this.observationsGrounded();
+    const at = (id) => id === null ? -1 : this.byId.get(id)?.index ?? -1;
+    let proof = null;
+    if (this.allLinks.some((l) => l.status === "accepted")) {
+      const structural = new Array(n);
+      proof = new Array(n);
+      for (const r of this.records) {
+        const k = r.index;
+        if (r.kind === "observe") {
+          structural[k] = og[k] === true;
+          proof[k] = structural[k];
+          continue;
+        }
+        const g = r.grounds.map(at);
+        const ends = r.ends !== null ? [at(r.ends.from), at(r.ends.to)] : [];
+        structural[k] = r.kind !== "done" && g.length > 0 && g.every((x) => x >= 0 && structural[x]) && ends.every((x) => x >= 0 && structural[x]);
+        proof[k] = structural[k] && !["hypothesis", "question", "done"].includes(r.kind) && g.every((x) => proof[x]) && ends.every((x) => proof[x]);
+      }
+    }
+    const effective = (from, rel, to) => {
+      const l = this.links.get(tripleKey(from, rel, to));
+      return l !== void 0 && this.effectiveWith(l, proof);
+    };
+    const grounded = new Array(n);
+    const established = new Array(n);
+    const isG = (x) => x >= 0 && grounded[x];
+    const isE = (x) => x >= 0 && established[x];
+    for (const r of this.records) {
+      const k = r.index;
+      const g = r.grounds.map(at);
+      switch (r.kind) {
+        case "observe":
+          grounded[k] = og[k] === true;
+          established[k] = grounded[k];
+          break;
+        case "claim":
+          grounded[k] = g.length > 0 && g.every(isG);
+          established[k] = grounded[k];
+          break;
+        case "hypothesis":
+          grounded[k] = g.length > 0 && g.every(isG);
+          established[k] = false;
+          break;
+        case "relation": {
+          const f = at(r.ends.from);
+          const t = at(r.ends.to);
+          grounded[k] = g.length > 0 && g.every(isG) && isG(f) && isG(t);
+          established[k] = grounded[k] && effective(r.ends.from, r.ends.rel, r.ends.to) && isE(f) && isE(t);
+          break;
+        }
+        case "done":
+          grounded[k] = g.length > 0 && g.every((x) => isG(x) && isE(x));
+          established[k] = false;
+          break;
+        default:
+          grounded[k] = false;
+          established[k] = false;
+      }
+    }
+    const rows = [];
+    const pairs = [];
+    for (const r of this.records) {
+      const direct = this.directGrounds(r);
+      const fallen = [...new Set(direct.filter((id) => !isG(at(id))))].sort();
+      rows.push([r.id, r.kind, grounded[r.index], established[r.index], r.kind === "observe" || r.kind === "question" ? [] : fallen]);
+      for (const d of direct) pairs.push([r.id, d]);
+    }
+    pairs.sort((a, b) => cmp(a[0] + a[1], b[0] + b[1]));
+    const unique = pairs.filter((p, k) => k === 0 || p[0] !== pairs[k - 1][0] || p[1] !== pairs[k - 1][1]);
+    const hashes = await projectionHashes(this.adapter, rows, unique);
+    return { grounded, established, proof, rows, pairs: unique, ...hashes };
+  }
+  /** P6-7: a link is effective (the observation report calls it usable). */
+  linkEffective(l, st) {
+    return this.effectiveWith(l, st.proof);
+  }
+  effectiveWith(l, proof) {
+    if (l.status !== "accepted" || proof === null) return false;
+    const proofOf = (id) => {
+      const k = id === null ? -1 : this.byId.get(id)?.index ?? -1;
+      return k >= 0 && proof[k];
+    };
+    if (!proofOf(l.from) || !proofOf(l.to)) return false;
+    if (l.basis.length === 0 || !l.basis.every(proofOf)) return false;
+    return l.acceptanceBasis !== null && l.acceptanceBasis.length > 0 && l.acceptanceBasis.every(proofOf);
+  }
+  /** P6-8: a record's direct grounds are its based_on, then, for a relation, from and to. */
+  directGrounds(r) {
+    return r.ends !== null ? [...r.grounds, r.ends.from, r.ends.to] : [...r.grounds];
+  }
+};
+function cmp(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// src/report.ts
+var VERIFIER_NAME = "yuce-verify";
+var VERIFIER_VERSION = "0.3.1";
+var SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/8";
+var NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"];
+var NOT_VERIFIED_AFTER_J3 = ["withdrawal_cascade", "signatures"];
+function reportToJcs(report) {
+  return jcs(fromPlain(report));
+}
+function notVerifiedSentence(items) {
+  return `Not verified: ${items.map((s) => s.replaceAll("_", " ")).join(", ")}.`;
+}
+function cascadeSentence(c) {
+  if (c.checked_through_frame === null) return "Cascade: no seal to check.";
+  if (c.unchecked_frames === 0) return `Cascade: checked at ${c.seals_checked} seals.`;
+  return `Cascade: checked at ${c.seals_checked} seals through frame ${c.checked_through_frame}; ${c.unchecked_frames} later frames not checked.`;
+}
+function humanLine(report) {
+  const parts = [];
+  const f = report.first_failure;
+  const { J1: j1, J3: j3 } = report.levels;
+  if (report.verdict === "FAIL" && f !== null) {
+    parts.push(f.frame === null ? `FAIL at ${f.level}: ${f.code}.` : `FAIL at ${f.level}, frame ${f.frame}: ${f.code}.`);
+  } else if (j1.result === "PASS") {
+    const head = `Frames: ${report.input.frames}. Seals: ${j1.seals.length}.`;
+    if (j3.result === "PASS") parts.push(`J0-J3 PASS. ${head} Records: ${j3.records}. Quotes: ${j3.quotes}.`);
+    else if (j3.result === "NOT_CHECKABLE") parts.push(`J0-J2 PASS. ${head} J3 not checkable: ${j3.reason}.`);
+    else parts.push(`J0-J2 PASS. ${head}`);
+    parts.push(tailSentence(j1.tail));
+    parts.push(anchorSentence(report.anchor, report.input.frames));
+    if (report.levels.J4a.result === "PASS" && report.cascade !== null) parts.push(cascadeSentence(report.cascade));
+  } else {
+    parts.push(`${report.verdict}.`);
+  }
+  parts.push(notVerifiedSentence(report.not_verified));
+  return parts.join(" ");
+}
+function tailSentence(tail) {
+  switch (tail.kind) {
+    case "closed":
+      return "Tail: closed.";
+    case "sealed":
+      return "Tail: sealed, run not closed.";
+    case "unsealed":
+      return `Tail: ${tail.frames_after_last_seal} unsealed frames.`;
+    case "no_seals":
+      return "Tail: no seals.";
+  }
+}
+function anchorSentence(anchor, frames) {
+  const seal = anchor.seal.matched === true ? anchor.seal : null;
+  const head = anchor.head.matched === true;
+  if (seal !== null && head) return `Anchor: matched seal at n=${seal.at_n} and head at n=${frames}.`;
+  if (seal !== null) return `Anchor: matched seal at n=${seal.at_n}.`;
+  if (head) return `Anchor: matched head at n=${frames}.`;
+  return "Anchor: not given - journal is internally consistent; authenticity not established.";
+}
+var EXIT = { pass: 0, fail: 1, usage: 2, incomplete: 3 };
+function exitCodeFor(verdict) {
+  if (verdict === "PASS") return EXIT.pass;
+  if (verdict === "FAIL") return EXIT.fail;
+  return EXIT.incomplete;
+}
+
+// src/seal.ts
+var SEAL_KEYS = ["audit_root", "engine_root", "format", "log_root", "log_size", "projections", "run_id", "wal_head"];
+var SEAL_HASH_FIELDS = ["log_root", "wal_head", "audit_root", "engine_root"];
+var PROJECTION_KEYS = ["dependencies", "status"];
+function sealFormProblem(command, outcome) {
+  if (!isObject(command) || !hasExactKeys(command, ["kind", "seal"])) return "command must have exactly the keys kind, seal";
+  if (!isObject(outcome) || !hasExactKeys(outcome, ["kind", "result"])) return "outcome must have exactly the keys kind, result";
+  if (outcome.get("kind") !== "value") return 'outcome.kind is not "value"';
+  const result = outcome.get("result");
+  if (!isObject(result) || !hasExactKeys(result, ["seal", "seal_hash"])) return "outcome.result must have exactly the keys seal, seal_hash";
+  const seal = command.get("seal");
+  if (!isObject(seal) || !hasExactKeys(seal, SEAL_KEYS)) return "the seal must have exactly its eight keys";
+  const projections = seal.get("projections");
+  if (!isObject(projections) || !hasExactKeys(projections, PROJECTION_KEYS)) return "seal.projections must have exactly the keys dependencies, status";
+  if (typeof seal.get("format") !== "string") return "seal.format is not a string";
+  if (typeof seal.get("run_id") !== "string") return "seal.run_id is not a string";
+  if (typeof seal.get("log_size") !== "number") return "seal.log_size is not a number";
+  for (const k of SEAL_HASH_FIELDS) if (!isHashText(seal.get(k))) return `seal.${k} is not a hash`;
+  for (const k of PROJECTION_KEYS) if (!isHashText(projections.get(k))) return `seal.projections.${k} is not a hash`;
+  if (!isHashText(result.get("seal_hash"))) return "outcome.result.seal_hash is not a hash";
+  return null;
+}
+
+// src/quittance.ts
+var QUITTANCE_FORMAT = "yuce-proof/1";
+var SEAL_HEADER_KEYS = ["body_hash", "format", "previous", "records_root", "seq", "wal_op"];
+function parseQuittance(file, bytes) {
+  const q = { file, problem: null, n: null, target: null, ids: [], header: null, body: null, status: void 0 };
+  const bad = (problem2) => ({ ...q, problem: problem2 });
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return bad("the file is not UTF-8");
+  }
+  const parsed = parseJson(text);
+  if (!parsed.ok) return bad(`the file is not JSON: ${parsed.error}`);
+  if (parsed.badNumber) return bad("a number that is not an integer from 0 to 2^53-1");
+  const v = parsed.value;
+  if (!isObject(v)) return bad("the quittance is not an object");
+  if (v.get("format") !== QUITTANCE_FORMAT) return bad(`format is not "${QUITTANCE_FORMAT}"`);
+  const target = v.get("target");
+  if (!isHashText(target)) return bad("target is not a 64-digit id");
+  const records = v.get("records");
+  if (!Array.isArray(records) || records.length === 0) return bad("records is not a non-empty list");
+  const ids = [];
+  for (const r of records) {
+    const value = isObject(r) ? r.get("value") : void 0;
+    const id = isObject(value) ? value.get("id") : void 0;
+    if (!isHashText(id)) return bad("an element of records has no object value with a 64-digit id");
+    ids.push(id);
+  }
+  if (!ids.includes(target)) return bad("the target is not among the ids of records");
+  const seal = v.get("seal");
+  if (!isObject(seal)) return bad("seal is not an object");
+  const header = seal.get("header");
+  if (!isObject(header) || !hasExactKeys(header, SEAL_HEADER_KEYS)) return bad("seal.header is not an object with exactly the six keys of a header");
+  const body = seal.get("body");
+  const problem = sealBodyProblem(body);
+  if (problem !== null) return bad(`seal.body is not a seal body: ${problem}`);
+  const n = body.get("command").get("seal");
+  return { file, problem: null, n: n.get("log_size"), target, ids, header, body, status: v.get("status") };
+}
+function sealBodyProblem(body) {
+  if (!isObject(body)) return "not an object";
+  if (body.get("actor") !== "kernel") return 'actor is not "kernel"';
+  const command = body.get("command");
+  if (!isObject(command) || command.get("kind") !== "seal") return 'command.kind is not "seal"';
+  return sealFormProblem(command, body.get("outcome"));
+}
+function checkQuittance(q, seal) {
+  if (q.problem !== null || q.n === null) return { code: "QUITTANCE_FORM", detail: q.problem ?? "no seal position" };
+  if (seal === void 0 || seal.header !== jcs(q.header) || seal.body !== jcs(q.body)) {
+    return { code: "QUITTANCE_SEAL_UNKNOWN", detail: `the journal has no seal frame at position ${q.n} equal to the quittance's seal` };
+  }
+  const wanted = new Set(q.ids);
+  const known = /* @__PURE__ */ new Set();
+  for (const row of seal.rows) {
+    if (!wanted.has(row[0])) continue;
+    known.add(row[0]);
+    if (row[2] !== true) return { code: "QUITTANCE_STATUS_MISMATCH", detail: `record ${row[0]} does not stand at the seal of frame ${q.n}` };
+  }
+  const missing = q.ids.find((id) => !known.has(id));
+  if (missing !== void 0) return { code: "QUITTANCE_STATUS_MISMATCH", detail: `record ${missing} is not a record of the journal at the seal of frame ${q.n}` };
+  if (q.status !== void 0) {
+    const given = Array.isArray(q.status) ? q.status : [];
+    const count = Math.max(given.length, seal.rows.length);
+    for (let k = 0; k < count; k++) {
+      const mine = seal.rows[k];
+      const theirs = given[k];
+      if (mine !== void 0 && theirs !== void 0 && jcs(mine) === jcs(theirs)) continue;
+      const id = mine !== void 0 ? mine[0] : Array.isArray(theirs) && typeof theirs[0] === "string" ? theirs[0] : `#${k}`;
+      return { code: "QUITTANCE_STATUS_MISMATCH", detail: `status row ${k} (record ${id}) differs from the rows computed at the seal of frame ${q.n}` };
+    }
+  }
+  return null;
 }
 
 // src/j2.ts
@@ -812,131 +1363,6 @@ function batchProblem(command, result) {
   return null;
 }
 
-// src/cdc.ts
-var CDC_WINDOW = 512;
-var CDC_MAX_CHUNK = 2048;
-var MASK64 = (1n << 64n) - 1n;
-var GEAR_HI = new Uint32Array(256);
-var GEAR_LO = new Uint32Array(256);
-(() => {
-  let st = 0x5342474b43444301n;
-  for (let i = 0; i < 256; i++) {
-    st = st + 0x9e3779b97f4a7c15n & MASK64;
-    let z = st;
-    z = (z ^ z >> 30n) * 0xbf58476d1ce4e5b9n & MASK64;
-    z = (z ^ z >> 27n) * 0x94d049bb133111ebn & MASK64;
-    z = z ^ z >> 31n;
-    GEAR_HI[i] = Number(z >> 32n);
-    GEAR_LO[i] = Number(z & 0xffffffffn);
-  }
-})();
-function gearHex(i) {
-  return GEAR_HI[i].toString(16).padStart(8, "0") + GEAR_LO[i].toString(16).padStart(8, "0");
-}
-function cutPoints(bytes, w = CDC_WINDOW) {
-  const n = bytes.length;
-  if (n === 0) return [];
-  const hi = new Uint32Array(n);
-  const lo = new Uint32Array(n);
-  let fh = 0;
-  let fl = 0;
-  for (let p = 0; p < n; p++) {
-    const b = bytes[p];
-    let l = fl * 2 + GEAR_LO[b];
-    const carry = l >= 4294967296 ? l >= 8589934592 ? 2 : 1 : 0;
-    l -= carry * 4294967296;
-    const h = (fh << 1 >>> 0) + GEAR_HI[b] + carry >>> 0;
-    fh = h;
-    fl = l;
-    hi[p] = h;
-    lo[p] = l;
-  }
-  const greater = (a, b) => hi[a] > hi[b] || hi[a] === hi[b] && lo[a] > lo[b];
-  const queue = new Int32Array(n);
-  let head = 0;
-  let tail = 0;
-  let next = 0;
-  const cuts = [];
-  for (let c = 0; c < n; c++) {
-    const right = Math.min(n - 1, c + w);
-    while (next <= right) {
-      while (tail > head && greater(next, queue[tail - 1])) tail--;
-      queue[tail++] = next;
-      next++;
-    }
-    const left = c - w;
-    while (queue[head] < left) head++;
-    if (queue[head] === c) cuts.push(c + 1);
-  }
-  if (cuts[cuts.length - 1] !== n) cuts.push(n);
-  return cuts;
-}
-function chunksOf(bytes, w = CDC_WINDOW, max = CDC_MAX_CHUNK) {
-  const out = [];
-  let start = 0;
-  for (const t of cutPoints(bytes, w)) {
-    while (t - start > max) {
-      out.push({ start, end: start + max });
-      start += max;
-    }
-    if (t > start) {
-      out.push({ start, end: t });
-      start = t;
-    }
-  }
-  return out;
-}
-var VERSION_PREFIX = utf8("SBGK-DOCVER-v1");
-async function documentChunks(adapter, bytes) {
-  const chunks = chunksOf(bytes);
-  const hashes = [];
-  for (const c of chunks) hashes.push(await adapter.sha256(bytes.subarray(c.start, c.end)));
-  const version = await adapter.sha256(concatBytes([VERSION_PREFIX, ...hashes]));
-  return { chunks, hashes, version };
-}
-function segmentsOf(doc, start, end) {
-  const out = [];
-  doc.chunks.forEach((c, k) => {
-    if (c.start < end && c.end > start) {
-      out.push({ hash: doc.hashes[k], from: Math.max(start, c.start) - c.start, to: Math.min(end, c.end) - c.start });
-    }
-  });
-  return out;
-}
-function u16le(n) {
-  return new Uint8Array([n & 255, n >>> 8 & 255]);
-}
-function u32le(n) {
-  return new Uint8Array([n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24 & 255]);
-}
-var AnchorEncodingError = class extends Error {
-};
-async function anchorBytes(adapter, docId, quote, segments) {
-  const id = utf8(docId);
-  if (id.length > 65535) throw new AnchorEncodingError("doc_id longer than 65535 bytes");
-  if (segments.length > 255) throw new AnchorEncodingError("quote crosses more than 255 chunks");
-  if (quote.length > 4294967295) throw new AnchorEncodingError("quote longer than 2^32 - 1 bytes");
-  const parts = [new Uint8Array([1]), u16le(id.length), id, await adapter.sha256(quote), u32le(quote.length), new Uint8Array([segments.length])];
-  for (const s of segments) parts.push(s.hash, u32le(s.from), u32le(s.to));
-  return concatBytes(parts);
-}
-function occurrences(bytes, q, limit) {
-  const out = [];
-  if (q.length === 0 || q.length > bytes.length) return out;
-  const first = q[0];
-  let p = bytes.indexOf(first, 0);
-  while (p >= 0 && p + q.length <= bytes.length) {
-    let k = 1;
-    while (k < q.length && bytes[p + k] === q[k]) k++;
-    if (k === q.length) {
-      out.push(p);
-      if (out.length >= limit) break;
-    }
-    p = bytes.indexOf(first, p + 1);
-  }
-  return out;
-}
-
 // src/j3.ts
 var LINE_KEYS = {
   observe: ["kind", "local_id", "doc_id", "exact_quote", "terms"],
@@ -959,10 +1385,17 @@ var STRING_FIELDS = ["doc_id", "exact_quote", "text", "subject", "object", "stan
 var MAX_QUOTE_BYTES = 16384;
 var STRING_ARRAY_FIELDS = ["terms", "based_on", "about", "answer_ids"];
 var RecordEngine = class {
-  constructor(adapter, files, rewrite = null) {
+  constructor(adapter, files, rewrite = null, withCascade = false) {
     this.adapter = adapter;
     this.files = files;
     this.rewrite = rewrite;
+    this.cascade = withCascade ? new Cascade(adapter, {
+      bytes: (docId) => this.current.get(docId)?.bytes,
+      version: async (docId) => {
+        const doc = this.current.get(docId);
+        return doc === void 0 ? void 0 : toHex((await this.chunksOf(doc)).version);
+      }
+    }) : null;
   }
   adapter;
   files;
@@ -977,6 +1410,10 @@ var RecordEngine = class {
   quotes = 0;
   /** Amendment 5, P5-2: the genesis record names the rules 4. */
   rules4 = false;
+  /** Amendment 6: the state of level J4a, kept when asked for. */
+  cascade;
+  /** The position of the frame being checked. */
+  position = 0;
   get recordCount() {
     return this.records.length;
   }
@@ -999,8 +1436,12 @@ var RecordEngine = class {
     }
     return null;
   }
-  /** The steps of P3-7 for a frame at position i >= 1, then J3-9. */
-  async frame(header, body) {
+  /**
+   * The steps of P3-7 for a frame at position i >= 1, then J3-9. With the
+   * cascade, the commands of amendment 6, P6-3 are applied at their place.
+   */
+  async frame(header, body, position = 0) {
+    this.position = position;
     this.lastFrameLeaves = [];
     const leaves = [];
     const actor = body.get("actor");
@@ -1008,6 +1449,7 @@ var RecordEngine = class {
     const outcome = body.get("outcome");
     const outcomeKind = outcome.get("kind");
     const kind = commandKind(command);
+    this.cascade?.noteFrame(command, outcome);
     if (outcomeKind === "records") {
       const result = outcome.get("result");
       const f = await this.group({ actor, command, accepted: result.get("accepted") }, leaves);
@@ -1023,12 +1465,16 @@ var RecordEngine = class {
           f = await this.group({ actor, command: op, accepted: results[k].get("accepted") }, leaves);
         } else if (opKind === "put_document") {
           f = await this.putDocument(op, results[k], (v) => this.setVersion(results[k], v));
+        } else if (this.cascade !== null) {
+          await this.cascade.command(op);
         }
         if (f !== null) return f;
       }
     } else if (kind === "put_document" && outcomeKind === "value") {
       const f = await this.putDocument(command, outcome.get("result"), (v) => this.setVersion(outcome.get("result"), v));
       if (f !== null) return f;
+    } else if (outcomeKind === "value" && this.cascade !== null) {
+      await this.cascade.command(command);
     }
     const root = toHex(await recordsRoot(this.adapter, leaves));
     if (root !== header.get("records_root")) {
@@ -1055,6 +1501,7 @@ var RecordEngine = class {
       rewriteVersion(version);
     }
     this.current.set(docId, { bytes, chunks });
+    if (this.cascade !== null) await this.cascade.reclose(docId);
     return null;
   }
   async chunksOf(doc) {
@@ -1177,6 +1624,30 @@ var RecordEngine = class {
     this.byId.set(id, record);
     this.byName.set(jcs([g.actor, directive, l.get("local_id")]), record);
     if (kind === "observe") this.quotes++;
+    if (this.cascade !== null) {
+      const opt = (k) => l.has(k) ? l.get(k) : null;
+      await this.cascade.addRecord({
+        id,
+        kind,
+        actor: g.actor,
+        frame: this.position,
+        grounds: supports.map((r) => r.id),
+        ends: kind === "relation" ? { from: from.id, rel: l.get("rel"), to: to.id } : null,
+        text: opt("text"),
+        subject: kind === "claim" ? opt("subject") : null,
+        object: kind === "claim" ? opt("object") : null,
+        about: about === null ? null : about.id,
+        obs: kind === "observe" && evidence !== null ? {
+          docId: l.get("doc_id"),
+          quote: l.get("exact_quote"),
+          quoteBytes: utf8(l.get("exact_quote")),
+          anchor: evidence.get("id"),
+          version: evidence.get("version"),
+          start: evidence.get("span")[0],
+          end: evidence.get("span")[1]
+        } : null
+      });
+    }
     const L = recordValue(record, this.records.length, g.actor, directive, l, body, supports, from, to);
     const leaf = await domainHash(this.adapter, DOMAIN.recordLeaf, utf8(jcs(L)));
     leaves.push(leaf);
@@ -1297,18 +1768,6 @@ var DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024 - 1;
 var DEFAULT_MAX_DEPTH = 64;
 var OUTER_KEYS = ["body", "hash", "header"];
 var HEADER_KEYS = ["body_hash", "format", "previous", "records_root", "seq", "wal_op"];
-var SEAL_KEYS = [
-  "audit_root",
-  "engine_root",
-  "format",
-  "log_root",
-  "log_size",
-  "projections",
-  "run_id",
-  "wal_head"
-];
-var SEAL_HASH_FIELDS = ["log_root", "wal_head", "audit_root", "engine_root"];
-var PROJECTION_KEYS = ["dependencies", "status"];
 async function indexDocuments(files, adapter) {
   const map = /* @__PURE__ */ new Map();
   for (const f of files) map.set(toHex(await adapter.sha256(f)), f);
@@ -1317,6 +1776,9 @@ async function indexDocuments(files, adapter) {
 var ReadError = class extends Error {
 };
 async function verifyJournal(source, options, adapter) {
+  return (await verifyJournalDetailed(source, options, adapter)).report;
+}
+async function verifyJournalDetailed(source, options, adapter) {
   const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   const fileHash = adapter.createSha256();
   const files = options.documents === void 0 ? null : await indexDocuments(options.documents, adapter);
@@ -1367,7 +1829,8 @@ async function verifyJournal(source, options, adapter) {
       v.failJ0(v.position, "TORN_TAIL", `${pendingLen} bytes after the last LF are not a frame`);
     }
   }
-  return v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === void 0 ? null : options.documents.length);
+  const report = v.finish(toHex(await fileHash.digest()), bytes, lines, options.documents === void 0 ? null : options.documents.length);
+  return { report, cascade: report.levels.J4a.result === "NOT_RUN" ? null : v.cascade };
 }
 function toAsyncIterator(source) {
   const s = source;
@@ -1391,7 +1854,8 @@ var FrameVerifier = class {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.tree = new LogTree(adapter);
     this.j2 = new J2Checker(adapter);
-    this.j3 = files === null ? null : new RecordEngine(adapter, files);
+    this.j3 = files === null ? null : new RecordEngine(adapter, files, null, true);
+    this.quittances = (options.quittances ?? []).map((q) => parseQuittance(q.file, q.bytes));
   }
   adapter;
   options;
@@ -1420,6 +1884,16 @@ var FrameVerifier = class {
   j3Failure = null;
   j3NotSupplied = null;
   j3;
+  // J4a state (with --docs)
+  j4aFailure = null;
+  sealsCompared = 0;
+  lastCompared = null;
+  quittances;
+  /** The seals the quittances name: the header and body of the frame, and the rows J4a computed there. */
+  quittanceSeals = /* @__PURE__ */ new Map();
+  get cascade() {
+    return this.j3?.cascade ?? null;
+  }
   get j0Stopped() {
     return this.j0Failure !== null;
   }
@@ -1501,9 +1975,10 @@ var FrameVerifier = class {
       if (f !== null) this.j2Failure = { level: "J2", frame: i, code: f.code, detail: f.detail };
     }
     if (this.j3 !== null && this.j1Failure === null && this.j2Failure === null && this.j3Failure === null && this.j3NotSupplied === null) {
-      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body);
+      const r = i === 0 ? await this.j3.genesis(body) : await this.j3.frame(header, body, i);
       if (r !== null && "notSupplied" in r) this.j3NotSupplied = r.notSupplied;
       else if (r !== null) this.j3Failure = { level: "J3", frame: i, code: r.code, detail: r.detail };
+      else if (this.lastSealPos === i) await this.j4aSeal(i, header, body);
     }
     this.prevHash = hash;
     this.i++;
@@ -1572,27 +2047,12 @@ var FrameVerifier = class {
       return false;
     };
     const form = (detail) => fail("SEAL_FORM", detail);
-    if (!hasExactKeys(command, ["kind", "seal"])) return form("command must have exactly the keys kind, seal");
     const outcome = body.get("outcome");
-    if (!isObject(outcome) || !hasExactKeys(outcome, ["kind", "result"])) return form("outcome must have exactly the keys kind, result");
-    if (outcome.get("kind") !== "value") return form('outcome.kind is not "value"');
+    const problem = sealFormProblem(command, outcome);
+    if (problem !== null) return form(problem);
     const result = outcome.get("result");
-    if (!isObject(result) || !hasExactKeys(result, ["seal", "seal_hash"])) {
-      return form("outcome.result must have exactly the keys seal, seal_hash");
-    }
     const seal = command.get("seal");
-    if (!isObject(seal) || !hasExactKeys(seal, SEAL_KEYS)) return form("the seal must have exactly its eight keys");
-    const projections = seal.get("projections");
-    if (!isObject(projections) || !hasExactKeys(projections, PROJECTION_KEYS)) {
-      return form("seal.projections must have exactly the keys dependencies, status");
-    }
-    if (typeof seal.get("format") !== "string") return form("seal.format is not a string");
-    if (typeof seal.get("run_id") !== "string") return form("seal.run_id is not a string");
-    if (typeof seal.get("log_size") !== "number") return form("seal.log_size is not a number");
-    for (const k of SEAL_HASH_FIELDS) if (!isHashText(seal.get(k))) return form(`seal.${k} is not a hash`);
-    for (const k of PROJECTION_KEYS) if (!isHashText(projections.get(k))) return form(`seal.projections.${k} is not a hash`);
     const sealHash = result.get("seal_hash");
-    if (!isHashText(sealHash)) return form("outcome.result.seal_hash is not a hash");
     const sealJcs = jcs(seal);
     if (jcs(result.get("seal")) !== sealJcs) return form("outcome.result.seal differs from command.seal");
     if (seal.get("format") !== SEAL_FORMAT_ID) return fail("SEAL_FORMAT", `seal.format is not "${SEAL_FORMAT_ID}"`);
@@ -1614,6 +2074,79 @@ var FrameVerifier = class {
     this.seals.push({ n: i, seal_hash: computed });
     this.lastSealPos = i;
     return true;
+  }
+  // -------------------------------------------------------------------------
+  // J4a
+  // -------------------------------------------------------------------------
+  /** Amendment 6, P6-1: the projections over the state after frames 0 ... n-1, compared with the seal at n. */
+  async j4aSeal(n, header, body) {
+    const cascade = this.j3.cascade;
+    if (this.j4aFailure !== null && this.options.onProjections === void 0) return;
+    const st = await cascade.status();
+    const projections = body.get("command").get("seal").get("projections");
+    const statusOk = st.status === projections.get("status");
+    const dependenciesOk = st.dependencies === projections.get("dependencies");
+    this.options.onProjections?.({
+      seal_position: n,
+      status_hash: st.status,
+      dependencies_hash: st.dependencies,
+      status_rows: st.rows,
+      dependency_pairs: st.pairs,
+      equals_seal: statusOk && dependenciesOk
+    });
+    if (this.j4aFailure !== null) return;
+    this.sealsCompared++;
+    this.lastCompared = n;
+    if (!statusOk) {
+      this.j4aFailure = {
+        level: "J4a",
+        frame: n,
+        code: "PROJECTION_STATUS_MISMATCH",
+        detail: `the status projection computed over frames 0..${n - 1} is ${st.status}, the seal names ${String(projections.get("status"))}`
+      };
+      return;
+    }
+    if (!dependenciesOk) {
+      this.j4aFailure = {
+        level: "J4a",
+        frame: n,
+        code: "PROJECTION_DEPENDENCIES_MISMATCH",
+        detail: `the dependency projection computed over frames 0..${n - 1} is ${st.dependencies}, the seal names ${String(projections.get("dependencies"))}`
+      };
+      return;
+    }
+    if (this.quittances.some((q) => q.n === n)) this.quittanceSeals.set(n, { header: jcs(header), body: jcs(body), rows: st.rows });
+    await this.options.onSeal?.(n, st, cascade);
+  }
+  /** Amendment 6, P6-11: every quittance, in the order given, after the last frame. */
+  checkQuittances(j4aRan) {
+    const out = [];
+    for (const q of this.quittances) {
+      if (!j4aRan) {
+        out.push({ file: q.file, verdict: "NOT_RUN", code: null });
+        continue;
+      }
+      let failure;
+      if (q.problem !== null || q.n === null) failure = checkQuittance(q, void 0);
+      else {
+        const f = this.j4aFailure;
+        if (f !== null && f.frame !== null && q.n >= f.frame) {
+          out.push({ file: q.file, verdict: "NOT_RUN", code: null });
+          continue;
+        }
+        failure = checkQuittance(q, this.quittanceSeals.get(q.n));
+      }
+      out.push({ file: q.file, verdict: failure === null ? "PASS" : "FAIL", code: failure === null ? null : failure.code });
+      if (failure !== null) this.j4aFailure ??= { level: "J4a", frame: null, code: failure.code, detail: `${q.file}: ${failure.detail}` };
+    }
+    return out;
+  }
+  /** Amendment 6, P6-1: the reach of the cascade check. */
+  reach(n) {
+    if (this.lastCompared === null) return { seals_checked: 0, checked_through_frame: null, unchecked_frames: n - 1 };
+    const after = n - 1 - this.lastCompared;
+    const close = this.closedAt === this.lastCompared + 1 ? 1 : 0;
+    return { seals_checked: this.sealsCompared, checked_through_frame: this.lastCompared, unchecked_frames: after - close };
   }
   // -------------------------------------------------------------------------
   // End of file
@@ -1664,8 +2197,23 @@ var FrameVerifier = class {
     else if (this.j3Failure !== null) j3 = { result: "FAIL" };
     else if (this.j3NotSupplied !== null) j3 = { result: "NOT_CHECKABLE", reason: `document ${this.j3NotSupplied} not supplied` };
     else j3 = { result: "PASS", records: this.j3.recordCount, quotes: this.j3.quotes };
+    const j3Pass = j3.result === "PASS";
+    let j4a;
+    let cascade = null;
+    const quittances = this.checkQuittances(j3Pass);
+    if (!j3Pass) j4a = { result: "NOT_RUN", reason: j3.result === "NOT_CHECKED" ? "J3 not run" : j3.result === "FAIL" ? "J3 failed" : "J3 not checkable" };
+    else {
+      j4a = { result: this.j4aFailure === null ? "PASS" : "FAIL" };
+      cascade = this.reach(n);
+    }
+    let notVerified;
+    if (!j3Pass) notVerified = [...NOT_VERIFIED];
+    else if (j4a.result !== "PASS" || cascade.checked_through_frame === null) notVerified = [...NOT_VERIFIED_AFTER_J3];
+    else if (cascade.unchecked_frames > 0) notVerified = ["withdrawal_cascade_after_last_seal", "signatures"];
+    else notVerified = ["signatures"];
+    if (this.quittances.length > 0) notVerified.splice(notVerified.indexOf("signatures"), 0, "quittance_inclusion");
     const j0Result = j0Pass ? "PASS" : "FAIL";
-    const results = [j0Result, j1.result, j2.result, j3.result];
+    const results = [j0Result, j1.result, j2.result, j3.result, j4a.result];
     const verdict = results.includes("FAIL") ? "FAIL" : this.j3NotSupplied !== null && j3.result === "NOT_CHECKABLE" ? "INCOMPLETE" : "PASS";
     return {
       verifier: { name: VERIFIER_NAME, version: VERIFIER_VERSION, spec: SPEC_ID },
@@ -1681,16 +2229,19 @@ var FrameVerifier = class {
         J1: j1,
         J2: j2,
         J3: j3,
+        J4a: j4a,
         J5: { result: "NOT_CHECKED" }
       },
+      cascade,
+      quittances,
       anchor,
       computed: {
         wal_head: j0Pass ? this.prevHash : null,
         closed: tail === null ? null : tail.kind === "closed"
       },
-      not_verified: j3.result === "PASS" ? [...NOT_VERIFIED_AFTER_J3] : [...NOT_VERIFIED],
+      not_verified: notVerified,
       verdict,
-      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null)
+      first_failure: this.j0Failure ?? this.j1Failure ?? (j1Pass ? this.j2Failure : null) ?? (j2Pass ? this.j3Failure : null) ?? (j3Pass ? this.j4aFailure : null)
     };
   }
   /** SPEC 6.5: the tail after the last seal. */
@@ -1710,6 +2261,685 @@ function firstDifference(a, b) {
   const m = Math.min(a.length, b.length);
   for (let k = 0; k < m; k++) if (a.charCodeAt(k) !== b.charCodeAt(k)) return k;
   return m;
+}
+
+// src/cut.ts
+var CUT_FORMAT = "yuce-cut/1";
+var CUT_REPORT_FORMAT = "yuce-cut-report/1";
+var EXPORT_FORMAT = "yuce-export/1";
+var CUT_DOMAIN = "YUCE-CUT/1";
+var CUT_NOT_VERIFIED = ["meaning", "undeclared_dependencies", "signatures"];
+var NAME = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,64}$/;
+var MANIFEST_KEYS = ["deliveries", "exports", "format", "journals", "mode", "previous_cut"];
+var JOURNAL_KEYS = ["closed", "log_size", "name", "rules_version", "run_id", "seal_hash", "wal_head"];
+var EXPORT_KEYS = ["journal", "name", "records", "seal_hash", "sha256"];
+var DELIVERY_KEYS = ["doc_id", "export", "frame", "journal"];
+async function cutHash(adapter, manifest) {
+  return toHex(await domainHash(adapter, CUT_DOMAIN, utf8(jcs(manifest))));
+}
+function exportEscape(s) {
+  return s.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll("\r", "\\r");
+}
+function exportParagraph(claim, recordOf) {
+  const grounds = [...new Set(claim.grounds)].map((id) => recordOf(id));
+  const rests = grounds.filter((g) => g !== void 0 && g.kind === "claim").map((g) => g.id);
+  const quotes = grounds.filter((g) => g !== void 0 && g.obs !== null).map((g) => `[${exportEscape(g.obs.docId)}] "${exportEscape(g.obs.quote)}"`);
+  let p = `Record ${claim.id}: ${exportEscape(claim.text ?? "")}`;
+  if (rests.length > 0) p += ` Rests on: ${rests.join(", ")}`;
+  if (quotes.length > 0) p += ` Quotes: ${quotes.join(" ; ")}`;
+  return p;
+}
+function exportText(runId, sealHash, paragraphs) {
+  let t = `${EXPORT_FORMAT} run=${exportEscape(runId)} seal=${sealHash} records=${paragraphs.length}
+`;
+  for (const p of paragraphs) t += `
+${p}
+`;
+  return t;
+}
+var PARAGRAPH = /^Record ([0-9a-f]{64}): /;
+function exportParagraphs(bytes) {
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  const out = [];
+  const firstLf = text.indexOf("\n");
+  if (firstLf < 0) return null;
+  let offset = utf8(text.slice(0, firstLf + 1)).length;
+  const rest = text.slice(firstLf + 1);
+  const lines = rest.split("\n");
+  for (let k = 0; k < lines.length; k++) {
+    const line = lines[k];
+    const len = utf8(line).length;
+    if (line !== "") {
+      const m = PARAGRAPH.exec(line);
+      out.push({ record: m === null ? null : m[1], start: offset, end: offset + len });
+    }
+    offset += len + 1;
+  }
+  return out;
+}
+function parseManifest(bytes) {
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  const p = parseJson(text);
+  return p.ok ? { value: p.value, badNumber: p.badNumber, duplicateKey: p.duplicateKey } : null;
+}
+var isInt = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+function checkManifest(m) {
+  if (!isObject(m) || !hasExactKeys(m, MANIFEST_KEYS)) return null;
+  if (m.get("format") !== CUT_FORMAT || m.get("mode") !== "observe") return null;
+  const prev = m.get("previous_cut");
+  if (prev !== null && !isHashText(prev)) return null;
+  const js = m.get("journals");
+  const es = m.get("exports");
+  const ds = m.get("deliveries");
+  if (!Array.isArray(js) || !Array.isArray(es) || !Array.isArray(ds)) return null;
+  const journals = [];
+  for (const j of js) {
+    if (!isObject(j) || !hasExactKeys(j, JOURNAL_KEYS)) return null;
+    const name = j.get("name");
+    const runId = j.get("run_id");
+    const rules = j.get("rules_version");
+    const seal = j.get("seal_hash");
+    const size = j.get("log_size");
+    const head = j.get("wal_head");
+    const closed = j.get("closed");
+    if (typeof name !== "string" || !NAME.test(name) || typeof runId !== "string" || typeof rules !== "string") return null;
+    if (!isHashText(seal) || !isInt(size) || !isHashText(head) || typeof closed !== "boolean") return null;
+    journals.push({ name, run_id: runId, rules_version: rules, seal_hash: seal, log_size: size, wal_head: head, closed });
+  }
+  const exports = [];
+  for (const e of es) {
+    if (!isObject(e) || !hasExactKeys(e, EXPORT_KEYS)) return null;
+    const name = e.get("name");
+    const journal = e.get("journal");
+    const seal = e.get("seal_hash");
+    const sha = e.get("sha256");
+    const records = e.get("records");
+    if (typeof name !== "string" || !NAME.test(name) || typeof journal !== "string" || !NAME.test(journal)) return null;
+    if (!isHashText(seal) || !isHashText(sha) || !isInt(records)) return null;
+    exports.push({ name, journal, seal_hash: seal, sha256: sha, records });
+  }
+  const deliveries = [];
+  for (const d of ds) {
+    if (!isObject(d) || !hasExactKeys(d, DELIVERY_KEYS)) return null;
+    const exp = d.get("export");
+    const journal = d.get("journal");
+    const docId = d.get("doc_id");
+    const frame = d.get("frame");
+    if (typeof exp !== "string" || !NAME.test(exp) || typeof journal !== "string" || !NAME.test(journal)) return null;
+    if (typeof docId !== "string" || !isInt(frame)) return null;
+    deliveries.push({ export: exp, journal, doc_id: docId, frame });
+  }
+  for (let k = 1; k < journals.length; k++) if (cmp(journals[k - 1].name, journals[k].name) >= 0) return null;
+  for (let k = 1; k < exports.length; k++) if (cmp(exports[k - 1].name, exports[k].name) >= 0) return null;
+  const deliveryOrder = (a, b) => cmp(a.journal, b.journal) || a.frame - b.frame || cmp(a.doc_id, b.doc_id);
+  for (let k = 1; k < deliveries.length; k++) if (deliveryOrder(deliveries[k - 1], deliveries[k]) > 0) return null;
+  const seen = /* @__PURE__ */ new Set();
+  for (const d of deliveries) {
+    const key = d.frame === 0 ? jcs([d.journal, 0, d.doc_id]) : jcs([d.journal, d.frame]);
+    if (seen.has(key)) return null;
+    seen.add(key);
+  }
+  const journalNames = new Set(journals.map((j) => j.name));
+  const exportNames = new Set(exports.map((e) => e.name));
+  if (!exports.every((e) => journalNames.has(e.journal))) return null;
+  if (!deliveries.every((d) => journalNames.has(d.journal) && exportNames.has(d.export))) return null;
+  return { journals, exports, deliveries };
+}
+function journalPart(file, n, closed) {
+  const want = n + 1 + (closed ? 1 : 0);
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const frames = [];
+  let start = 0;
+  let end = file.length;
+  while (frames.length < want) {
+    const lf = file.indexOf(10, start);
+    if (lf < 0) break;
+    const parsed = parseJson(decoder.decode(file.subarray(start, lf)));
+    frames.push(parsed.ok && isObject(parsed.value) ? parsed.value : null);
+    start = lf + 1;
+    if (frames.length === want) end = start;
+  }
+  return { frames, bytes: file.subarray(0, end) };
+}
+var get = (o, ...path) => {
+  let v = o;
+  for (const k of path) v = isObject(v) ? v.get(k) : void 0;
+  return v;
+};
+function putsOf(frame) {
+  const body = get(frame, "body");
+  const command = get(body, "command");
+  const outcome = get(body, "outcome");
+  const kind = get(command, "kind");
+  const out = [];
+  const put = (c) => {
+    const d = get(c, "doc_id");
+    const t = get(c, "text");
+    if (get(c, "kind") === "put_document" && typeof d === "string" && typeof t === "string") out.push({ docId: d, text: t });
+  };
+  if (get(outcome, "kind") !== "value") return out;
+  if (kind === "put_document") put(command);
+  else if (kind === "batch") {
+    const ops = get(command, "operations");
+    const results = get(outcome, "result", "results");
+    if (Array.isArray(ops) && Array.isArray(results)) for (let k = 0; k < results.length && k < ops.length; k++) put(ops[k]);
+  }
+  return out;
+}
+async function verifyCut(bundle, adapter) {
+  const failures = [];
+  const states = /* @__PURE__ */ new Map();
+  const delivered = [];
+  const report = {
+    format: CUT_REPORT_FORMAT,
+    cut_hash: null,
+    verdict: "FAIL",
+    journals: [],
+    exports: [],
+    deliveries: [],
+    across: { paragraphs_fallen: 0, observations_checked: 0 },
+    failures,
+    not_verified: [...CUT_NOT_VERIFIED]
+  };
+  const result = { report, manifest: null, states, delivered };
+  const m = parseManifest(bundle.manifest);
+  if (m !== null && isObject(m.value) && !m.badNumber && !m.duplicateKey) report.cut_hash = await cutHash(adapter, m.value);
+  const manifest = m === null || m.badNumber || m.duplicateKey ? null : checkManifest(m.value);
+  if (manifest === null) {
+    failures.push({ code: "CUT_FORM" });
+    return result;
+  }
+  result.manifest = manifest;
+  const parts = /* @__PURE__ */ new Map();
+  const sealGrounded = /* @__PURE__ */ new Map();
+  const genesisDocs = /* @__PURE__ */ new Map();
+  for (const j of manifest.journals) {
+    const files = bundle.journals.get(j.name);
+    const jf = (field) => void failures.push({ code: "CUT_JOURNAL_MISMATCH", journal: j.name, field });
+    const n = j.log_size;
+    const part = journalPart(files?.journal ?? new Uint8Array(), n, j.closed);
+    parts.set(j.name, part);
+    const seal = part.frames[n];
+    const isSealFrame = (f) => get(f, "body", "actor") === "kernel" && get(f, "body", "command", "kind") === "seal" && get(f, "body", "outcome", "kind") === "value";
+    if (n < 1 || !isSealFrame(seal) || get(seal, "body", "outcome", "result", "seal_hash") !== j.seal_hash) jf("seal_hash");
+    const previous = n >= 1 ? part.frames[n - 1] : void 0;
+    if (j.wal_head !== get(seal, "body", "command", "seal", "wal_head") || j.wal_head !== get(previous, "hash")) jf("wal_head");
+    if (j.closed) {
+      const close = part.frames[n + 1];
+      if (!(get(close, "body", "actor") === "kernel" && get(close, "body", "command", "kind") === "close" && get(close, "body", "outcome", "kind") === "value")) jf("closed");
+    }
+    const genesis = get(part.frames[0], "body");
+    if (get(genesis, "run_id") !== j.run_id) jf("run_id");
+    if (get(genesis, "rules_version") !== j.rules_version) jf("rules_version");
+    const grounded = /* @__PURE__ */ new Map();
+    const detailed = await verifyJournalDetailed(
+      [part.bytes],
+      {
+        expectSeal: j.seal_hash,
+        documents: files?.documents ?? [],
+        onSeal: (pos, st) => void grounded.set(pos, st.grounded.slice())
+      },
+      adapter
+    );
+    const r = detailed.report;
+    const passed = r.verdict === "PASS" && r.levels.J3.result === "PASS" && r.levels.J4a.result === "PASS";
+    report.journals.push({ name: j.name, verdict: "PASS", levels: r.levels });
+    if (!passed) {
+      failures.push({ code: "CUT_JOURNAL_FAILED", journal: j.name, failure: r.first_failure?.code ?? null });
+      continue;
+    }
+    sealGrounded.set(j.name, grounded);
+    states.set(j.name, { name: j.name, seal_hash: j.seal_hash, log_size: n, report: r, cascade: detailed.cascade, status: await detailed.cascade.status() });
+    const docs = /* @__PURE__ */ new Map();
+    const byHash = /* @__PURE__ */ new Map();
+    for (const f of files?.documents ?? []) byHash.set(toHex(await adapter.sha256(f)), f);
+    const sources = get(genesis, "source_documents");
+    if (isObject(sources)) {
+      for (const [docId, desc] of sources) {
+        const b = byHash.get(get(desc, "raw_sha256"));
+        if (b !== void 0) docs.set(docId, b);
+      }
+    }
+    genesisDocs.set(j.name, docs);
+  }
+  for (const entry of report.journals) {
+    if (failures.some((f) => f.journal === entry.name && (f.code === "CUT_JOURNAL_MISMATCH" || f.code === "CUT_JOURNAL_FAILED"))) entry.verdict = "FAIL";
+  }
+  const journalOf = new Map(manifest.journals.map((j) => [j.name, j]));
+  for (const e of manifest.exports) {
+    const before = failures.length;
+    const file = bundle.exports.get(e.name) ?? new Uint8Array();
+    const state = states.get(e.journal);
+    const j = journalOf.get(e.journal);
+    let mismatch = false;
+    const fail = (code, extra = {}) => {
+      if (code === "EXPORT_MISMATCH") {
+        if (mismatch) return;
+        mismatch = true;
+      }
+      failures.push({ code, export: e.name, ...extra });
+    };
+    const paragraphs = exportParagraphs(file);
+    let fallen = 0;
+    const sha = toHex(await adapter.sha256(file));
+    const header = `${EXPORT_FORMAT} run=${exportEscape(j.run_id)} seal=${e.seal_hash} records=${e.records}
+`;
+    const headerBytes = utf8(header);
+    const headerOk = file.length >= headerBytes.length && headerBytes.every((b, k) => file[k] === b);
+    if (sha !== e.sha256 || !headerOk) fail("EXPORT_MISMATCH");
+    if (state !== void 0) {
+      const seals = state.report.levels.J1.result === "PASS" ? state.report.levels.J1.seals : [];
+      const seal = seals.find((s) => s.seal_hash === e.seal_hash);
+      if (seal === void 0) fail("EXPORT_SEAL_UNKNOWN");
+      else {
+        const grounded = sealGrounded.get(e.journal).get(seal.n);
+        const named = [];
+        if (paragraphs === null) fail("EXPORT_MISMATCH");
+        else {
+          for (const p of paragraphs) {
+            const r = p.record === null ? void 0 : state.cascade.record(p.record);
+            if (r === void 0 || r.kind !== "claim" || r.frame >= seal.n || named.includes(r)) {
+              fail("EXPORT_MISMATCH");
+              continue;
+            }
+            named.push(r);
+          }
+          for (const r of named) if (grounded[r.index] !== true) fail("EXPORT_NOT_STANDING", { record: r.id });
+          const ordered = [...named].sort((a, b) => a.index - b.index);
+          const canonical = exportText(j.run_id, e.seal_hash, ordered.map((r) => exportParagraph(r, (id) => state.cascade.record(id))));
+          const cb = utf8(canonical);
+          if (cb.length !== file.length || !cb.every((b, k) => file[k] === b)) fail("EXPORT_MISMATCH");
+          fallen = named.filter((r) => state.status.grounded[r.index] !== true).length;
+        }
+      }
+    }
+    report.exports.push({ name: e.name, verdict: failures.length === before ? "PASS" : "FAIL", paragraphs: paragraphs?.length ?? 0, fallen_at_cut: fallen });
+  }
+  const exportOf = new Map(manifest.exports.map((e) => [e.name, e]));
+  const deliveryFailed = /* @__PURE__ */ new Set();
+  for (const d of manifest.deliveries) {
+    const state = states.get(d.journal);
+    if (state === void 0) {
+      deliveryFailed.add(d);
+      continue;
+    }
+    const e = exportOf.get(d.export);
+    const part = parts.get(d.journal);
+    const j = journalOf.get(d.journal);
+    let bytes = null;
+    let version = null;
+    const inPart = d.frame <= j.log_size + (j.closed ? 1 : 0) && d.frame < part.frames.length;
+    if (inPart && d.frame === 0) {
+      const desc = get(part.frames[0], "body", "source_documents", d.doc_id);
+      const b = genesisDocs.get(d.journal).get(d.doc_id);
+      if (isObject(desc) && desc.get("raw_sha256") === e.sha256 && b !== void 0) {
+        bytes = b;
+        version = toHex((await documentChunks(adapter, b)).version);
+      }
+    } else if (inPart) {
+      const body = get(part.frames[d.frame], "body");
+      const command = get(body, "command");
+      const text = get(command, "text");
+      if (get(command, "kind") === "put_document" && get(body, "outcome", "kind") === "value" && get(command, "doc_id") === d.doc_id && typeof text === "string") {
+        const b = utf8(text);
+        const v = toHex((await documentChunks(adapter, b)).version);
+        if (toHex(await adapter.sha256(b)) === e.sha256 && get(body, "outcome", "result", "document_version") === v) {
+          bytes = b;
+          version = v;
+        }
+      }
+    }
+    if (bytes === null || version === null) {
+      failures.push({ code: "DELIVERY_MISSING", export: d.export, journal: d.journal, doc_id: d.doc_id, frame: d.frame });
+      deliveryFailed.add(d);
+      continue;
+    }
+    const paragraphs = (exportParagraphs(bytes) ?? []).filter((p) => p.record !== null);
+    delivered.push({ delivery: d, bytes, version, paragraphs });
+  }
+  const exportShas = manifest.exports;
+  const undeclared = [];
+  for (const j of manifest.journals) {
+    if (!states.has(j.name)) continue;
+    const part = parts.get(j.name);
+    const found = [];
+    const sources = get(part.frames[0], "body", "source_documents");
+    if (isObject(sources)) {
+      for (const [docId, desc] of sources) {
+        const e = exportShas.find((x) => x.sha256 === get(desc, "raw_sha256"));
+        if (e !== void 0) found.push({ frame: 0, doc_id: docId, export: e.name });
+      }
+    }
+    for (let f = 1; f < part.frames.length; f++) {
+      for (const p of putsOf(part.frames[f])) {
+        const sha = toHex(await adapter.sha256(utf8(p.text)));
+        const e = exportShas.find((x) => x.sha256 === sha);
+        if (e !== void 0) found.push({ frame: f, doc_id: p.docId, export: e.name });
+      }
+    }
+    found.sort((a, b) => a.frame - b.frame || cmp(a.doc_id, b.doc_id));
+    for (const imp of found) {
+      const declared = manifest.deliveries.some((d) => d.journal === j.name && d.frame === imp.frame && (imp.frame !== 0 || d.doc_id === imp.doc_id));
+      if (declared) continue;
+      const fl = { code: "CUT_UNDECLARED_DELIVERY", journal: j.name, frame: imp.frame, doc_id: imp.doc_id, export: imp.export };
+      if (!undeclared.some((u) => jcs(u) === jcs(fl))) undeclared.push(fl);
+    }
+  }
+  failures.push(...undeclared);
+  for (const dx of delivered) {
+    const d = dx.delivery;
+    const part = parts.get(d.journal);
+    const named = (f) => f === 0 && isObject(get(part.frames[0], "body", "source_documents", d.doc_id)) || f > 0 && putsOf(part.frames[f]).some((p) => p.docId === d.doc_id);
+    let at = null;
+    for (let f = 0; f < d.frame && at === null; f++) if (named(f)) at = d.frame;
+    for (let f = d.frame + 1; f < part.frames.length && at === null; f++) if (named(f)) at = f;
+    if (at !== null) {
+      failures.push({ code: "CUT_IMPORT_MODIFIED", journal: d.journal, doc_id: d.doc_id, frame: at });
+      deliveryFailed.add(d);
+    }
+  }
+  for (const dx of delivered) {
+    const d = dx.delivery;
+    const source = states.get(exportOf.get(d.export).journal);
+    const target = states.get(d.journal);
+    if (source === void 0) continue;
+    const seen = /* @__PURE__ */ new Set();
+    for (const p of dx.paragraphs) {
+      const r = source.cascade.record(p.record);
+      if (r !== void 0 && source.status.grounded[r.index] === true) continue;
+      report.across.paragraphs_fallen++;
+      for (const o of target.cascade.accepted) {
+        if (o.obs === null || o.obs.docId !== d.doc_id || o.obs.version !== dx.version) continue;
+        if (!(o.obs.start < p.end && p.start < o.obs.end)) continue;
+        if (!seen.has(o.id)) {
+          seen.add(o.id);
+          report.across.observations_checked++;
+        }
+        if (target.status.grounded[o.index] === true) {
+          failures.push({ code: "WITHDRAWAL_NOT_DELIVERED", export: d.export, record: p.record, observation: o.id });
+          deliveryFailed.add(d);
+        }
+      }
+    }
+  }
+  for (const d of manifest.deliveries) report.deliveries.push({ export: d.export, journal: d.journal, verdict: deliveryFailed.has(d) ? "FAIL" : "PASS" });
+  report.verdict = failures.length === 0 ? "PASS" : "FAIL";
+  return result;
+}
+function cutHumanLine(r) {
+  const nv = `Not verified: ${r.not_verified.map((s) => s.replaceAll("_", " ")).join(", ")}.`;
+  if (r.verdict === "PASS") {
+    return `Cut PASS. Journals: ${r.journals.length}. Exports: ${r.exports.length}. Deliveries: ${r.deliveries.length}. Paragraphs fallen: ${r.across.paragraphs_fallen}; observations checked: ${r.across.observations_checked}. ${nv}`;
+  }
+  const first = r.failures[0];
+  const fields = Object.entries(first).filter(([k]) => k !== "code").map(([k, v]) => `${k} ${String(v)}`).join(", ");
+  const more = r.failures.length > 1 ? ` (${r.failures.length} failures)` : "";
+  return `Cut FAIL: ${first.code}${fields === "" ? "" : ` (${fields})`}${more}. ${nv}`;
+}
+
+// src/obs.ts
+var OBS_REPORT_FORMAT = "yuce-observation-report/1";
+var OBS_REPORT_DOMAIN = "YUCE-OBS-REPORT/1";
+var zeroDebt = () => ({
+  affected: 0,
+  contested: 0,
+  resting_on_contested: 0,
+  stale: 0,
+  questions_about_claims: 0,
+  key_conflicts: 0,
+  rejected_submissions: 0,
+  late_submissions: 0
+});
+var uniqueBy = (items, key) => {
+  const seen = /* @__PURE__ */ new Set();
+  return items.filter((t) => {
+    const k = key(t);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+};
+async function observationReport(input, adapter) {
+  const claims = [];
+  const keyConflicts = [];
+  const debtBy = /* @__PURE__ */ new Map();
+  for (const j of input.journals) {
+    const { cascade, status } = j;
+    const records = cascade.accepted;
+    const grounded = (id) => {
+      const r = cascade.record(id);
+      return r !== void 0 && status.grounded[r.index] === true;
+    };
+    const links = cascade.allLinks;
+    const fallenBy = (r) => status.rows[r.index][4];
+    const entryOf = (l, other) => ({
+      link: l.id,
+      rel: l.rel,
+      from: l.from,
+      to: l.to,
+      status: l.status,
+      other_grounded: grounded(other),
+      usable: cascade.linkEffective(l, status)
+    });
+    const declared = new Set(records.filter((r) => r.kind === "relation" && r.ends !== null).map((r) => jcs([r.ends.from, r.ends.rel, r.ends.to])));
+    for (const c of records) {
+      if (c.kind !== "claim") continue;
+      const grounds = c.grounds.map((id) => cascade.record(id)).filter((g) => g !== void 0);
+      const obsGrounds = grounds.filter((g) => g.obs !== null);
+      const quotes = uniqueBy(
+        obsGrounds.map((g) => ({ doc_id: g.obs.docId, version: g.obs.version, start: g.obs.start, end: g.obs.end })),
+        (q) => jcs(fromPlain(q))
+      );
+      const restsOn = uniqueBy(
+        grounds.filter((g) => g.kind === "claim").map((g) => g.id),
+        (x) => x
+      );
+      const across = [];
+      for (const g of obsGrounds) {
+        for (const d of input.deliveries) {
+          if (d.journal !== j.name || d.doc_id !== g.obs.docId || d.version !== g.obs.version) continue;
+          for (const p of d.paragraphs) if (g.obs.start < p.end && p.start < g.obs.end) across.push({ journal: d.source, record: p.record });
+        }
+      }
+      const restsOnAcross = uniqueBy(across, (a) => jcs([a.journal, a.record])).sort((a, b) => cmp(a.journal, b.journal) || cmp(a.record, b.record));
+      const questions = [...new Set(records.filter((q) => q.kind === "question" && q.about === c.id).map((q) => q.id))].sort(cmp);
+      const isGrounded = status.grounded[c.index] === true;
+      const causes = [];
+      if (!isGrounded) {
+        const visited = /* @__PURE__ */ new Set();
+        const stack = [...fallenBy(c)];
+        while (stack.length > 0) {
+          const id = stack.shift();
+          if (visited.has(id)) continue;
+          visited.add(id);
+          const r = cascade.record(id);
+          if (r === void 0) continue;
+          if (r.kind === "observe") {
+            if (status.grounded[r.index] !== true) causes.push(r);
+          } else stack.push(...fallenBy(r));
+        }
+        causes.sort((a, b) => a.index - b.index);
+      }
+      const rootCauses = causes.map((r) => ({ record: r.id, reason: cascade.revoked.get(r.obs.anchor) ?? "version_replaced" }));
+      const K = links.filter((l) => l.rel === "contradicts" && (l.from === c.id || l.to === c.id));
+      const other = (l) => l.from === c.id ? l.to : l.from;
+      let dispute;
+      if (K.some((l) => l.status === "accepted" && grounded(other(l)))) dispute = "contested";
+      else if (K.some((l) => l.status === "proposed" || l.status === "accepted" && !grounded(other(l)))) dispute = "unknown";
+      else dispute = "uncontested";
+      const disputeLinks = K.map((l) => entryOf(l, other(l))).sort((a, b) => cmp(a.link, b.link));
+      const supersedes = links.filter((l) => l.rel === "supersedes" && l.to === c.id);
+      const R = supersedes.filter((l) => l.status !== "rejected");
+      let time;
+      if (R.some((l) => grounded(l.from) && (l.status === "accepted" || declared.has(jcs([l.from, l.rel, l.to]))))) time = "stale";
+      else if (R.length > 0) time = "unknown";
+      else time = "current";
+      const timeLinks = supersedes.map((l) => entryOf(l, l.from)).sort((a, b) => cmp(a.link, b.link));
+      claims.push({
+        journal: j.name,
+        id: c.id,
+        author: c.actor,
+        frame: c.frame,
+        quotes,
+        rests_on: restsOn,
+        rests_on_across: restsOnAcross,
+        questions,
+        support: isGrounded ? "grounded" : "affected",
+        root_causes: rootCauses,
+        dispute,
+        dispute_links: disputeLinks,
+        time,
+        time_links: timeLinks
+      });
+    }
+    const supersededByKey = (c) => records.some((r) => {
+      if (r.kind !== "relation" || r.ends === null || r.ends.rel !== "supersedes" || r.ends.to !== c.id || status.grounded[r.index] !== true) return false;
+      const l = links.find((x) => x.from === r.ends.from && x.rel === r.ends.rel && x.to === r.ends.to);
+      return l !== void 0 && l.status !== "rejected";
+    });
+    const byKey = /* @__PURE__ */ new Map();
+    const valueOf = /* @__PURE__ */ new Map();
+    for (const c of records) {
+      if (c.kind !== "claim" || c.subject === null || status.grounded[c.index] !== true || supersededByKey(c)) continue;
+      const v = jcs(c.object);
+      valueOf.set(v, c.object);
+      let set = byKey.get(c.subject);
+      if (set === void 0) byKey.set(c.subject, set = /* @__PURE__ */ new Set());
+      set.add(v);
+    }
+    const conflicts = [...byKey.entries()].filter(([, vs]) => vs.size >= 2).sort((a, b) => cmp(a[0], b[0]));
+    for (const [subject, vs] of conflicts) keyConflicts.push({ journal: j.name, subject, values: [...vs].sort(cmp).map((v) => valueOf.get(v)) });
+    const debt = zeroDebt();
+    debt.key_conflicts = conflicts.length;
+    debt.questions_about_claims = records.filter((q) => q.kind === "question" && q.about !== null && cascade.record(q.about)?.kind === "claim").length;
+    debt.rejected_submissions = cascade.rejectedSubmissions;
+    debt.late_submissions = cascade.lateSubmissions;
+    debtBy.set(j.name, debt);
+  }
+  const disputeOf = new Map(claims.map((c) => [jcs([c.journal, c.id]), c.dispute]));
+  for (const c of claims) {
+    const debt = debtBy.get(c.journal);
+    if (c.support === "affected") debt.affected++;
+    if (c.dispute === "contested") debt.contested++;
+    if (c.time === "stale") debt.stale++;
+    const resting = c.rests_on.some((id) => disputeOf.get(jcs([c.journal, id])) === "contested") || c.rests_on_across.some((a) => disputeOf.get(jcs([a.journal, a.record])) === "contested");
+    if (resting) debt.resting_on_contested++;
+  }
+  const total = zeroDebt();
+  for (const d of debtBy.values()) for (const k of Object.keys(total)) total[k] += d[k];
+  keyConflicts.sort((a, b) => cmp(a.journal, b.journal) || cmp(a.subject, b.subject));
+  const body = fromPlain({
+    format: OBS_REPORT_FORMAT,
+    mode: "observe",
+    cut_hash: input.cut_hash,
+    journals: input.journals.map((j) => ({ name: j.name, seal_hash: j.seal_hash, log_size: j.log_size })),
+    claims,
+    key_conflicts: keyConflicts,
+    debt: { total, by_journal: Object.fromEntries([...debtBy.entries()]) }
+  });
+  body.set("report_hash", await reportHash(adapter, body));
+  return { value: body, text: jcs(body) };
+}
+async function reportHash(adapter, report) {
+  const without = new Map([...report].filter(([k]) => k !== "report_hash"));
+  return toHex(await domainHash(adapter, OBS_REPORT_DOMAIN, utf8(jcs(without))));
+}
+async function checkReport(given, computed, adapter) {
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(given);
+  } catch {
+    return { verdict: "FAIL", code: "REPORT_FORM", path: null };
+  }
+  const parsed = parseJson(text);
+  if (!parsed.ok || parsed.badNumber || !isObject(parsed.value) || !sameBytes(utf8(jcs(parsed.value)), given) || !isHashText(parsed.value.get("report_hash"))) {
+    return { verdict: "FAIL", code: "REPORT_FORM", path: null };
+  }
+  if (parsed.value.get("report_hash") !== await reportHash(adapter, parsed.value)) return { verdict: "FAIL", code: "REPORT_HASH_MISMATCH", path: null };
+  if (sameBytes(utf8(jcs(computed)), given)) return { verdict: "PASS", code: null, path: null };
+  return { verdict: "FAIL", code: "REPORT_MISMATCH", path: firstDifference2(parsed.value, computed, "") };
+}
+function sameBytes(a, b) {
+  return a.length === b.length && a.every((x, k) => x === b[k]);
+}
+function firstDifference2(a, b, path) {
+  if (a === void 0 || b === void 0) return path;
+  if (isObject(a) && isObject(b)) {
+    const keys = [.../* @__PURE__ */ new Set([...a.keys(), ...b.keys()])].sort(cmp);
+    for (const k of keys) {
+      const d = firstDifference2(a.get(k), b.get(k), path === "" ? k : `${path}.${k}`);
+      if (d !== null) return d;
+    }
+    return null;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = firstDifference2(a[i], b[i], `${path}[${i}]`);
+      if (d !== null) return d;
+    }
+    return null;
+  }
+  return jcs(a) === jcs(b) ? null : path;
+}
+function partThroughSeal(journal, n) {
+  let at = 0;
+  for (let k = 0; k <= n; k++) {
+    const lf = journal.indexOf(10, at);
+    if (lf < 0) return null;
+    at = lf + 1;
+  }
+  return journal.subarray(0, at);
+}
+async function observationReportForJournal(journal, documents, sealFrame, adapter) {
+  const part = partThroughSeal(journal, sealFrame);
+  if (part === null) return { ok: false, reason: `the journal has no frame ${sealFrame}` };
+  const { report, cascade } = await verifyJournalDetailed([part], { documents }, adapter);
+  if (report.verdict !== "PASS" || report.levels.J4a.result !== "PASS" || cascade === null) {
+    const f = report.first_failure;
+    return { ok: false, reason: f !== null ? `the part fails at ${f.level}${f.frame === null ? "" : `, frame ${f.frame}`}: ${f.code}` : `the part is not verified through J4a (${report.verdict})` };
+  }
+  const seal = report.levels.J1.result === "PASS" ? report.levels.J1.seals.find((s) => s.n === sealFrame) : void 0;
+  if (seal === void 0) return { ok: false, reason: `frame ${sealFrame} is not a seal` };
+  const firstLf = part.indexOf(10);
+  const genesis = parseJson(new TextDecoder().decode(part.subarray(0, firstLf)));
+  const body = genesis.ok && isObject(genesis.value) ? genesis.value.get("body") : void 0;
+  const runId = isObject(body) ? body.get("run_id") : void 0;
+  const status = await cascade.status();
+  const r = await observationReport(
+    { cut_hash: null, journals: [{ name: typeof runId === "string" ? runId : "", seal_hash: seal.seal_hash, log_size: sealFrame, cascade, status }], deliveries: [] },
+    adapter
+  );
+  return { ok: true, ...r };
+}
+async function observationReportForCut(bundle, adapter) {
+  const cut = await verifyCut(bundle, adapter);
+  if (cut.report.verdict !== "PASS" || cut.manifest === null) {
+    const f = cut.report.failures[0];
+    return { ok: false, reason: `the cut fails${f === void 0 ? "" : `: ${f.code}`}` };
+  }
+  const journals = cut.manifest.journals.map((j) => {
+    const s = cut.states.get(j.name);
+    return { name: j.name, seal_hash: j.seal_hash, log_size: j.log_size, cascade: s.cascade, status: s.status };
+  });
+  const sourceOf = new Map(cut.manifest.exports.map((e) => [e.name, e.journal]));
+  const deliveries = cut.delivered.map((d) => ({
+    journal: d.delivery.journal,
+    doc_id: d.delivery.doc_id,
+    version: d.version,
+    source: sourceOf.get(d.delivery.export),
+    paragraphs: d.paragraphs
+  }));
+  return { ok: true, ...await observationReport({ cut_hash: cut.report.cut_hash, journals, deliveries }, adapter) };
 }
 
 // src/vectors.ts
@@ -1749,17 +2979,17 @@ async function checkVectors(file, adapter) {
   if (!isObject(vectors)) throw new Error('the vectors file has no "vectors" object');
   const out = [];
   const used = /* @__PURE__ */ new Set();
-  const get = (name) => {
+  const get2 = (name) => {
     used.add(name);
     return vectors.get(name);
   };
   const str = (name) => {
-    const v = get(name);
+    const v = get2(name);
     if (typeof v !== "string") throw new VectorShapeError(`${name} is missing or not a string`);
     return v;
   };
   const strList = (name) => {
-    const v = get(name);
+    const v = get2(name);
     if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new VectorShapeError(`${name} is not a list of strings`);
     return v;
   };
@@ -1845,7 +3075,7 @@ async function checkVectors(file, adapter) {
   });
   await check("V3_line_sha256", async () => eq("SHA-256(V3_line)", toHex(await adapter.sha256(utf8(str("V3_line")))), str("V3_line_sha256")));
   await check("V3_line_len", async () => {
-    const want = get("V3_line_len");
+    const want = get2("V3_line_len");
     return eq("byte length of V3_line", String(utf8(str("V3_line")).length), String(want));
   });
   for (const n of [1, 2, 3]) {
@@ -1865,7 +3095,7 @@ async function checkVectors(file, adapter) {
     return canonicalProblem(p, "V7_P_jcs") ?? eq("H(R2R-SEAL/2, JCS(P))", await H(DOMAIN.seal, utf8(p)), str("V7_seal_hash"));
   });
   let pair = null;
-  const v9 = async () => pair ??= await loadV9(adapter, str, get);
+  const v9 = async () => pair ??= await loadV9(adapter, str, get2);
   await check("V9_frame_hash_n_minus_1", async () => {
     const p = await v9();
     return frameProblem(p.before, p.n - 1, str("V9_frame_hash_n_minus_1"));
@@ -1901,7 +3131,7 @@ async function checkVectors(file, adapter) {
     return eq("the request preimage", JSON.stringify(preimage), JSON.stringify(str("V10_request_preimage_jcs"))) ?? eq("request_hash", await requestHash(adapter, actor, command), str("V10_request_hash"));
   });
   await check("V11_gear_hex", async () => {
-    const idx = get("V11_gear_index");
+    const idx = get2("V11_gear_index");
     const want = strList("V11_gear_hex");
     if (!Array.isArray(idx) || idx.length !== want.length) return "V11_gear_index and V11_gear_hex differ in length";
     for (let k = 0; k < idx.length; k++) {
@@ -1911,11 +3141,11 @@ async function checkVectors(file, adapter) {
     return null;
   });
   await check("V11_cdc", async () => {
-    const cdc = get("V11_cdc");
+    const cdc = get2("V11_cdc");
     if (!isObject(cdc)) return "V11_cdc is not an object";
     return eq("window w", String(cdc.get("window_w")), String(CDC_WINDOW)) ?? eq("maximum chunk", String(cdc.get("max_chunk")), String(CDC_MAX_CHUNK));
   });
-  const docs = get("V11_documents");
+  const docs = get2("V11_documents");
   const v11Texts = /* @__PURE__ */ new Map();
   if (Array.isArray(docs)) {
     for (let k = 0; k < docs.length; k++) {
@@ -1940,7 +3170,7 @@ async function checkVectors(file, adapter) {
     "V11_version_empty_document",
     async () => eq("version of the empty document", toHex((await documentChunks(adapter, new Uint8Array(0))).version), str("V11_version_empty_document"))
   );
-  const shorts = get("V11_short_documents");
+  const shorts = get2("V11_short_documents");
   if (Array.isArray(shorts)) {
     for (let k = 0; k < shorts.length; k++) {
       await check(
@@ -1956,12 +3186,12 @@ async function checkVectors(file, adapter) {
     }
   }
   await check("V11_version_one_chunk", async () => {
-    const v = get("V11_version_one_chunk");
+    const v = get2("V11_version_one_chunk");
     if (!isObject(v) || typeof v.get("text") !== "string") return "not an object with a text";
     const c = await documentChunks(adapter, utf8(v.get("text")));
     return eq("version", toHex(c.version), String(v.get("version")));
   });
-  const evidence = get("V12_evidence");
+  const evidence = get2("V12_evidence");
   if (Array.isArray(evidence)) {
     for (let k = 0; k < evidence.length; k++) {
       await check(
@@ -1989,12 +3219,12 @@ async function checkVectors(file, adapter) {
   }
   await check("V13_record_id", async () => {
     const body = parseObject(str("V13_record_body_jcs"));
-    const preimage = jcs(["r2r.audit.record.v1", str("V13_record_author"), str("V13_record_directive"), get("V13_record_ordinal") ?? null, body]);
+    const preimage = jcs(["r2r.audit.record.v1", str("V13_record_author"), str("V13_record_directive"), get2("V13_record_ordinal") ?? null, body]);
     return eq("the record preimage", JSON.stringify(preimage), JSON.stringify(str("V13_record_preimage_jcs"))) ?? eq("record id", toHex(await adapter.sha256(utf8(preimage))), str("V13_record_id"));
   });
   const byFrame = /* @__PURE__ */ new Map();
   await check("V14_records", async () => {
-    const recs = get("V14_records");
+    const recs = get2("V14_records");
     if (!Array.isArray(recs)) return "not an array";
     for (let k = 0; k < recs.length; k++) {
       const r = recs[k];
@@ -2012,7 +3242,7 @@ async function checkVectors(file, adapter) {
   });
   await check("V14_records_roots", async () => {
     const roots = strList("V14_records_roots");
-    if (get("V14_frames") !== roots.length) return "V14_frames is not the number of roots";
+    if (get2("V14_frames") !== roots.length) return "V14_frames is not the number of roots";
     if (byFrame.size === 0) return "V14 leaves unavailable";
     for (let i = 0; i < roots.length; i++) {
       const p = eq(`records root of frame ${i}`, toHex(await recordsRoot(adapter, byFrame.get(i) ?? [])), roots[i]);
@@ -2027,7 +3257,7 @@ async function checkVectors(file, adapter) {
   await check("V15_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V15_settings_hash_empty")));
   await check("V8_settings_hash_empty", async () => eq("settings hash of {}", await H(SETTINGS_DOMAIN, utf8("{}")), str("V8_settings_hash_empty")));
   await check("V16_git_document_id", async () => {
-    const identity = get("V16_git_identity");
+    const identity = get2("V16_git_identity");
     if (!isObject(identity)) return "V16_git_identity is not an object";
     const bytes = utf8(str("V16_git_document_text"));
     const s = (k) => String(identity.get(k));
@@ -2070,8 +3300,8 @@ async function loadFrame(adapter, line, what) {
     bodyHash: toHex(await domainHash(adapter, DOMAIN.frameBody, utf8(jcs(body))))
   };
 }
-async function loadV9(adapter, str, get) {
-  const n = get("V9_seal_frame_index");
+async function loadV9(adapter, str, get2) {
+  const n = get2("V9_seal_frame_index");
   if (typeof n !== "number") throw new VectorShapeError("V9_seal_frame_index is not a number");
   const before = await loadFrame(adapter, str("V9_line_frame_n_minus_1"), "V9_line_frame_n_minus_1");
   const seal = await loadFrame(adapter, str("V9_line_seal_frame_n"), "V9_line_seal_frame_n");
@@ -2112,15 +3342,25 @@ var V9_CHECKS = {
 var USAGE = [
   "usage:",
   "  yuce-verify journal <file> [--docs <folder>] [--expect-seal <hex>] [--expect-head <hex>]",
+  "                             [--quittance <file>]... [--dump-projections <file>]",
   "                             [--max-line-bytes <n>] [--max-depth <n>] [--json] [--quiet]",
+  "  yuce-verify cut <folder> [--json] [--quiet]",
+  "  yuce-verify report <journal> --seal-frame <n> [--docs <folder>] [--check <report>] [--json] [--quiet]",
+  "  yuce-verify report <cut folder> [--check <report>] [--json] [--quiet]",
   "  yuce-verify vectors <file.json> [--json] [--quiet]"
 ].join("\n");
 var UsageError = class extends Error {
 };
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["--docs", "--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth"]);
+var VALUE_FLAGS = {
+  journal: /* @__PURE__ */ new Set(["--docs", "--expect-seal", "--expect-head", "--max-line-bytes", "--max-depth", "--quittance", "--dump-projections"]),
+  vectors: /* @__PURE__ */ new Set(),
+  cut: /* @__PURE__ */ new Set(),
+  report: /* @__PURE__ */ new Set(["--docs", "--seal-frame", "--check"])
+};
+var REPEATABLE = /* @__PURE__ */ new Set(["--quittance"]);
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  if (command !== "journal" && command !== "vectors") {
+  if (command !== "journal" && command !== "vectors" && command !== "cut" && command !== "report") {
     throw new UsageError(command === void 0 ? "missing command" : `unknown command ${JSON.stringify(command)}`);
   }
   const values = /* @__PURE__ */ new Map();
@@ -2138,32 +3378,48 @@ function parseArgs(argv) {
     }
     const eqAt = arg.indexOf("=");
     const name = eqAt < 0 ? arg : arg.slice(0, eqAt);
-    if (VALUE_FLAGS.has(name) && command === "journal") {
+    if (VALUE_FLAGS[command].has(name)) {
       let value;
       if (eqAt >= 0) value = arg.slice(eqAt + 1);
       else value = rest[++k];
       if (value === void 0) throw new UsageError(`${name} needs a value`);
-      if (values.has(name)) throw new UsageError(`${name} given twice`);
-      values.set(name, value);
+      const list = values.get(name) ?? [];
+      if (list.length > 0 && !REPEATABLE.has(name)) throw new UsageError(`${name} given twice`);
+      list.push(value);
+      values.set(name, list);
     } else if ((name === "--json" || name === "--quiet") && eqAt < 0) {
       switches.add(name);
     } else throw new UsageError(`unknown option ${JSON.stringify(arg)}`);
   }
-  if (positional.length !== 1) throw new UsageError(`expected exactly one file, got ${positional.length}`);
-  const parsed = { command, file: positional[0], json: switches.has("--json"), quiet: switches.has("--quiet") };
-  const docs = values.get("--docs");
+  if (positional.length !== 1) throw new UsageError(`expected exactly one ${command === "cut" ? "folder" : "file"}, got ${positional.length}`);
+  const one = (name) => values.get(name)?.[0];
+  const parsed = { command, file: positional[0], quittances: values.get("--quittance") ?? [], json: switches.has("--json"), quiet: switches.has("--quiet") };
+  const docs = one("--docs");
   if (docs !== void 0) {
     if (docs === "") throw new UsageError("--docs needs a folder");
     parsed.docs = docs;
   }
-  const seal = values.get("--expect-seal");
+  const seal = one("--expect-seal");
   if (seal !== void 0) parsed.expectSeal = hashArg("--expect-seal", seal);
-  const head = values.get("--expect-head");
+  const head = one("--expect-head");
   if (head !== void 0) parsed.expectHead = hashArg("--expect-head", head);
-  const mlb = values.get("--max-line-bytes");
+  const mlb = one("--max-line-bytes");
   if (mlb !== void 0) parsed.maxLineBytes = positiveInt("--max-line-bytes", mlb);
-  const md = values.get("--max-depth");
+  const md = one("--max-depth");
   if (md !== void 0) parsed.maxDepth = positiveInt("--max-depth", md);
+  for (const q of parsed.quittances) if (q === "") throw new UsageError("--quittance needs a file");
+  const dump = one("--dump-projections");
+  if (dump !== void 0) {
+    if (dump === "") throw new UsageError("--dump-projections needs a file");
+    parsed.dumpProjections = dump;
+  }
+  const sf = one("--seal-frame");
+  if (sf !== void 0) parsed.sealFrame = positiveInt("--seal-frame", sf);
+  const check = one("--check");
+  if (check !== void 0) {
+    if (check === "") throw new UsageError("--check needs a file");
+    parsed.check = check;
+  }
   return parsed;
 }
 function hashArg(name, value) {
@@ -2177,6 +3433,8 @@ function positiveInt(name, value) {
   }
   return Number(value);
 }
+var InputError = class extends Error {
+};
 async function runCli(argv, io, adapter) {
   const quiet = argv.includes("--quiet");
   const say = (text) => {
@@ -2199,16 +3457,38 @@ async function runCli(argv, io, adapter) {
 ${USAGE}`);
     return EXIT.usage;
   }
-  if (args.command === "vectors") return runVectors(args, io, adapter, say, complain);
-  let documents;
-  if (args.docs !== void 0) {
-    try {
-      documents = await io.readDocs(args.docs);
-    } catch (e) {
-      complain(`cannot read the documents folder ${args.docs}: ${e.message}`);
+  try {
+    if (args.command === "vectors") return await runVectors(args, io, adapter, say, complain);
+    if (args.command === "cut") return await runCut(args, io, adapter, say);
+    if (args.command === "report") return await runReport(args, io, adapter, say, complain, quiet);
+    return await runJournal(args, io, adapter, say);
+  } catch (e) {
+    if (e instanceof InputError) {
+      complain(e.message);
       return EXIT.usage;
     }
+    throw e;
   }
+}
+var read = async (io, path, what = path) => {
+  try {
+    return await io.readFile(path);
+  } catch (e) {
+    throw new InputError(`cannot read ${what}: ${e.message}`);
+  }
+};
+var readDocs = async (io, path) => {
+  try {
+    return await io.readDocs(path);
+  } catch (e) {
+    throw new InputError(`cannot read the documents folder ${path}: ${e.message}`);
+  }
+};
+async function runJournal(args, io, adapter, say) {
+  const documents = args.docs === void 0 ? void 0 : await readDocs(io, args.docs);
+  const quittances = [];
+  for (const q of args.quittances) quittances.push({ file: q, bytes: await read(io, q) });
+  const points = [];
   let report;
   try {
     const source = await io.openJournal(args.file);
@@ -2219,19 +3499,84 @@ ${USAGE}`);
         expectHead: args.expectHead,
         maxLineBytes: args.maxLineBytes,
         maxDepth: args.maxDepth,
-        documents
+        documents,
+        quittances,
+        onProjections: args.dumpProjections === void 0 ? void 0 : (p) => void points.push(p)
       },
       adapter
     );
   } catch (e) {
-    if (e instanceof ReadError || isNodeFsError(e)) {
-      complain(`cannot read ${args.file}: ${e.message}`);
-      return EXIT.usage;
-    }
+    if (e instanceof ReadError || isNodeFsError(e)) throw new InputError(`cannot read ${args.file}: ${e.message}`);
     throw e;
+  }
+  if (args.dumpProjections !== void 0) {
+    const dump = {
+      journal: args.file.split(/[\\/]/).pop() ?? args.file,
+      mismatches: points.filter((p) => !p.equals_seal).length,
+      pair_form: "[record, ground]",
+      points,
+      row_form: "[id, kind, grounded, established, fallen_by]",
+      seals: points.length
+    };
+    if (io.writeFile === void 0) throw new InputError("--dump-projections: this environment cannot write files");
+    try {
+      await io.writeFile(args.dumpProjections, jcs(fromPlain(dump)) + "\n");
+    } catch (e) {
+      throw new InputError(`cannot write ${args.dumpProjections}: ${e.message}`);
+    }
   }
   say(args.json ? reportToJcs(report) : humanLine(report));
   return exitCodeFor(report.verdict);
+}
+async function readCut(io, folder) {
+  const manifest = await read(io, `${folder}/cut.json`);
+  const journals = /* @__PURE__ */ new Map();
+  const exports = /* @__PURE__ */ new Map();
+  const parsed = parseManifest(manifest);
+  const m = parsed !== null && !parsed.badNumber && !parsed.duplicateKey ? checkManifest(parsed.value) : null;
+  if (m === null) return { manifest, journals, exports };
+  for (const j of m.journals) {
+    const journal = await read(io, `${folder}/${j.name}/run.wal`);
+    let documents = [];
+    try {
+      documents = await io.readDocs(`${folder}/${j.name}/docs`);
+    } catch {
+      documents = [];
+    }
+    journals.set(j.name, { journal, documents });
+  }
+  for (const e of m.exports) exports.set(e.name, await read(io, `${folder}/${e.name}.txt`));
+  return { manifest, journals, exports };
+}
+async function runCut(args, io, adapter, say) {
+  const bundle = await readCut(io, args.file);
+  const { report } = await verifyCut(bundle, adapter);
+  say(args.json ? jcs(fromPlain(report)) : cutHumanLine(report));
+  return report.verdict === "PASS" ? EXIT.pass : EXIT.fail;
+}
+async function runReport(args, io, adapter, say, complain, quiet) {
+  let out;
+  if (args.sealFrame !== void 0) {
+    const documents = args.docs === void 0 ? [] : await readDocs(io, args.docs);
+    out = await observationReportForJournal(await read(io, args.file), documents, args.sealFrame, adapter);
+  } else {
+    if (args.docs !== void 0) throw new InputError("--docs is for a journal (with --seal-frame); a cut has its documents in <journal>/docs");
+    out = await observationReportForCut(await readCut(io, args.file), adapter);
+  }
+  const given = args.check === void 0 ? null : await read(io, args.check);
+  if (!out.ok) {
+    complain(`cannot compute the report: ${out.reason}`);
+    return EXIT.fail;
+  }
+  if (given === null) {
+    if (!quiet) io.stdout(out.text);
+    return EXIT.pass;
+  }
+  const check = await checkReport(given, out.value, adapter);
+  if (args.json) say(jcs(fromPlain(check)));
+  else if (check.verdict === "PASS") say("Report PASS: the given report equals the report recomputed from the journals.");
+  else say(`Report FAIL: ${check.code}${check.path === null ? "" : ` at ${check.path}`}.`);
+  return check.verdict === "PASS" ? EXIT.pass : EXIT.fail;
 }
 async function runVectors(args, io, adapter, say, complain) {
   let text;
@@ -2308,7 +3653,8 @@ async function nodeMain(proc2) {
         };
         await walk(path);
         return out;
-      }
+      },
+      writeFile: async (path, text) => fs.promises.writeFile(path, text)
     },
     adapter
   );
@@ -2330,40 +3676,65 @@ if (proc?.versions?.node !== void 0 && proc.argv[1] !== void 0) {
 export {
   CDC_MAX_CHUNK,
   CDC_WINDOW,
+  CUT_DOMAIN,
+  CUT_FORMAT,
+  CUT_NOT_VERIFIED,
+  CUT_REPORT_FORMAT,
+  Cascade,
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_LINE_BYTES,
   DOMAIN,
+  EMPTY_PROJECTIONS,
   EMPTY_RECORDS_ROOT,
   EXIT,
+  EXPORT_FORMAT,
   GENESIS_FORMATS,
   J2Checker,
   JOURNAL_FORMAT,
   LINE_KEYS,
   LINE_REQUIRED,
+  LINK_DOMAIN,
   LogTree,
   MAX_QUOTE_BYTES,
   NOT_VERIFIED,
   NOT_VERIFIED_AFTER_J3,
+  OBS_REPORT_DOMAIN,
+  OBS_REPORT_FORMAT,
+  PROJECTION_DOMAIN,
+  PROJECTION_KEYS,
   QUESTION_KEYS_RULES_4,
+  QUITTANCE_FORMAT,
   RULES_VERSIONS,
   RULES_VERSION_4,
   ReadError,
   RecordEngine,
   SEAL_FORMAT_ID,
+  SEAL_HASH_FIELDS,
+  SEAL_KEYS,
   SPEC_ID,
   USAGE,
   VERIFIER_VERSION,
   ZERO_HASH,
   anchorBytes,
+  checkManifest,
+  checkQuittance,
+  checkReport,
   checkVectors,
   chunksOf,
   commandKind,
+  cutHash,
+  cutHumanLine,
   cutPoints,
   defaultHashAdapter,
   depthExceeds,
   documentChunks,
   domainHash,
   exitCodeFor,
+  exportEscape,
+  exportParagraph,
+  exportParagraphs,
+  exportText,
+  firstDifference2 as firstDifference,
   fromHex,
   fromPlain,
   gearHex,
@@ -2378,20 +3749,31 @@ export {
   jcs,
   jcsString,
   lineFormProblem,
+  linkId,
   logRootRecursive,
   nodeHashAdapter,
   nodeMain,
+  observationReport,
+  observationReportForCut,
+  observationReportForJournal,
   occurrences,
   parseJson,
+  parseManifest,
+  parseQuittance,
+  partThroughSeal,
+  projectionHashes,
   recordLeaf,
   recordsRoot,
+  reportHash,
   reportToJcs,
   requestHash,
   runCli,
+  sealFormProblem,
   segmentsOf,
   subtleHashAdapter,
   toHex,
   uniqueByPrefix,
   utf8,
+  verifyCut,
   verifyJournal
 };

@@ -16,6 +16,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+#[path = "audit_cut.rs"]
+mod audit_cut;
 #[path = "audit_index.rs"]
 mod audit_index;
 #[path = "audit_mcp.rs"]
@@ -107,6 +109,7 @@ const SWITCHES: &[&str] = &[
     "rebuild",
     "check",
     "empty-start",
+    "exclude-on-failure",
 ];
 
 /// The flags each command reads. `parse_args` takes any `--name value`, so a typo such as `--expct` or `--allow-tool` would
@@ -147,6 +150,7 @@ const AUDIT_SERVE_FLAGS: &[&str] = &[
     "evolution-pairs-per-card",
     "evolution-pairs-per-concept",
     "evolution-pairs-per-function",
+    "exclude-on-failure",
     "gap-pass",
     "gap-profile",
     "gap-units",
@@ -198,7 +202,7 @@ fn positional_args(cmd: &str) -> usize {
     match cmd {
         "diff" => 2,
         "update-doc" | "root" | "view" | "dump-nodes" | "dump-claims" | "node-table" | "timetravel" | "timetravel-all" | "cone" | "verify" | "tamper"
-        | "audit-read" | "audit-stream" => 1,
+        | "audit-read" | "audit-stream" | "audit-cut" => 1,
         _ => 0,
     }
 }
@@ -218,6 +222,8 @@ fn known_flags(cmd: &str) -> Option<Vec<&'static str>> {
         "audit-proof-verify" => &["anchored-at", "expect-seal", "key", "proof", "trusted-keys"],
         "audit-index" => &["check", "db", "rebuild", "wal"],
         "audit-prov" => &["out", "upto", "wal"],
+        "audit-cut" => &["at", "bundle", "out", "previous-cut", "records", "seal", "wal"],
+        "audit-observation" => &["bundle", "cut", "docs", "out", "seal", "wal"],
         "audit-watch" | "watch" => &["docs", "every-ms", "listen", "note", "wal"],
         "audit-read" => &["doc-id", "end", "epoch", "from", "key", "limit", "pretty", "record", "required", "since", "start", "to", "unit-status", "wal"],
         "audit-stream" => &[
@@ -1047,6 +1053,10 @@ Audit server for a team of agents:
                 --corpus-description <words> names the documents in the directives (default: the provided source documents).
                 --reading-only: a shard that reads and records only; no summary task, done once no work is open, its
                 answers made outside the journal
+                An agent that gives a task back for a reason of its own that is no timeout says so (audit_release with
+                reason, a code such as ALL_ANSWERS_REFUSED): the attempt is counted and the journal keeps that reason.
+                --exclude-on-failure (off by default) leaves a reader of a ring out until the next shift after such a
+                report, as after a timeout; it is a setting of the server process, not of the journal.
   mcp-bridge    joins one MCP client (stdio) to a running audit-serve as one agent: --connect <addr> --agent-id <id>
                 --allow-tools <list>; the token comes from SBGK_MCP_TOKEN
   audit-verify  replays a recorded audit journal without a model: --wal <run.wal> [--expect <receipt.json> [--at-end]]; prints the
@@ -1084,6 +1094,22 @@ Audit server for a team of agents:
                 context checkpoint of records active now; without --records every claim active now), withdraw --reason-source-id <doc> with --record <id> or
                 --doc-id <id> --exact-quote <text> (or --file), seal, close; exit 1 if the step is refused.
                 withdraw requires --reason-source-id, a document of the journal put before it (rules 4).
+  audit-cut     a cut of several journals, each at one of its seals, with the exports between them: audit-cut <step>;
+                export --wal <run.wal> --out <file> [--seal <n>] [--records <file>] writes an export of a journal at a seal
+                (its last by default): the claims that stand there, or those the file names, each with the quotes and the
+                claims it rests on, for another party to quote byte for byte; manifest --bundle <folder> [--at <name>=<n>,...]
+                [--previous-cut <hash>] [--out <file>] writes the manifest of a bundle (default <folder>/cut.json): a journal is
+                a subfolder <name>/run.wal, an export a file <name>.txt, and the deliveries are found in the journals; exit 1
+                if refused. Whether the bundle passes is checked from outside, by yuce-verify
+  audit-observation  the observation report of one journal up to a seal, or of the cut of a bundle: --wal <run.wal> [--seal <n>]
+                [--docs <folder>] (the documents of its genesis record, each known by its bytes: without them no report),
+                or --bundle <folder> [--cut <file>], and [--out <file>]; for every claim three separate axes (does it stand on
+                its evidence, is it contradicted by a standing claim, has a standing later claim replaced it), what it rests
+                on within its journal and across, the questions about it, the conflicting values of exact keys and the counts
+                of refused and of late answers; canonical JSON that anyone recomputes from the same files; no single score.
+                A cut that fails the bundle check gets no report, and the refusal names the level. In both commands a
+                journal whose seal is not named is taken at its last seal and must be whole, as audit-verify reads it (a torn
+                tail or a refused frame after that seal ends the command: name the seal); --out names no file of the input
 
 Engine and container:
   apply         apply a JSONL stream: --ontology <file> --docs <dir> --stream <file> --out <container>
@@ -1207,6 +1233,14 @@ pub fn main() {
             audit_stream::cmd_audit_stream(&a);
             return;
         }
+        "audit-cut" => {
+            audit_cut::cmd_audit_cut(&a);
+            return;
+        }
+        "audit-observation" => {
+            audit_cut::cmd_audit_observation(&a);
+            return;
+        }
         "audit-watch" | "watch" => {
             audit_watch::cmd_audit_watch(&a);
             return;
@@ -1292,6 +1326,8 @@ mod flag_tests {
             "audit-index",
             "audit-prov",
             "audit-stream",
+            "audit-cut",
+            "audit-observation",
             "audit-watch",
             "watch",
             "update-doc",
@@ -1317,6 +1353,7 @@ mod flag_tests {
             include_str!("audit_index.rs"),
             include_str!("audit_prov.rs"),
             include_str!("audit_stream.rs"),
+            include_str!("audit_cut.rs"),
             include_str!("audit_watch.rs"),
             include_str!("bridge.rs"),
             include_str!("mcp.rs"),
@@ -1346,6 +1383,7 @@ mod flag_tests {
         let index = include_str!("audit_index.rs");
         let prov = include_str!("audit_prov.rs");
         let stream = include_str!("audit_stream.rs");
+        let cut = include_str!("audit_cut.rs");
         let watch = include_str!("audit_watch.rs");
         let one = include_str!("one_command.rs");
         for (command, src, function) in [
@@ -1378,6 +1416,9 @@ mod flag_tests {
             ("audit-prov", prov, "cmd_audit_prov"),
             ("audit-stream", stream, "cmd_audit_stream"),
             ("audit-stream", stream, "finish"),
+            ("audit-cut", cut, "export_step"),
+            ("audit-cut", cut, "manifest_step"),
+            ("audit-observation", cut, "cmd_audit_observation"),
             ("audit-watch", watch, "cmd_audit_watch"),
             ("watch", watch, "cmd_audit_watch"),
             ("audit-serve", audit, "start_audit_server"),

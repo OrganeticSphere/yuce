@@ -471,8 +471,14 @@ fn tool_defs() -> Vec<Value> {
         t("audit_renew", "Heartbeat: renew a legacy lease; circle response deadlines stay fixed.", schema(json!({"task_id": s("task id")}), &["task_id"])),
         t(
             "audit_release",
-            "Give a lease back unfinished; in circles, report an actual model timeout.",
-            schema(json!({"task_id": s("task id"),"timed_out":{"type":"boolean"}}), &["task_id"]),
+            "Give a lease back unfinished. timed_out reports an actual model timeout. reason reports an attempt that failed for a reason of \
+             your own that is no timeout (every answer was refused, the model gave nothing to send): the attempt is counted and the journal \
+             keeps that reason.",
+            schema(
+                json!({"task_id": s("task id"),"timed_out":{"type":"boolean"},
+                       "reason": s("a code of your own for a failed attempt that is no timeout: capitals, digits and _, such as ALL_ANSWERS_REFUSED")}),
+                &["task_id"],
+            ),
         ),
         t(
             "audit_builder_failure",
@@ -686,7 +692,7 @@ impl AuditServer {
         let mut g = self.lock();
         let now = self.now();
         let task = || args.get("task_id").and_then(|x| x.as_str()).ok_or_else(|| bad_arg("missing 'task_id'"));
-        // Check exact successful retries before the dispatcher consults its ephemeral lease. A cache hit changes neither
+        // Check exact successful retries before the dispatcher consults its ephemeral lease. An exact retry changes neither
         // the journal nor the dispatch counters and does not wake long polls. Tool rights were checked before this call.
         if name == "audit_submit" {
             if let (Ok(task), Some(lines)) = (task(), args.get("lines").and_then(Value::as_array)) {
@@ -697,8 +703,16 @@ impl AuditServer {
                         json!({"status": "error", "code": "SUBMISSION_MISMATCH", "task_id": task,
                                "message": "this task was committed with different lines; only the exact request can replay its acknowledgement"})
                     } else {
-                        ack.answer.clone()
+                        return for_swarm(ack.answer.clone());
                     };
+                    // Any other answer to a committed task is a late answer, and the journal keeps it as it does when the
+                    // dispatcher answers after a restart (Codex's review of dbb7de2a: this cache answered first, and nothing
+                    // was written while it lived). A closed run writes nothing more, as below. The agent is told what it
+                    // was told before.
+                    let r = &mut *g;
+                    if !r.closed {
+                        r.dispatch.record_late_answer(&mut r.state, task, &who.id, lines);
+                    }
                     return for_swarm(answer);
                 }
             }
@@ -757,8 +771,32 @@ impl AuditServer {
             "audit_release" => match task() {
                 Ok(t) => {
                     let r = &mut *g;
-                    match args.get("timed_out") {
-                        Some(Value::Bool(true)) => {
+                    let reason = match args.get("reason") {
+                        None | Some(Value::Null) => Ok(None),
+                        Some(Value::String(reason)) => {
+                            sbgk_core::audit::directives::circles::failure_reason(reason).map(|()| Some(reason.as_str())).map_err(bad_arg)
+                        }
+                        Some(_) => Err(bad_arg("'reason' is a code, as text")),
+                    };
+                    match (reason, args.get("timed_out")) {
+                        (Err(e), _) => e,
+                        (Ok(Some(_)), Some(Value::Bool(true))) => bad_arg("give 'timed_out' for a model timeout or 'reason' for another failure, not both"),
+                        (Ok(Some(reason)), Some(Value::Bool(false)) | None) => {
+                            // the attempt at a card of the ring fails with the same reason, as it does after a timeout
+                            let card = r.dispatch.build_card_for_task(t, &who.id);
+                            let out = r.dispatch.fail_task(&mut r.state, t, &who.id, reason);
+                            if out["status"] == "RELEASED" && r.dispatch.cfg.agent_attempts.is_some() {
+                                if let Some(card) = card {
+                                    let builder = r.pool.as_mut().and_then(|p| p.worker_mut(&card)).unwrap_or(&mut r.builder);
+                                    let reply = builder.agent_failure(&mut r.state, &card, t, &who.id, reason);
+                                    if reply["status"] == "error" {
+                                        return reply;
+                                    }
+                                }
+                            }
+                            out
+                        }
+                        (Ok(None), Some(Value::Bool(true))) => {
                             let card = r.dispatch.build_card_for_task(t, &who.id);
                             let out = r.dispatch.timeout_task(&mut r.state, t, &who.id);
                             if out["status"] == "RELEASED" && r.dispatch.cfg.agent_attempts.is_some() {
@@ -772,8 +810,8 @@ impl AuditServer {
                             }
                             out
                         }
-                        Some(Value::Bool(false)) | None => r.dispatch.release_durable(&mut r.state, t, &who.id),
-                        Some(_) => bad_arg("'timed_out' must be a boolean"),
+                        (Ok(None), Some(Value::Bool(false)) | None) => r.dispatch.release_durable(&mut r.state, t, &who.id),
+                        (Ok(_), Some(_)) => bad_arg("'timed_out' must be a boolean"),
                     }
                 }
                 Err(e) => e,
@@ -2243,7 +2281,7 @@ pub fn cmd_keygen(a: &Args) {
 /// Refused, exit 1, when `out` names one of `inputs` by its path: the same path written another way, or a link to it (S6-01 for the
 /// index, the review of the 0.2.0 release for the quittance). A second name of the same file, a hard link, is no path of it: that
 /// one `write_aside` keeps safe.
-fn not_over_inputs(wal: &str, out: &Path, inputs: &[(PathBuf, &str)], what: &str) {
+pub(crate) fn not_over_inputs(wal: &str, out: &Path, inputs: &[(PathBuf, &str)], what: &str) {
     if let Some((_, input)) = inputs.iter().find(|(input, _)| super::audit_index::same_file(out, input)) {
         let error = format!("{what} would be written over {input}: give --out another path");
         println!("{}", json!({"status": "REFUSED", "wal": wal, "out": out.display().to_string(), "error": error}));
@@ -2254,7 +2292,7 @@ fn not_over_inputs(wal: &str, out: &Path, inputs: &[(PathBuf, &str)], what: &str
 /// `bytes` written to a new file beside `out` and renamed over it: a rename replaces the name `out`, not the file behind it, so a
 /// file `out` is a second name of (a hard link to the journal) keeps its bytes, and a failed write leaves `out` as it was (Codex's
 /// OUT-01 of 85742398: `audit-proof --out` naming a hard link of the journal replaced the run by the quittance).
-fn write_aside(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_aside(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let mut tmp = out.as_os_str().to_owned();
     tmp.push(format!(".{}-{nonce}.tmp", std::process::id()));
@@ -2931,6 +2969,7 @@ pub(crate) fn start_audit_server(a: &Args, questions: Option<Value>) -> AuditSta
         gap: gap.clone(),
         unit_is_task: a.sw("unit-is-task"),
         reading_only: a.sw("reading-only"),
+        exclude_on_failure: a.sw("exclude-on-failure"),
         ..DispatchConfig::default()
     };
     // the control profiles have no links by any path, a reader's relation record included (Codex review of 8023910, SCOPE-01)

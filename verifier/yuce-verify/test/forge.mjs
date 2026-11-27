@@ -9,9 +9,12 @@
 //   J3 catches it when a changed quote is not in its source. A quote replaced by
 //   another phrase that occurs once in the same document passes J0-J3: only an
 //   external seal or head can tell it from the original.
+// - Delivery 3 (amendment 6): with the documents, also the projections every
+//   seal names, recomputed by the verifier's own cascade (`rewriteProjections`).
+//   The same-document replacement then passes J0-J4a as well.
 //
 // Library: loadFrames, saveFrames, rechain, getPath, setPath, forge,
-//          rewriteRecords, originalEvidence, forgeWithRecords, readDocs.
+//          rewriteRecords, rewriteProjections, originalEvidence, forgeWithRecords, readDocs.
 // Command line:
 //   node test/forge.mjs <in.wal> <out.wal> <frame> <path> <json-value> [--docs <folder>]
 //   e.g. node test/forge.mjs in.wal out.wal 1 body.command.lines.0.exact_quote '"Forged."' --docs in.docs
@@ -144,13 +147,40 @@ export async function originalEvidence(frames, files) {
  * formulas of amendment 3. A changed quote that is no longer found keeps the
  * evidence of the original record (from `evidence`, by its original id).
  */
-export async function rewriteRecords(frames, files, evidence = new Map()) {
+export async function rewriteRecords(frames, files, evidence = new Map(), collect = null) {
   const engine = new yv.RecordEngine(adapter, await yv.indexDocuments(files, adapter), { originalEvidence: evidence });
   const g = await engine.genesis(frames[0].get("body"));
   if (g !== null) throw new Error(`genesis: ${JSON.stringify(g)}`);
   for (let k = 1; k < frames.length; k++) {
     const f = await engine.frame(frames[k].get("header"), frames[k].get("body"));
     if (f !== null) throw new Error(`the forger cannot rewrite frame ${k}: ${JSON.stringify(f)}`);
+  }
+  // The evidence of every record by its new id, for rewriteProjections.
+  if (collect !== null) for (const r of engine.accepted) if (r.evidence !== null) collect.set(r.id, r.evidence);
+  return frames;
+}
+
+/**
+ * Delivery 3 (amendment 6): rewrites, in place, the projections every seal
+ * names (status and dependencies) with the cascade the verifier's own J3/J4a
+ * engine computes over the frames before the seal. Run after rewriteRecords and
+ * before rechain, which then rehashes the seals.
+ */
+export async function rewriteProjections(frames, files, evidence = new Map()) {
+  // A changed quote that is no longer found keeps the evidence of the original record, as in rewriteRecords.
+  const engine = new yv.RecordEngine(adapter, await yv.indexDocuments(files, adapter), { originalEvidence: evidence }, true);
+  const g = await engine.genesis(frames[0].get("body"));
+  if (g !== null) throw new Error(`genesis: ${JSON.stringify(g)}`);
+  for (let k = 1; k < frames.length; k++) {
+    const body = frames[k].get("body");
+    if (isKernelSeal(body)) {
+      const st = await engine.cascade.status();
+      const projections = body.get("command").get("seal").get("projections");
+      projections.set("status", st.status);
+      projections.set("dependencies", st.dependencies);
+    }
+    const f = await engine.frame(frames[k].get("header"), body, k);
+    if (f !== null) throw new Error(`the forger cannot replay frame ${k}: ${JSON.stringify(f)}`);
   }
   return frames;
 }
@@ -163,12 +193,18 @@ export async function forge(text, frameIndex, path, value) {
   return saveFrames(frames);
 }
 
-/** Changes one value and recomputes everything, records and records roots included (B4). */
-export async function forgeWithRecords(text, files, frameIndex, path, value) {
+/**
+ * Changes one value and recomputes everything, records and records roots
+ * included (B4), and, unless `projections` is false, the projections of every
+ * seal (delivery 3, amendment 6).
+ */
+export async function forgeWithRecords(text, files, frameIndex, path, value, { projections = true } = {}) {
   const evidence = await originalEvidence(loadFrames(text), files);
   const frames = loadFrames(text);
   setPath(frames[frameIndex], path, value);
-  await rewriteRecords(frames, files, evidence);
+  const rewritten = new Map();
+  await rewriteRecords(frames, files, evidence, rewritten);
+  if (projections) await rewriteProjections(frames, files, rewritten);
   await rechain(frames, { reseal: true });
   return saveFrames(frames);
 }

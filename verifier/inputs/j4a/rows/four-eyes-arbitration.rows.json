@@ -1,0 +1,55 @@
+{
+  "journal": "four-eyes-arbitration.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "f35810be9488c837793bb23b74dda707f96e464a9cb8095142c2819f9e2aca81",
+      "dependency_pairs": [
+        [
+          "672459dc961f45fcdee3635a79352a18f1d15ddf6f58593ddd3bad60e297001f",
+          "9739b3d122548f2ec3cca5c04ed2d10b2651114195cdd0477773e52398c506b0"
+        ],
+        [
+          "f05b3410403c2f431474cce620d9a92bd574ad8846d1562f5a44d22a65b03284",
+          "89b497f3788ae2c08b1f00c4b2698324fd30155786adaf84c733621ddf9c20d3"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 7,
+      "status_hash": "12ffa3c9aca9cae06aaef6c1ad61f1815f62aa56d49aa079ef26116a58511ee4",
+      "status_rows": [
+        [
+          "89b497f3788ae2c08b1f00c4b2698324fd30155786adaf84c733621ddf9c20d3",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "f05b3410403c2f431474cce620d9a92bd574ad8846d1562f5a44d22a65b03284",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "9739b3d122548f2ec3cca5c04ed2d10b2651114195cdd0477773e52398c506b0",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "672459dc961f45fcdee3635a79352a18f1d15ddf6f58593ddd3bad60e297001f",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 1
+}

@@ -12,6 +12,7 @@ declare module "node:crypto" {
 declare module "node:fs" {
   export const promises: {
     readFile(path: string): Promise<Uint8Array>;
+    writeFile(path: string, data: string): Promise<void>;
     stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean }>;
     readdir(path: string, options: { withFileTypes: true }): Promise<{ name: string; isFile(): boolean; isDirectory(): boolean }[]>;
   };

@@ -1,7 +1,7 @@
 {
   "name": "yuce-verify",
-  "version": "0.3.0",
-  "description": "Independent standalone verifier for YuCe journals (sbgk-session-log/3), delivery 2: levels J0, J1, J2, J3.",
+  "version": "0.3.1",
+  "description": "Independent standalone verifier for YuCe journals (sbgk-session-log/3), delivery 3: levels J0-J3 and J4a, the cut check, the observation report.",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",

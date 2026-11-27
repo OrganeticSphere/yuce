@@ -1,0 +1,29 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "DELIVERY_MISSING",
+   "export": "e1",
+   "journal": "b",
+   "doc_id": "export-e",
+   "frame": 2
+  },
+  {
+   "code": "CUT_UNDECLARED_DELIVERY",
+   "journal": "b",
+   "frame": 1,
+   "doc_id": "export-e",
+   "export": "e1"
+  }
+ ],
+ "notes": "the delivery names frame 2; the put of e1 is frame 1, so it is undeclared as well",
+ "ids": {
+  "o1": "7bac51987ee2cc0956a13f230ee9e9e4e49230c967fe221c18a7d1e028adaf86",
+  "o2": "3534caffeb327d0dc7ba1a454af42fe47b84fd9094bd665670f8d35fb0b01be8",
+  "c1": "fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e",
+  "c2": "f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16",
+  "o3": "e3ad7d0dcfb67df067ba8423e2d714dff5f3f2ede2cd9d519938f50f7042dadf",
+  "c3": "75a2cd774c83fd5d1245f4b4271538f02e4a2aac89ab249f07dcc0d366615ff5"
+ },
+ "cut_hash": "450eb025e1a224d38f269be9e8ee5030c713669413b1d1834a3e3df55201f854"
+}

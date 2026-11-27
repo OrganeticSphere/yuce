@@ -1,0 +1,5 @@
+{
+ "input": "journal",
+ "journal": "valid/baicalin-n3-shard1.wal",
+ "seal_frame": 104
+}

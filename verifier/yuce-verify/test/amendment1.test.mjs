@@ -67,9 +67,9 @@ test("P1-2: every real journal in inputs/ is within the default depth and length
   }
 });
 
-// P1-6.3 asked for /3; amendments 2 and 3 replace it with /4, then /5.
-test("P1-6.3: the spec id is the one of the latest amendment (/5 since amendment 3)", async () => {
-  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/7");
+// P1-6.3 asked for /3; the later amendments replace it, up to /8 (amendment 6).
+test("P1-6.3: the spec id is the one of the latest amendment (/8 since amendment 6)", async () => {
+  assert.equal(yv.SPEC_ID, "SPEC_INDEPENDENT_VERIFIER/8");
   assert.equal((await verify(base)).verifier.spec, yv.SPEC_ID);
   const r = spawnSync(process.execPath, [BUNDLE, "journal", SMALL, "--json"], { cwd: ROOM, encoding: "utf8" });
   assert.equal(JSON.parse(r.stdout).verifier.spec, yv.SPEC_ID);

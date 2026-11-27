@@ -1,0 +1,135 @@
+{
+  "journal": "withdrawal-version-close.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307",
+      "dependency_pairs": [
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d"
+        ],
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894"
+        ],
+        [
+          "b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e",
+          "5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 2,
+      "status_hash": "e75ce9dc8c6158b0c5f52af78b0db65f1d402c73889e5d0219a892ff40256573",
+      "status_rows": [
+        [
+          "321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "claim",
+          true,
+          true,
+          []
+        ],
+        [
+          "5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "5a308c4f00e7e03c6628e8758b1b5a802238268c7428af6b48439027a7c93307",
+      "dependency_pairs": [
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d"
+        ],
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894"
+        ],
+        [
+          "b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e",
+          "5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 6,
+      "status_hash": "62dd3846ddd572781c367fcd5adaae3e585b1141195ef5a3fb697dfaec5568cf",
+      "status_rows": [
+        [
+          "321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "b5c3c19ab4a11c786d8116057d96697c78d844a7ef47e2263f0b930eb15cfbfe",
+          "claim",
+          false,
+          false,
+          [
+            "321ff136128cf8524958551c8a1107f2e3642fbd4c057eef2bfe22e40d88bb0d",
+            "9ab6a12e2f7b7dfa6ec9c67e8a0fa47e45dfbd2c631993435f2b2afdfa3c3894"
+          ]
+        ],
+        [
+          "5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "b6fb5b436fdb109a481c8a1a7c054b39732224086c7862c5487ba573b9e74f6e",
+          "claim",
+          false,
+          false,
+          [
+            "5cade6150a5971b8c5d16c14cd4391c817026ea264a0422225bfa3b80876c67d"
+          ]
+        ],
+        [
+          "4319ac2468ed397b73eb6681308c69efeb9f07595a1a5264c4e39676cf21c860",
+          "observe",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 2
+}

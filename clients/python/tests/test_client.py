@@ -24,6 +24,7 @@ REPO = HERE.parents[2]
 CORPUS = REPO / "benchmarks" / "corpora" / "mcp-spec-2026-07-28"
 PAGE = "docs/specification/2024-11-05/basic/lifecycle.mdx"
 QUOTE = "The initialization phase **MUST** be the first interaction between client and server."
+OTHER_QUOTE = "The server **MUST** respond with its own capabilities and information:"
 TEAM = ("reader-1", "reader-2", "reader-3")
 
 
@@ -148,6 +149,27 @@ class Wire(unittest.TestCase):
         with self.assertRaises(yuce.ConnectionClosed):
             agent.ping()
 
+    def test_the_reason_of_a_withdrawal_is_sent_only_when_it_is_given(self):
+        sent = []
+
+        def script(request):
+            sent.append((request["params"]["name"], request["params"]["arguments"]))
+            return self.reply(request, result={"structuredContent": {"status": "REVOKED"}})
+        agent = self.agent(script)
+        agent.revoke("@r")
+        agent.revoke("@r", reason_source_id="notice")
+        agent.withdraw_text("d", "text")
+        agent.withdraw_text("d", "text", reason_source_id="notice")
+        agent.release("t1")
+        agent.release("t1", reason="ALL_ANSWERS_REFUSED")
+        self.assertEqual(sent[4:], [("audit_release", {"task_id": "t1", "timed_out": False}),
+                                    ("audit_release", {"task_id": "t1", "timed_out": False, "reason": "ALL_ANSWERS_REFUSED"})])
+        del sent[4:]
+        self.assertEqual(sent, [("audit_revoke", {"record": "@r"}),
+                                ("audit_revoke", {"record": "@r", "reason_source_id": "notice"}),
+                                ("audit_withdraw_text", {"doc_id": "d", "exact_quote": "text"}),
+                                ("audit_withdraw_text", {"doc_id": "d", "exact_quote": "text", "reason_source_id": "notice"})])
+
     def test_bad_arguments_are_refused_before_any_call(self):
         agent = self.agent(lambda r: self.reply(r, result={}))
         with self.assertRaises(ValueError):
@@ -224,6 +246,11 @@ class RealServer(unittest.TestCase):
         self.assertEqual(owner.call("audit_status")["records"], owner.status()["records"])
         again = owner.withdraw_text(doc, QUOTE)
         self.assertEqual((again["status"], again["error"]["code"]), ("error", "ALREADY_REVOKED"))
+        # the reason of a withdrawal is a document of the journal: another name is refused, and nothing is withdrawn
+        unknown = owner.withdraw_text(doc, OTHER_QUOTE, reason_source_id="no-such-document")
+        self.assertEqual((unknown["status"], unknown["error"]["field"]), ("error", "reason_source_id"))
+        named = owner.withdraw_text(doc, OTHER_QUOTE, reason_source_id=doc)
+        self.assertEqual((named["status"], named["also_revoked"]), ("REVOKED", 0))
 
     def test_who_the_server_says_this_is(self):
         agent = self.connect("reader-1")

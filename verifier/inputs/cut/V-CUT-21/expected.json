@@ -1,0 +1,10 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_FORM"
+  }
+ ],
+ "notes": "an export named '.'",
+ "cut_hash": "8d122876797ac99c4753accdb02a11917c7c16fe0ff90949afc20fb7b9eea9f4"
+}

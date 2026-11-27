@@ -1,0 +1,25 @@
+{
+  "journal": "gap-second-exhausted.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "65ec2af34b368787092fa5d7b6e498b243c7b7eaedf11eb45f3033fd5ba49133",
+      "dependency_pairs": [],
+      "equals_seal": true,
+      "seal_position": 6,
+      "status_hash": "aff4ae8d3dcfda059f863fcbdc27114097da0ffa62c4275d4df3820f0c7c167c",
+      "status_rows": [
+        [
+          "91d155738a0f0b21bc8aad8593132b1be858e270b16e4713af68c3c108d057f8",
+          "observe",
+          true,
+          true,
+          []
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 1
+}

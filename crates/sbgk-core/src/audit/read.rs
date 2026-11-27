@@ -328,7 +328,7 @@ pub fn diff(from: &Snapshot, to: &Snapshot, limit: Option<usize>) -> Value {
 }
 
 /// The first causes of a row that does not stand: following `fallen_by` down to the observations that do not stand, in record order.
-fn first_causes(rows: &[Row], index: &HashMap<RecordId, usize>, id: RecordId) -> Vec<RecordId> {
+pub(super) fn first_causes(rows: &[Row], index: &HashMap<RecordId, usize>, id: RecordId) -> Vec<RecordId> {
     let mut todo = vec![id];
     let mut seen = BTreeSet::new();
     let mut out = BTreeSet::new();

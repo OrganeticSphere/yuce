@@ -1,23 +1,23 @@
-// The verification report (SPEC section 8, as amendment 3, P3-10, changes it):
-// JSON form, human line, exit code.
+// The verification report (SPEC section 8, as amendment 3, P3-10, and
+// amendment 6, P6-1 and P6-11, change it): JSON form, human line, exit code.
 
 import { fromPlain, jcs } from "./json.ts";
 
 export const VERIFIER_NAME = "yuce-verify";
-export const VERIFIER_VERSION = "0.3.0";
-/** SPEC v3 with amendments 1, 2, 3, 4 and 5. */
-export const SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/7";
+export const VERIFIER_VERSION = "0.3.1";
+/** SPEC v3 with amendments 1 ... 6. */
+export const SPEC_ID = "SPEC_INDEPENDENT_VERIFIER/8";
 
 /** What is not verified when J3 did not pass (SPEC 8.1, `not_verified`). */
 export const NOT_VERIFIED = ["quotes_against_sources", "withdrawal_cascade", "signatures"] as const;
 /** What is not verified when J3 passed (P3-10). */
 export const NOT_VERIFIED_AFTER_J3 = ["withdrawal_cascade", "signatures"] as const;
 
-export type FailureLevel = "J0" | "J1" | "J2" | "J3";
+export type FailureLevel = "J0" | "J1" | "J2" | "J3" | "J4a";
 
 export interface Failure {
   level: FailureLevel;
-  /** Frame position; null only for EMPTY_JOURNAL, HEAD_MISMATCH, ANCHOR_NOT_FOUND. */
+  /** Frame position; null only for EMPTY_JOURNAL, HEAD_MISMATCH, ANCHOR_NOT_FOUND and the failures of a quittance. */
   frame: number | null;
   code: string;
   detail: string;
@@ -47,6 +47,23 @@ export type J3Level =
   | { result: "FAIL" }
   | { result: "NOT_CHECKED" }
   | { result: "NOT_CHECKABLE"; reason: string };
+
+/** Amendment 6, P6-1. */
+export type J4aLevel = { result: "PASS" } | { result: "FAIL" } | { result: "NOT_RUN"; reason: string };
+
+/** Amendment 6, P6-1: how far the cascade check reached. */
+export interface CascadeReach {
+  seals_checked: number;
+  checked_through_frame: number | null;
+  unchecked_frames: number;
+}
+
+/** Amendment 6, P6-11: the outcome of one quittance (NOT_RUN when J4a did not reach its seal). */
+export interface QuittanceResult {
+  file: string;
+  verdict: "PASS" | "FAIL" | "NOT_RUN";
+  code: string | null;
+}
 
 /** SPEC 8.2: anchor.seal. */
 export type SealAnchor =
@@ -78,8 +95,13 @@ export interface Report {
     J1: J1Level;
     J2: J2Level;
     J3: J3Level;
+    J4a: J4aLevel;
     J5: { result: "NOT_CHECKED" };
   };
+  /** Amendment 6, P6-1: null when J4a did not run. */
+  cascade: CascadeReach | null;
+  /** Amendment 6, P6-11: one entry per --quittance, in the order given. */
+  quittances: QuittanceResult[];
   anchor: Anchor;
   computed: { wal_head: string | null; closed: boolean | null };
   not_verified: string[];
@@ -92,10 +114,19 @@ export function reportToJcs(report: Report): string {
   return jcs(fromPlain(report as unknown as Parameters<typeof fromPlain>[0]));
 }
 
-const NOT_VERIFIED_SENTENCE = "Not verified: quotes against sources, withdrawal cascade, signatures.";
-const NOT_VERIFIED_AFTER_J3_SENTENCE = "Not verified: withdrawal cascade, signatures.";
+/** The sentence of not_verified: its items in order, underscores written as spaces. */
+function notVerifiedSentence(items: readonly string[]): string {
+  return `Not verified: ${items.map((s) => s.replaceAll("_", " ")).join(", ")}.`;
+}
 
-/** The line for a human (SPEC 8.3, P3-10), built only from fixed parts. */
+/** Amendment 6, P6-1: the sentence of the cascade, for J4a PASS. */
+function cascadeSentence(c: CascadeReach): string {
+  if (c.checked_through_frame === null) return "Cascade: no seal to check.";
+  if (c.unchecked_frames === 0) return `Cascade: checked at ${c.seals_checked} seals.`;
+  return `Cascade: checked at ${c.seals_checked} seals through frame ${c.checked_through_frame}; ${c.unchecked_frames} later frames not checked.`;
+}
+
+/** The line for a human (SPEC 8.3, P3-10, P6-1), built only from fixed parts. */
 export function humanLine(report: Report): string {
   const parts: string[] = [];
   const f = report.first_failure;
@@ -109,11 +140,12 @@ export function humanLine(report: Report): string {
     else parts.push(`J0-J2 PASS. ${head}`);
     parts.push(tailSentence(j1.tail));
     parts.push(anchorSentence(report.anchor, report.input.frames));
+    if (report.levels.J4a.result === "PASS" && report.cascade !== null) parts.push(cascadeSentence(report.cascade));
   } else {
     // Not reachable: a verdict other than FAIL means J0-J2 passed.
     parts.push(`${report.verdict}.`);
   }
-  parts.push(j3.result === "PASS" ? NOT_VERIFIED_AFTER_J3_SENTENCE : NOT_VERIFIED_SENTENCE);
+  parts.push(notVerifiedSentence(report.not_verified));
   return parts.join(" ");
 }
 

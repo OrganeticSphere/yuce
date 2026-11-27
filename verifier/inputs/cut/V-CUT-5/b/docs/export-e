@@ -1,0 +1,5 @@
+yuce-export/1 run=cut-a seal=b574d376be3ef1326783afaa51abc3e5474c4310377a2033113bf7e1fa6453f3 records=2
+
+Record fc7e632f2db912c9c610c8a8f294440361675d9084798b171eae63307653ab7e: Party A reports that alpha holds in the north. Quotes: [source] "Alpha holds in the northern field."
+
+Record f5331d89d352a05bb9cf7e62bd250c50852fbf96bbe5060b31cb165d3f5bae16: Party A reports that beta holds in the south. Quotes: [source] "Beta holds in the southern field."

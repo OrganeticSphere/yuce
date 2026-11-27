@@ -7,6 +7,26 @@ use std::collections::{BTreeMap, BTreeSet};
 pub mod members;
 
 const CHECKPOINT: &str = "audit:circles";
+
+/// The reasons the kernel itself writes for a lease that ended without an answer: an agent's own reason is none of them.
+const KERNEL_REASONS: [&str; 5] = ["MODEL_TIMEOUT", "READINESS_TIMEOUT", "MODEL_AGENT_FAILURE", "FAILED_LEASE_RELEASED", "LEASE_EXPIRED"];
+
+/// The reason an agent gives for an attempt that failed (`Dispatcher::fail_task`): a code of capitals, digits and `_`, a
+/// capital first, at most 64 characters, such as `ALL_ANSWERS_REFUSED`. A code, not a sentence: it is written into the
+/// journal. The reasons the kernel writes itself and the names of the kinds of task (the mark of a lease that ran out) are
+/// refused: a mark of the kernel's own is never an agent's word.
+pub fn failure_reason(reason: &str) -> Result<(), &'static str> {
+    let code = reason.len() <= 64
+        && reason.starts_with(|c: char| c.is_ascii_uppercase())
+        && reason.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+    if !code {
+        return Err("'reason' is a code: capitals, digits and '_', a capital first, at most 64 characters, such as ALL_ANSWERS_REFUSED");
+    }
+    if KERNEL_REASONS.contains(&reason) || super::TaskKind::parse(reason).is_some() {
+        return Err("'reason' is a reason the kernel writes itself: give the agent's own, such as ALL_ANSWERS_REFUSED");
+    }
+    Ok(())
+}
 #[derive(Debug, Clone)]
 pub struct CircleConfig {
     pub wave_sections: usize,

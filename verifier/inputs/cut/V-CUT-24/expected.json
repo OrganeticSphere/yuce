@@ -1,0 +1,10 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_FORM"
+  }
+ ],
+ "cut_hash": null,
+ "notes": "a manifest that is valid JSON but not an object: no single value, so no cut hash; no other file is read"
+}

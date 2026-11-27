@@ -1,0 +1,8 @@
+{
+  "journal": "gap-primary-exhausted.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 0
+}

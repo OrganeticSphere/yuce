@@ -1,0 +1,67 @@
+{
+  "journal": "d7-revoke-already-closed-text.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "df51e709146fc3e7398965609b1e09983f6d9ac3f5a37dfa993d31dbe8371c95",
+      "dependency_pairs": [
+        [
+          "155cd2526c87191282b8216b849df26a75f3da545e7987f4fbd5468364547cef",
+          "92d0463444d4ae417ff58267a371a754f8ff35e4c1101ba87175f3b7c928d535"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 4,
+      "status_hash": "6dc58611ad4ff98b7cf7c96865ae4d2d94863940bcfbc3a2dfecd936e19ec4fc",
+      "status_rows": [
+        [
+          "92d0463444d4ae417ff58267a371a754f8ff35e4c1101ba87175f3b7c928d535",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "155cd2526c87191282b8216b849df26a75f3da545e7987f4fbd5468364547cef",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "df51e709146fc3e7398965609b1e09983f6d9ac3f5a37dfa993d31dbe8371c95",
+      "dependency_pairs": [
+        [
+          "155cd2526c87191282b8216b849df26a75f3da545e7987f4fbd5468364547cef",
+          "92d0463444d4ae417ff58267a371a754f8ff35e4c1101ba87175f3b7c928d535"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 8,
+      "status_hash": "1d51460ef88598b66a7087d83bb0ef732df1d49846c0fea026076768fb32f07e",
+      "status_rows": [
+        [
+          "92d0463444d4ae417ff58267a371a754f8ff35e4c1101ba87175f3b7c928d535",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "155cd2526c87191282b8216b849df26a75f3da545e7987f4fbd5468364547cef",
+          "claim",
+          false,
+          false,
+          [
+            "92d0463444d4ae417ff58267a371a754f8ff35e4c1101ba87175f3b7c928d535"
+          ]
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 2
+}

@@ -1,0 +1,13 @@
+{
+ "verdict": "FAIL",
+ "failures": [
+  {
+   "code": "CUT_UNDECLARED_DELIVERY",
+   "journal": "b",
+   "frame": 1,
+   "doc_id": "export-e",
+   "export": "e1"
+  }
+ ],
+ "cut_hash": "5d4f1467d60eb821bdf72ac0bfe32d433401db0ac46b893b576a60d0e8d29649"
+}

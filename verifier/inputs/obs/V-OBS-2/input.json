@@ -1,0 +1,5 @@
+{
+ "input": "journal",
+ "journal": "valid/stream-context-checkpoints.wal",
+ "seal_frame": 10
+}

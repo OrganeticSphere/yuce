@@ -361,6 +361,7 @@ fn a_closed_run_tells_every_agent_done_accepts_nothing_more_and_stays_closed_aft
     let (mut gb, mut own) = (Client::connect(server.port, GB), Client::connect(server.port, OWN));
     assert_eq!(own.call("audit_close", json!({}))["status"], "NOT_COMPLETE", "a run that is not terminal is not closed");
     let mut complete = false;
+    let mut of_w1 = None;
     for round in 0..20 {
         catch_up(&mut gb);
         let agent = if round % 2 == 0 { &mut w1 } else { &mut w2 };
@@ -375,6 +376,9 @@ fn a_closed_run_tells_every_agent_done_accepts_nothing_more_and_stays_closed_aft
             other => panic!("{other}: {t}"),
         }
         assert_eq!(agent.call("audit_submit", json!({"task_id": t["task_id"], "lines": answer(&t)}))["status"], "COMMITTED");
+        if round % 2 == 0 {
+            of_w1.get_or_insert(t["task_id"].clone());
+        }
     }
     assert!(complete, "the run completes before the close");
     let receipt = own.call("audit_terminal_receipt", json!({}));
@@ -393,6 +397,10 @@ fn a_closed_run_tells_every_agent_done_accepts_nothing_more_and_stays_closed_aft
     assert_eq!(gb.call("audit_next_card", json!({}))["status"], "DONE");
     let late = w1.call("audit_submit", json!({"task_id": "TX1-late", "lines": []}));
     assert_eq!(late["code"], "RUN_CLOSED", "{late}");
+    // an answer that differs from one w1 committed is answered from the acknowledgement, and a closed run writes no late
+    // answer for it (the root below stays the root of the close)
+    let other = w1.call("audit_submit", json!({"task_id": of_w1.expect("a task of w1"), "lines": [{"kind": "claim", "text": "Otherwise."}]}));
+    assert_eq!(other["code"], "SUBMISSION_MISMATCH", "{other}");
     assert_eq!(own.call("audit_revoke", json!({"record": observe}))["code"], "RUN_CLOSED", "a withdrawal would reopen work nobody takes");
     assert_eq!(own.call("audit_record", json!({"record": observe}))["grounded"], true, "reads stay open; nothing was withdrawn");
     let status = own.call("audit_status", json!({}));
@@ -718,6 +726,44 @@ fn committed_circle_telemetry_is_owner_only_read_only_and_restored() {
     let mut own = Client::connect(server.port, OWN);
     let restored = own.call("audit_status", json!({"telemetry":true}));
     assert_eq!(restored["circle_telemetry"], a["circle_telemetry"]);
+}
+
+/// `audit_release` with `reason` (0.3.1): an agent's own reason for a failed attempt that is no timeout. The attempt counts, and
+/// the journal keeps the reason the agent gave.
+#[test]
+fn a_task_given_back_with_a_reason_of_the_agents_own_is_a_counted_attempt_with_that_reason() {
+    let f = Fixture::new("release-reason");
+    let mut args = f.args(true);
+    args.extend(["--agent-attempts".into(), "2".into()]);
+    let server = Server::start(&args);
+    let mut w = Client::connect(server.port, W1);
+    let mut other = Client::connect(server.port, W2);
+    let a = w.call("audit_acquire", json!({}));
+    assert_eq!(a["kind"], "EXTEND");
+    let task = a["task_id"].clone();
+    // a reason is a code; a mark the kernel writes itself is not an agent's word; a timeout and a reason are two reports
+    for bad in [json!("every answer was refused"), json!("MODEL_TIMEOUT"), json!("EXTEND"), json!(7)] {
+        let refused = w.call("audit_release", json!({"task_id": task, "reason": bad}));
+        assert_eq!(refused["code"], "BAD_ARGUMENT", "{bad}: {refused}");
+    }
+    assert_eq!(w.call("audit_release", json!({"task_id": task, "reason": "ALL_ANSWERS_REFUSED", "timed_out": true}))["code"], "BAD_ARGUMENT");
+    assert_eq!(other.call("audit_release", json!({"task_id": task, "reason": "ALL_ANSWERS_REFUSED"}))["code"], "TASK_NOT_OWNED");
+    let released = w.call("audit_release", json!({"task_id": task, "reason": "ALL_ANSWERS_REFUSED"}));
+    assert_eq!((released["status"].as_str(), released["failures"].as_u64()), (Some("RELEASED"), Some(1)), "{released}");
+    let mut own = Client::connect(server.port, OWN);
+    let status = own.call("audit_status", json!({}));
+    let attempts = &status["agent_failures"]["work"][a["key"].as_str().unwrap()]["attempts"];
+    assert_eq!(attempts[0]["reason"], "ALL_ANSWERS_REFUSED", "{status}");
+    assert_eq!(attempts[0]["subject"], "w1", "{status}");
+    // the unit is given again, and the second failed attempt gives it up at the bound of the run
+    let b = w.call("audit_acquire", json!({}));
+    assert_eq!(b["key"], a["key"]);
+    let last = w.call("audit_release", json!({"task_id": b["task_id"], "reason": "MODEL_GAVE_NOTHING"}));
+    assert_eq!((last["status"].as_str(), last["unresolved"].as_bool()), (Some("RELEASED"), Some(true)), "{last}");
+    // the tool says what the field is for
+    let tools = w.rpc("tools/list", json!({}));
+    let release = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "audit_release").unwrap().clone();
+    assert!(release["inputSchema"]["properties"]["reason"]["description"].as_str().unwrap().contains("ALL_ANSWERS_REFUSED"), "{release}");
 }
 
 #[test]
@@ -3236,4 +3282,53 @@ fn a_source_put_again_with_other_bytes_is_read_again_and_a_name_past_the_bound_i
     let out = Command::new(BIN).args(["audit-verify", "--wal", &fx.p("run.wal")]).output().unwrap();
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!((out.status.code(), v["status"].as_str(), v["sources"]["documents"].as_u64()), (Some(0), Some("VERIFIED"), Some(4)), "{v}");
+}
+
+/// Codex's review of dbb7de2a: an answer that differs from the committed one is a late answer the journal keeps, whether the
+/// server still holds the acknowledgement of the task in memory or was started again. The exact request replays its
+/// acknowledgement and adds nothing; the same late answer again adds nothing either. After a restart the committed answer
+/// sent again is not known to be the committed one (the acknowledgements live in memory) and is recorded once, as late.
+#[test]
+fn a_late_answer_is_in_the_journal_whether_or_not_the_server_still_holds_the_acknowledgement() {
+    use sbgk_core::audit::state::AuditState;
+    use sbgk_core::audit::AuditStore;
+    let fx = Fixture::new("late-cache");
+    let late = |fx: &Fixture| -> Vec<Value> {
+        let s = AuditState::open(Path::new(&fx.p("run.wal"))).unwrap();
+        let mut keys = s.checkpoint_keys("task-conflict:");
+        keys.sort();
+        keys.iter().map(|k| s.checkpoint(k).unwrap()["context"].clone()).collect()
+    };
+    let server = Server::start(&fx.args(true));
+    let (mut w1, mut w2) = (Client::connect(server.port, W1), Client::connect(server.port, W2));
+    let t = w1.call("audit_acquire", json!({}));
+    assert_eq!(t["kind"], "EXTEND", "{t}");
+    let lines = answer(&t);
+    let committed = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}));
+    assert_eq!(committed["status"], "COMMITTED", "{committed}");
+    assert_eq!(w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines})), committed, "the exact request");
+    let other = vec![json!({"kind": "claim", "local_id": "zz1", "text": "Topic A is otherwise.", "subject": "topic", "stance": "reported"})];
+    for _ in 0..2 {
+        let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": other}));
+        assert_eq!(r["code"], "SUBMISSION_MISMATCH", "{r}");
+    }
+    let r = w2.call("audit_submit", json!({"task_id": t["task_id"], "lines": other}));
+    assert_eq!(r["code"], "TASK_NOT_OWNED", "{r}");
+    drop((w1, w2, server));
+    let marks = late(&fx);
+    assert_eq!(marks.len(), 2, "one record for the answer of w1 sent twice, one for the answer of w2: {marks:?}");
+    assert_eq!((marks[0]["agent"].as_str(), marks[0]["closed_as"].as_str(), marks[0]["closed_by"].as_str()), (Some("w1"), Some("completed"), Some("w1")));
+    assert_eq!((marks[1]["agent"].as_str(), marks[0]["answer_sha256"] == marks[1]["answer_sha256"]), (Some("w2"), true), "{marks:?}");
+    assert!(!marks.iter().any(|m| m.to_string().contains("otherwise")), "no word of the answer: {marks:?}");
+
+    let server = Server::start(&fx.args(false));
+    let mut w1 = Client::connect(server.port, W1);
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": other}));
+    assert_eq!(r["status"], "STALE_TASK", "{r}");
+    let r = w1.call("audit_submit", json!({"task_id": t["task_id"], "lines": lines}));
+    assert_eq!(r["status"], "STALE_TASK", "{r}");
+    drop((w1, server));
+    let marks = late(&fx);
+    assert_eq!(marks.len(), 3, "the same late answer adds nothing; the committed answer, unknown after a restart, adds one: {marks:?}");
+    assert_ne!(marks[2]["answer_sha256"], marks[0]["answer_sha256"]);
 }

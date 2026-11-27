@@ -10,6 +10,7 @@ import { RULES_VERSION_4, commandKind, isIdentifier } from "./j2.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { isObject, jcs } from "./json.ts";
 import { DOMAIN, domainHash, recordsRoot } from "./trees.ts";
+import { Cascade } from "./j4a.ts";
 
 /** P3-7: the keys each kind of line may have. */
 export const LINE_KEYS: Record<string, readonly string[]> = {
@@ -89,12 +90,27 @@ export class RecordEngine {
   quotes = 0;
   /** Amendment 5, P5-2: the genesis record names the rules 4. */
   private rules4 = false;
+  /** Amendment 6: the state of level J4a, kept when asked for. */
+  readonly cascade: Cascade | null;
+  /** The position of the frame being checked. */
+  private position = 0;
 
   constructor(
     private readonly adapter: HashAdapter,
     private readonly files: DocumentFiles,
     private readonly rewrite: RewriteOptions | null = null,
-  ) {}
+    withCascade = false,
+  ) {
+    this.cascade = withCascade
+      ? new Cascade(adapter, {
+          bytes: (docId) => this.current.get(docId)?.bytes,
+          version: async (docId) => {
+            const doc = this.current.get(docId);
+            return doc === undefined ? undefined : toHex((await this.chunksOf(doc)).version);
+          },
+        })
+      : null;
+  }
 
   get recordCount(): number {
     return this.records.length;
@@ -121,8 +137,12 @@ export class RecordEngine {
     return null;
   }
 
-  /** The steps of P3-7 for a frame at position i >= 1, then J3-9. */
-  async frame(header: JsonObject, body: JsonObject): Promise<J3Failure | null> {
+  /**
+   * The steps of P3-7 for a frame at position i >= 1, then J3-9. With the
+   * cascade, the commands of amendment 6, P6-3 are applied at their place.
+   */
+  async frame(header: JsonObject, body: JsonObject, position = 0): Promise<J3Failure | null> {
+    this.position = position;
     this.lastFrameLeaves = [];
     const leaves: Uint8Array[] = [];
     const actor = body.get("actor") as string;
@@ -130,6 +150,8 @@ export class RecordEngine {
     const outcome = body.get("outcome") as JsonObject;
     const outcomeKind = outcome.get("kind");
     const kind = commandKind(command);
+    // Observation report, section 6: the frames that record a refused or a late answer.
+    this.cascade?.noteFrame(command, outcome);
 
     if (outcomeKind === "records") {
       const result = outcome.get("result") as JsonObject;
@@ -146,12 +168,18 @@ export class RecordEngine {
           f = await this.group({ actor, command: op as JsonObject, accepted: (results[k] as JsonObject).get("accepted") as JsonValue[] }, leaves);
         } else if (opKind === "put_document") {
           f = await this.putDocument(op as JsonObject, results[k]!, (v) => this.setVersion(results[k]!, v));
+        } else if (this.cascade !== null) {
+          // P6-3: inside a batch, exactly the operations that have a result.
+          await this.cascade.command(op);
         }
         if (f !== null) return f;
       }
     } else if (kind === "put_document" && outcomeKind === "value") {
       const f = await this.putDocument(command as JsonObject, outcome.get("result")!, (v) => this.setVersion(outcome.get("result")!, v));
       if (f !== null) return f;
+    } else if (outcomeKind === "value" && this.cascade !== null) {
+      // P6-3: a frame whose outcome is value ran; an error outcome changes nothing.
+      await this.cascade.command(command);
     }
 
     // J3-9
@@ -182,6 +210,8 @@ export class RecordEngine {
       rewriteVersion(version);
     }
     this.current.set(docId, { bytes, chunks });
+    // P6-5: the re-close step, after the new bytes and version are in place.
+    if (this.cascade !== null) await this.cascade.reclose(docId);
     return null;
   }
 
@@ -322,6 +352,34 @@ export class RecordEngine {
     this.byId.set(id, record);
     this.byName.set(jcs([g.actor, directive, l.get("local_id")!]), record);
     if (kind === "observe") this.quotes++;
+    if (this.cascade !== null) {
+      // P6-2: what J4a keeps of the record; an accepted relation creates its link here (P6-3).
+      const opt = (k: string): string | null => (l.has(k) ? (l.get(k) as string) : null);
+      await this.cascade.addRecord({
+        id,
+        kind,
+        actor: g.actor,
+        frame: this.position,
+        grounds: supports.map((r) => r.id),
+        ends: kind === "relation" ? { from: from!.id, rel: l.get("rel") as string, to: to!.id } : null,
+        text: opt("text"),
+        subject: kind === "claim" ? opt("subject") : null,
+        object: kind === "claim" ? opt("object") : null,
+        about: about === null ? null : about.id,
+        obs:
+          kind === "observe" && evidence !== null
+            ? {
+                docId: l.get("doc_id") as string,
+                quote: l.get("exact_quote") as string,
+                quoteBytes: utf8(l.get("exact_quote") as string),
+                anchor: evidence.get("id") as string,
+                version: evidence.get("version") as string,
+                start: (evidence.get("span") as number[])[0]!,
+                end: (evidence.get("span") as number[])[1]!,
+              }
+            : null,
+      });
+    }
 
     const L = recordValue(record, this.records.length, g.actor, directive, l, body, supports, from, to);
     const leaf = await domainHash(this.adapter, DOMAIN.recordLeaf, utf8(jcs(L)));

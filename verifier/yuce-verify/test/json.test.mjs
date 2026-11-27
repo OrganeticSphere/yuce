@@ -107,3 +107,19 @@ test("log tree: hand-computed roots for 1, 2 and 3 leaves (RFC 6962, last node n
   await tree.push(new Uint8Array(h[2]));
   assert.equal(yv.toHex(await tree.root()), node(node(leaf(h[0]), leaf(h[1])), leaf(h[2])).toString("hex"));
 });
+
+test("parseJson reports a key repeated in one object at any depth (duplicateKey), keeping the last value", () => {
+  for (const [text, dup] of [
+    ['{"a":1,"b":2}', false],
+    ['{"a":1,"a":2}', true],
+    ['{"x":[{"a":1,"a":1}]}', true],
+    ['{"x":{"a":1},"y":{"a":1}}', false],
+  ]) {
+    const r = yv.parseJson(text);
+    assert.ok(r.ok, text);
+    assert.equal(r.duplicateKey, dup, text);
+  }
+  assert.equal(yv.parseJson('{"a":1,"a":2}').value.get("a"), 2);
+  // a byte-order mark is not JSON
+  assert.equal(yv.parseJson("\ufeff{}").ok, false);
+});

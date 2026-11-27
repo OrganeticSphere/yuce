@@ -1,0 +1,18 @@
+{
+ "cut_hash": "b0fc1096ad503930dea89cd440e6c1b924858f522b14b8ba72df59e2aed5ed94",
+ "failures": [
+  {
+   "code": "DELIVERY_MISSING",
+   "doc_id": "export-e",
+   "export": "e1",
+   "frame": 1,
+   "journal": "b"
+  }
+ ],
+ "ids": {
+  "c3": "75a2cd774c83fd5d1245f4b4271538f02e4a2aac89ab249f07dcc0d366615ff5",
+  "o3": "e3ad7d0dcfb67df067ba8423e2d714dff5f3f2ede2cd9d519938f50f7042dadf"
+ },
+ "notes": "the journals of V-CUT-25, with a delivery that names the frame of the batch: a delivery is a put_document frame of its own",
+ "verdict": "FAIL"
+}

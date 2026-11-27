@@ -1,0 +1,185 @@
+{
+  "journal": "d4-anchor-shared-across-versions.wal",
+  "mismatches": 0,
+  "pair_form": "[record, ground]",
+  "points": [
+    {
+      "dependencies_hash": "7f186c6f877369957193cd7aeb5ac436c2055f0625880a0af66baffb3982a4e7",
+      "dependency_pairs": [
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 3,
+      "status_hash": "aa71f0961a9370b7f18ee49e221d6f39b028a15cf936ece921ed22d4d6c260ac",
+      "status_rows": [
+        [
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "bf69ef11a985aeb64e1c5c6862f78dd080606124a2cb515e01a852ad965b0d6f",
+      "dependency_pairs": [
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 6,
+      "status_hash": "f82c0231fe0b1a79470231787f18c9a93f5cf04cdf8deb3f370d15f2ede60f8a",
+      "status_rows": [
+        [
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "claim",
+          false,
+          false,
+          [
+            "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+          ]
+        ],
+        [
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf",
+          "observe",
+          true,
+          true,
+          []
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "claim",
+          true,
+          true,
+          []
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "bf69ef11a985aeb64e1c5c6862f78dd080606124a2cb515e01a852ad965b0d6f",
+      "dependency_pairs": [
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 9,
+      "status_hash": "711e6a9dfd059c57208f28270cd5a235e0bc06f5838c659fa7c1b467f5c178d9",
+      "status_rows": [
+        [
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "claim",
+          false,
+          false,
+          [
+            "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+          ]
+        ],
+        [
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "claim",
+          false,
+          false,
+          [
+            "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf"
+          ]
+        ]
+      ]
+    },
+    {
+      "dependencies_hash": "bf69ef11a985aeb64e1c5c6862f78dd080606124a2cb515e01a852ad965b0d6f",
+      "dependency_pairs": [
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf"
+        ]
+      ],
+      "equals_seal": true,
+      "seal_position": 11,
+      "status_hash": "711e6a9dfd059c57208f28270cd5a235e0bc06f5838c659fa7c1b467f5c178d9",
+      "status_rows": [
+        [
+          "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "ba0e5aaa10eceb93b504fa33c9bb47b8a9a80cf3b0fbe85070104523ade43987",
+          "claim",
+          false,
+          false,
+          [
+            "3c4fcd6dcaabff778fbb4fac8d11168280e6e1c0b738d7539f02b0529f8a4de1"
+          ]
+        ],
+        [
+          "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf",
+          "observe",
+          false,
+          false,
+          []
+        ],
+        [
+          "f88575cdb71bb1869e9011bbec0c04cd6c53618feb0082b2667891af7339598c",
+          "claim",
+          false,
+          false,
+          [
+            "d4352fd57be81eced5eacb9e8673463a597faa072d6a241b258f4cb75f3b6adf"
+          ]
+        ]
+      ]
+    }
+  ],
+  "row_form": "[id, kind, grounded, established, fallen_by]",
+  "seals": 4
+}

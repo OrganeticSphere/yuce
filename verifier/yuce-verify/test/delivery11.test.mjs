@@ -128,10 +128,10 @@ test("6.9 vectors checks log_root in V9", async () => {
   assert.equal(checks.detail, "fails: P.log_root == RFC 6962 root over the hashes of frames 0..n-1");
 });
 
-// the task statement 6.10 as changed by amendments 1, 2 and 3: /5.
-test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/7 (amendments 1, 2 and 3)", async () => {
+// the task statement 6.10 as changed by the amendments: /8 since amendment 6.
+test("6.10 the report names SPEC_INDEPENDENT_VERIFIER/8 (amendments 1 to 6)", async () => {
   const r = await verify(base);
-  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/7");
+  assert.equal(r.verifier.spec, "SPEC_INDEPENDENT_VERIFIER/8");
 });
 
 test("6.11 the checks of one frame run in the order of SPEC 6.2", async () => {

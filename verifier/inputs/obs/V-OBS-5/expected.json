@@ -1,0 +1,6 @@
+{
+ "verdict": "FAIL",
+ "code": "REPORT_MISMATCH",
+ "path": "claims[0].support",
+ "report": "report.json"
+}

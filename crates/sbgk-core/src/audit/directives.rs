@@ -116,6 +116,10 @@ pub struct DispatchConfig {
     /// journal. No SUMMARIZE is issued, and the run is complete once no work is open and no lease is out; its questions still
     /// steer the reading. The terminal receipt says so (`summaries`) and gives no outcome for a question.
     pub reading_only: bool,
+    /// What a reader of a ring gets for an attempt it reports as failed for a reason of its own (`fail_task`, 0.3.1): left in
+    /// the ring (off, the default), or left out until the next shift as after a timeout (on). A setting of the server
+    /// process (`--exclude-on-failure`), not of the journal: the attempt is counted and its reason written either way.
+    pub exclude_on_failure: bool,
 }
 
 impl Default for DispatchConfig {
@@ -148,6 +152,7 @@ impl Default for DispatchConfig {
             gap: GapProfile::default(),
             unit_is_task: false,
             reading_only: false,
+            exclude_on_failure: false,
         }
     }
 }
@@ -249,6 +254,67 @@ const NO_SECTION_MATCHED: &str = "no_section_matched_terms";
 
 fn line_digest(v: &Value) -> String {
     crate::hash::to_hex(&crate::hash::sha256(crate::jcs::to_jcs(v).as_bytes()))
+}
+
+/// The names of the fields of a line and of an answer: the kernel's own words. A refusal in the journal names the field it
+/// is about only when the name is one of these: the name of a field the kernel does not know is the agent's text.
+const LINE_FIELDS: [&str; 27] = [
+    "kind",
+    "local_id",
+    "doc_id",
+    "exact_quote",
+    "terms",
+    "text",
+    "subject",
+    "predicate",
+    "object",
+    "stance",
+    "as_of",
+    "based_on",
+    "from",
+    "rel",
+    "to",
+    "falsifier",
+    "about",
+    "needed",
+    "about_record",
+    "rq_id",
+    "directive_id",
+    "answer_ids",
+    "outcome",
+    "lines",
+    "link",
+    "verdict",
+    "reference",
+];
+
+/// The most late answers to one closed task that the journal records: a subject cannot grow the journal without bound by
+/// sending again to a task that is over.
+const MAX_LATE_ANSWERS: usize = 16;
+
+/// A line of an answer as the journal names it when the line was not stored: its place in the answer and the SHA-256 of its
+/// canonical JSON (RFC 8785), as the kernel judged it. Never its text: whoever holds the line finds it by the hash.
+fn line_mark(index: usize, line: Option<&Value>) -> Value {
+    let mut mark = json!({"index": index});
+    if let Some(line) = line {
+        mark["line_sha256"] = json!(line_digest(line));
+    }
+    mark
+}
+
+/// A refusal as the journal keeps it (finding 7 of the plan probe; the architect, 27.11.2026): the mark of the line, the code
+/// of the refusal, the field it is about when the name is the kernel's own, and the name of the rule when the refusal names
+/// one. The message of the refusal and what it expected stay with the answer to the agent: they can repeat the line's text.
+fn refusal_mark(index: usize, line: Option<&Value>, error: &Value) -> Value {
+    let mut mark = line_mark(index, line);
+    mark["code"] = error["code"].clone();
+    if let Some(field) = error["field"].as_str().filter(|f| LINE_FIELDS.contains(f)) {
+        mark["field"] = json!(field);
+    }
+    if let Some(rule) = error["expected_by_kernel"]["rule"].as_str().filter(|r| r.len() <= 64 && r.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')) {
+        mark["rule"] = json!(rule);
+    }
+    mark
 }
 
 /// The outcomes a summary's `done` line may state (contract v0.1 R7: an honest unknown is an outcome, not a gap).
@@ -3137,9 +3203,130 @@ impl Dispatcher {
         json!({"status": "REPAIR_REQUIRED", "task_id": task_id, "failed_index": i, "repair_scope": "whole_answer", "error": e.to_json()})
     }
 
-    /// Store an agent's answer to its lease. `verdict` lines (link tasks only) are applied by the dispatcher; the rest go to the
-    /// store under the lease's scope (fail-fast; the lease stays open for a repair).
+    /// Store an agent's answer to its lease (`submit_judged`), and keep in the journal what the answer to the agent alone
+    /// would lose (0.3.1, findings 7 and 10 of the plan probe):
+    /// - an answer refused whole (too many lines, a line of a kind the task does not take, a verdict or a done line that does
+    ///   not hold) gets the checkpoint `task-repair:<task>:<attempt>` an answer refused in part always got;
+    /// - an answer sent to a task the journal shows ended (`ended_in_journal`) gets a checkpoint `task-conflict:<task>:<n>`
+    ///   with the hash of the answer: the kernel does not read whether it contradicts the answer that closed the task.
+    ///
+    /// Both are the checkpoint of a batch of the kernel, without the text of a line. The answer to the agent is what it was.
     pub fn submit<S: AuditStore>(&mut self, s: &mut S, task_id: &str, agent: &str, lines: &[Value], now: u64) -> Value {
+        let mut judged = None;
+        let mut answer = self.submit_judged(s, task_id, agent, lines, now, &mut judged);
+        match answer["status"].as_str() {
+            Some("REPAIR_REQUIRED") if answer.get("audit_persisted").is_none() => {
+                self.record_refused_answer(s, task_id, agent, judged.as_deref().unwrap_or(lines), &mut answer)
+            }
+            Some("STALE_TASK") => self.record_late_answer(s, task_id, agent, lines),
+            _ => {}
+        }
+        answer
+    }
+
+    /// The checkpoint `task-repair:<task>:<attempt>` of an answer that was refused by a path that stored no record of the
+    /// refusal: the line the refusal names, when it names one, as `refusal_mark` keeps it, how many lines the answer had and
+    /// the SHA-256 of the canonical JSON of them all.
+    fn record_refused_answer<S: AuditStore>(&mut self, s: &mut S, task_id: &str, agent: &str, lines: &[Value], answer: &mut Value) {
+        let Some(lease) = self.leases.get(task_id).cloned() else { return };
+        let attempt = self.next_attempt(task_id);
+        let index = answer["failed_index"].as_u64().map_or(lines.len(), |i| i as usize);
+        let context = json!({"task_id": task_id, "work_key": lease.key, "kind": lease.kind.name(), "agent": agent, "attempt": attempt,
+            "accepted": answer.get("accepted").cloned().unwrap_or_else(|| json!([])),
+            "refused": [refusal_mark(index, lines.get(index), &answer["error"])], "excluded": [],
+            "whole_answer": answer["repair_scope"] == "whole_answer", "lines": lines.len(), "answer_sha256": line_digest(&json!(lines))});
+        let checkpoint = json!({"key": format!("task-repair:{task_id}:{attempt}"), "from": 0, "to": 0, "context": context});
+        match s.submit_operations_id(&format!("{task_id}#repair{attempt}"), "kernel", &[], Some(checkpoint)) {
+            Ok(v) if v["checkpointed"] == true && v["error"].is_null() => answer["audit_persisted"] = json!(true),
+            Ok(v) => {
+                answer["audit_persisted"] = json!(false);
+                answer["audit_error"] = v["error"].clone();
+            }
+            Err(e) => {
+                answer["audit_persisted"] = json!(false);
+                answer["audit_error"] = e.to_json();
+            }
+        }
+    }
+
+    /// What the journal says ended a task: the key of its work, how it ended, and whose task it was. A task is ended there when
+    /// - the checkpoint `task:<key>` of its work names it: `completed`, or given up as `unresolved`;
+    /// - the count of attempts lists it as a failed attempt (`audit:agent-failures`, a run that bounds attempts): given back
+    ///   with a reason, timed out, its lease run out, or released after a refusal; `unresolved` for the attempt that gave the
+    ///   work up, `failed` for every other attempt, whatever came after it (Codex's recheck of 4e8b3748, P3: the outcome of
+    ///   an earlier attempt read the state of the whole work);
+    /// - a checkpoint `task-failed:<task>` holds the reason its agent gave it back for: `failed`.
+    ///
+    /// A card of the builder is no task of this rule. The mark of a ring is not read: it names a task without its kind, and a
+    /// reader of a ring takes cards of the builder as well as readings, so a reader's failure outside the count of attempts
+    /// leaves an answer after it unrecorded. A lease given back plainly, and a lease that ran out where attempts are not
+    /// counted and the work stayed open, leave no trace of their task either: such a task is not ended here, whether the
+    /// dispatcher still runs or was started again.
+    ///
+    /// Until Codex's review of dbb7de2a only the first of the three was read, so an answer to a task that the count of
+    /// attempts had given up left no record.
+    fn ended_in_journal<S: AuditStore>(s: &S, task_id: &str) -> Option<(Value, &'static str, Value)> {
+        let by_work = s.checkpoint_keys("task:").into_iter().find_map(|key| {
+            let context = s.checkpoint(&key)?["context"].clone();
+            let how = if context["unresolved"] == true { "unresolved" } else { "completed" };
+            (context["task_id"] == task_id).then(|| (json!(key.strip_prefix("task:").unwrap_or(&key)), how, context["agent"].clone()))
+        });
+        if by_work.is_some() {
+            return by_work;
+        }
+        let counted = super::agent_failures::state(s);
+        let by_count = counted["work"].as_object().into_iter().flatten().filter(|(key, _)| !key.starts_with("build:")).find_map(|(key, entry)| {
+            let attempts = entry["attempts"].as_array()?;
+            let at = attempts.iter().position(|attempt| attempt["id"] == task_id)?;
+            // the count records no attempt after the one that gave the work up
+            let gave_up = entry["unresolved"] == true && at + 1 == attempts.len();
+            Some((json!(key), if gave_up { "unresolved" } else { "failed" }, attempts[at]["subject"].clone()))
+        });
+        if by_count.is_some() {
+            return by_count;
+        }
+        let mark = s.checkpoint(&format!("task-failed:{task_id}"))?;
+        let context = &mark["context"];
+        (context["kind"] != TaskKind::Build.name()).then(|| (context["work_key"].clone(), "failed", context["agent"].clone()))
+    }
+
+    /// The checkpoint `task-conflict:<task>:<n>` of an answer sent to a task the journal shows ended (`ended_in_journal`): who
+    /// sent it, how many lines it had and the SHA-256 of their canonical JSON; whose task it was and how it ended.
+    ///
+    /// - An answer to a task the journal does not show ended (unknown, or one that left no trace) leaves no record.
+    /// - An answer sent again, line for line by the same agent, is the same late answer: one record.
+    /// - No more than `MAX_LATE_ANSWERS` are recorded for one task.
+    /// - A failed write is not told to the agent: its answer is what it was either way.
+    ///
+    /// The dispatcher calls it for an answer to a task it holds no lease of. The server calls it too, where its cache of
+    /// acknowledgements answers before the dispatcher is asked (Codex's review of dbb7de2a: while the cache lived, an answer
+    /// that differed from the committed one left no record, and after a restart the same answer did). The cache is in memory:
+    /// after a restart the committed answer sent again is not known to be the committed one, and is recorded as late.
+    pub fn record_late_answer<S: AuditStore>(&mut self, s: &mut S, task_id: &str, agent: &str, lines: &[Value]) {
+        // What this very call ended is written first: a lease that ran out under this answer is a failed attempt of a counted
+        // run, or a mark of the ring. The server writes both after every call anyway; a write that fails stays queued.
+        let _ = self.persist_unresolved(s);
+        let _ = self.persist_members(s);
+        let Some((work_key, closed_as, closed_by)) = Self::ended_in_journal(s, task_id) else { return };
+        let answer = json!(line_digest(&json!(lines)));
+        let earlier: Vec<Value> = s.checkpoint_keys(&format!("task-conflict:{task_id}:")).iter().filter_map(|key| s.checkpoint(key)).collect();
+        if earlier.iter().any(|c| c["context"]["agent"] == agent && c["context"]["answer_sha256"] == answer) {
+            return;
+        }
+        let n = earlier.len() + 1;
+        if n > MAX_LATE_ANSWERS {
+            return;
+        }
+        let context = json!({"task_id": task_id, "work_key": work_key, "agent": agent, "closed_as": closed_as, "closed_by": closed_by,
+            "lines": lines.len(), "answer_sha256": answer});
+        let checkpoint = json!({"key": format!("task-conflict:{task_id}:{n}"), "from": 0, "to": 0, "context": context});
+        let _ = s.submit_operations_id(&format!("{task_id}#late{n}"), "kernel", &[], Some(checkpoint));
+    }
+
+    /// Store an agent's answer to its lease. `verdict` lines (link tasks only) are applied by the dispatcher; the rest go to the
+    /// store under the lease's scope (fail-fast; the lease stays open for a repair). `judged` gets the lines as the kernel
+    /// judged them: those the agent sent, or in a summary that keeps rows the answer the kernel composed of them.
+    fn submit_judged<S: AuditStore>(&mut self, s: &mut S, task_id: &str, agent: &str, lines: &[Value], now: u64, judged: &mut Option<Vec<Value>>) -> Value {
         self.expire(now);
         if let Err(e) = self.persist_version_closures(s) {
             return json!({"status":"error","code":"CHANGE_CLOSURE_NOT_DURABLE","error":e.to_json()});
@@ -3182,6 +3369,7 @@ impl Dispatcher {
                 }
             }
         }
+        *judged = Some(composed.clone());
         let lines = composed.as_slice();
         // what a reading offered and stored is its own: the claims of its RELATE turn are not lines of the section
         if lease.kind == TaskKind::Extend && !lease.relate {
@@ -3490,13 +3678,15 @@ impl Dispatcher {
             }
             // A2 dead-letter audit: dispatcher refusals (including pre-store S0) must survive a crash as well as accepted rows.
             // Reuse the existing coordinator checkpoint transaction; no WAL framing or record admission rule changes.
+            // 0.3.1: of a line that was not stored the journal keeps its place, the hash of its canonical JSON, the code, the
+            // field and the rule, and never its text or the message of the refusal (`refusal_mark`)
             let audit_key = format!("task-repair:{task_id}:{attempt}");
-            let mut checkpoint = json!({"key":audit_key,"from":0,"to":0,"context":{"task_id":task_id,"work_key":lease.key,
-                "kind":lease.kind.name(),"attempt":attempt,"accepted":answer["accepted"],"refused":answer["refused"],"excluded":answer["excluded"]}});
-            // the lines of this attempt whose references got their "@", stored or not (RV-02: the task checkpoint names only the last)
-            if !referenced.is_empty() {
-                checkpoint["context"]["referenced_bare_ids"] = json!(referenced.iter().filter_map(|x| x["local_id"].as_str()).collect::<BTreeSet<_>>());
-            }
+            let refused_marks: Vec<Value> = items.refused.iter().map(|(i, e)| refusal_mark(*i, lines.get(*i), e)).collect();
+            let excluded_marks: Vec<Value> = items.excluded.iter().map(|(i, _)| line_mark(*i, lines.get(*i))).collect();
+            // The local ids of the lines whose references got their "@" (`referenced_bare_ids`) were written here until 0.3.0. They
+            // are names the agent chose, and nothing read them: from 0.3.1 they stay with the answer to the agent.
+            let checkpoint = json!({"key":audit_key,"from":0,"to":0,"context":{"task_id":task_id,"work_key":lease.key,
+                "kind":lease.kind.name(),"agent":agent,"attempt":attempt,"accepted":answer["accepted"],"refused":refused_marks,"excluded":excluded_marks}});
             match s.submit_operations_id(&format!("{task_id}#repair{attempt}"), "kernel", &[], Some(checkpoint)) {
                 Ok(v) if v["checkpointed"] == true && v["error"].is_null() => answer["audit_persisted"] = json!(true),
                 Ok(v) => {
@@ -3613,9 +3803,8 @@ impl Dispatcher {
         if !extended.is_empty() {
             context["extended_quotes"] = json!(extended.iter().map(|x| x["local_id"].clone()).collect::<Vec<_>>());
         }
-        if !referenced.is_empty() {
-            context["referenced_bare_ids"] = json!(referenced.iter().filter_map(|x| x["local_id"].as_str()).collect::<BTreeSet<_>>());
-        }
+        // (the completion checkpoint named the local ids of the lines whose references got their "@", `referenced_bare_ids`,
+        // until 0.3.0: names the agent chose, read by nothing, and not written from 0.3.1)
         if let Some(source) = lease.key.strip_prefix("reread:") {
             context["origin"] = json!({"kind": "kernel_loss_reread", "generation": 1, "source_key": format!("doc:{source}"),
                 "loss_score": self.strained.get(&format!("doc:{source}")).map(Loss::score), "policy": "unit_cost_round_robin_max2_per_report_first_wave"});
@@ -4988,6 +5177,23 @@ mod tests {
         assert_eq!(r["status"], "RELEASED", "{r}");
         assert!(d.leases.is_empty() && d.taken(&key), "the stored reading stays handled");
         assert!(!d.failures.contains_key(&key) && !d.unresolved.contains(&key), "no agent failure of the reading: {r}");
+    }
+
+    #[test]
+    fn a_relate_turn_given_up_with_a_reason_keeps_the_reason_in_the_journal() {
+        // the review of 6600f9c8: with --agent-attempts and no ring, the reason of a failed RELATE turn was written nowhere, and
+        // the journal was the same as if no failure had been reported. The turn is still no failure of its stored reading.
+        let (mut s, mut d, relate) =
+            hint_reading_with(DispatchConfig { section_bytes: 4000, relate_hints: true, agent_attempts: Some(4), ..Default::default() }, false);
+        let (t, _, agent, _) = relate.expect("a RELATE turn");
+        let (task, key) = (t["task_id"].as_str().unwrap(), t["key"].as_str().unwrap().to_string());
+        let r = d.fail_task(&mut s, task, agent, "ALL_ANSWERS_REFUSED");
+        assert_eq!((r["status"].as_str(), r["reason"].as_str()), (Some("RELEASED"), Some("ALL_ANSWERS_REFUSED")), "{r}");
+        assert!(d.leases.is_empty() && d.taken(&key), "the stored reading stays handled");
+        assert!(!d.failures.contains_key(&key) && !d.unresolved.contains(&key), "no agent failure of the reading: {r}");
+        let mark = s.checkpoint(&format!("task-failed:{task}")).expect("the reason is in the journal");
+        assert_eq!((mark["context"]["reason"].as_str(), mark["context"]["agent"].as_str()), (Some("ALL_ANSWERS_REFUSED"), Some(agent)), "{mark}");
+        assert_eq!(mark["context"]["kind"], "EXTEND", "{mark}");
     }
 
     #[test]

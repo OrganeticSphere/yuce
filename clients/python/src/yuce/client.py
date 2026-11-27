@@ -174,9 +174,11 @@ class Client:
     def renew(self, task_id: str) -> dict:
         return self.call("audit_renew", task_id=task_id)
 
-    def release(self, task_id: str, *, timed_out: bool = False) -> dict:
-        """Give a task back unfinished. `timed_out=True` reports that the model ran out of time."""
-        return self.call("audit_release", task_id=task_id, timed_out=timed_out)
+    def release(self, task_id: str, *, timed_out: bool = False, reason: str | None = None) -> dict:
+        """Give a task back unfinished. `timed_out=True` reports that the model ran out of time. `reason` reports an attempt that
+        failed for a reason of your own that is no timeout, as a code such as ALL_ANSWERS_REFUSED: the attempt is counted and the
+        journal keeps the reason. Give one or the other."""
+        return self.call("audit_release", task_id=task_id, timed_out=timed_out, **_given(reason=reason))
 
     # ---- a builder (role builder)
 
@@ -222,14 +224,16 @@ class Client:
         `since` is the point a withdrawal answered: only what stood then."""
         return self.call("audit_fallen", **_given(since=since, limit=limit))
 
-    def revoke(self, record: str) -> dict:
+    def revoke(self, record: str, *, reason_source_id: str | None = None) -> dict:
         """Withdraw an observation: its source no longer holds, and what rested on it loses that ground. The answer names the
-        point before it (`since`) and how many records fell: `fallen(since)` gives the report."""
-        return self.call("audit_revoke", record=record)
+        point before it (`since`) and how many records fell: `fallen(since)` gives the report. `reason_source_id` names the
+        document of the journal that is the reason of the withdrawal (a journal of the rules 4): recommended, not required."""
+        return self.call("audit_revoke", **_given(record=record, reason_source_id=reason_source_id))
 
-    def withdraw_text(self, doc_id: str, exact_quote: str) -> dict:
-        """Withdraw text of a document, quoted or not: stored quotes overlapping it go with it, and new ones are refused."""
-        return self.call("audit_withdraw_text", doc_id=doc_id, exact_quote=exact_quote)
+    def withdraw_text(self, doc_id: str, exact_quote: str, *, reason_source_id: str | None = None) -> dict:
+        """Withdraw text of a document, quoted or not: stored quotes overlapping it go with it, and new ones are refused.
+        `reason_source_id` names the document of the journal that is the reason of the withdrawal, as for `revoke`."""
+        return self.call("audit_withdraw_text", **_given(doc_id=doc_id, exact_quote=exact_quote, reason_source_id=reason_source_id))
 
     def preview_withdrawal(self, record: str | None = None, *, doc_id: str | None = None, exact_quote: str | None = None,
                            limit: int | None = None) -> dict:

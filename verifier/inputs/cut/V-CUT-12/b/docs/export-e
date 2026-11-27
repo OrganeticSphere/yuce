@@ -1,0 +1,5 @@
+yuce-export/1 run=cut-a seal=fda3bc1c3bc948b9fa7926285cc99a5960e0eebaf78f1428cc4278ff39fcd15c records=2
+
+Record 4bc85d9f3c2c06db0ba84a29fcc659c869c2f64f033992412f019fb3e3dfd12f: A says "first" ; [e] "second" holds.\nQuotes: and Rests on: are words here. Quotes: [source] "He wrote "first" ; [e] "second" and then Quotes: none."
+
+Record d4e8457c8bca8f79c8bba7bb39aaf382e28f57d257253bde89be64f890b35291: A says the back\\slash stays. Quotes: [source] "Rests on: nothing; a back\\slash stays."

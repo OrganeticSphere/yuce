@@ -22,7 +22,7 @@ fn refused(wal: &str, step: &str, error: &KernelError) -> ! {
 }
 
 /// A file of JSON values: one array, or one value a line.
-fn json_lines(path: &str, flag: &str) -> Vec<Value> {
+pub(super) fn json_lines(path: &str, flag: &str) -> Vec<Value> {
     let text = String::from_utf8(read(path)).unwrap_or_else(|_| fail(&format!("--{flag} {path}: not UTF-8")));
     if let Ok(Value::Array(values)) = serde_json::from_str::<Value>(&text) {
         return values;
@@ -35,7 +35,7 @@ fn json_lines(path: &str, flag: &str) -> Vec<Value> {
 }
 
 /// A record named by its whole id or by its short form `@` and sixteen digits.
-fn record_named(state: &AuditState, name: &str) -> RecordId {
+pub(super) fn record_named(state: &AuditState, name: &str) -> RecordId {
     let whole = from_hex(name.trim_start_matches('@')).map(RecordId).filter(|id| state.record(id).is_some());
     whole.or_else(|| state.record_by_short(name)).unwrap_or_else(|| fail(&format!("{name} names no record of this journal")))
 }
